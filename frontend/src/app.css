@@ -174,12 +174,12 @@ body {
 
 @layer components {
   .kin-glass {
-    /* Bumped from /70 to /92 — Windows WebView2 doesn't render
+    /* Bumped from /70 to /90 — Windows WebView2 doesn't render
      * backdrop-blur as effectively as macOS NSVisualEffectView, so the
      * old transparency made input text unreadable against busy
      * backgrounds (browser, video, etc.). Slight glass effect still
-     * present via the remaining 8% transparency + backdrop-blur. */
-    @apply bg-ink-900/92 backdrop-blur-2xl border border-white/10 shadow-2xl;
+     * present via the remaining 10% transparency + backdrop-blur. */
+    @apply bg-ink-900/90 backdrop-blur-2xl border border-white/10 shadow-2xl;
   }
 
   .kin-card {
