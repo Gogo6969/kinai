@@ -97,6 +97,10 @@
   let models = $state<string[]>([]);
   let saving = $state(false);
   let refreshing = $state(false);
+  /** UI feedback after a successful save: "saved" → fades to "" after 2.5s.
+   *  Empty string for the initial state and after the fade. */
+  let saveStatus = $state<'' | 'saved' | 'error'>('');
+  let saveError = $state('');
   let refreshMessage = $state('');
   let testResult = $state<string>('');
   let versionInfo = $state<{
@@ -192,6 +196,8 @@
 
   async function save() {
     saving = true;
+    saveStatus = '';
+    saveError = '';
     try {
       // Host-only settings — the client can't change what model or
       // search engine the host runs.
@@ -220,6 +226,15 @@
         });
       }
       await app.load();
+      saveStatus = 'saved';
+      // Fade the success indicator after a few seconds so the bar
+      // returns to a neutral state on its own.
+      setTimeout(() => {
+        if (saveStatus === 'saved') saveStatus = '';
+      }, 2500);
+    } catch (e) {
+      saveStatus = 'error';
+      saveError = String(e).replace(/^Error:\s*/, '');
     } finally {
       saving = false;
     }
@@ -803,10 +818,21 @@
           <span class="text-xs text-red-300">Could not reach the update server.</span>
         {/if}
       </div>
-      <button class="kin-btn-primary" disabled={saving} onclick={save}>
-        {#if saving}<Loader2 size={14} class="animate-spin" />{/if}
-        Save changes
-      </button>
+      <div class="flex items-center gap-2">
+        {#if saveStatus === 'saved'}
+          <span class="text-sm text-emerald-300 font-medium animate-fade-in flex items-center gap-1">
+            <span class="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>
+            Saved
+          </span>
+        {:else if saveStatus === 'error'}
+          <span class="text-sm text-red-300 max-w-[280px] truncate" title={saveError}>
+            ✗ {saveError || 'Failed to save'}
+          </span>
+        {/if}
+        <button class="kin-btn-primary" disabled={saving} onclick={save}>
+          {#if saving}<Loader2 size={14} class="animate-spin" /> Saving…{:else}Save changes{/if}
+        </button>
+      </div>
     </div>
   </div>
 </main>

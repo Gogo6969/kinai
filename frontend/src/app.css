@@ -172,6 +172,14 @@ body {
   background: rgba(255, 255, 255, 0.2);
 }
 
+@keyframes kin-fade-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: kin-fade-in 180ms ease-out;
+}
+
 @layer components {
   .kin-glass {
     /* Bumped from /70 to /90 — Windows WebView2 doesn't render
