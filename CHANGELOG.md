@@ -5,6 +5,35 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.6] — 2026-05-16
+
+### Added
+- **Signed + notarized macOS builds.** KinAI is now signed with Apple's
+  Developer ID Application certificate (Wolfgang Gabler, team
+  L5VWNX44MY) and notarized through Apple's notary service via
+  `notarytool` + an App Store Connect API key. End users no longer see
+  *"KinAI can't be opened because Apple cannot check it for malicious
+  software"* on first launch — just the standard *"KinAI was
+  downloaded from the internet — open?"* prompt that any signed
+  third-party app gets. `spctl --assess` now reports
+  `source=Notarized Developer ID`.
+- `scripts/deploy.sh` sources `~/.kinai/keys/apple.env` for local
+  signing credentials; CI consumes the same credentials via GitHub
+  secrets.
+
+### Fixed
+- **Signing the .app failed on developer Macs with iCloud Drive
+  enabled** ("resource fork, Finder information, or similar detritus
+  not allowed"). macOS's `bird` daemon re-attaches
+  `com.apple.FinderInfo` + `com.apple.fileprovider.fpfs#P` xattrs to
+  any new bundle under `~/Documents` faster than the build can strip
+  them, and `codesign --force` refuses to sign a bundle with those
+  present. Workaround in `scripts/deploy.sh`: tauri-bundler now
+  produces an UNSIGNED `.app`, which we copy to `/tmp/kinai-sign/`
+  (bird ignores `/tmp`), then xattr-strip + codesign + notarytool +
+  staple there, then copy the signed/stapled bundle back into the
+  project tree for DMG packaging and updater tarballing.
+
 ## [0.2.5] — 2026-05-16 *(first public release)*
 
 Patches folded in on top of 0.2.0 before the GitHub launch:
