@@ -53,8 +53,13 @@ pub async fn start(state: SharedState, app: AppHandle) -> Result<()> {
         .route("/info", get(info))
         .route("/v1/invite/redeem", get(redeem_invite))
         .route("/v1/update/manifest", get(super::updates::manifest))
-        .route("/v1/update/bundle.tar.gz", get(super::updates::bundle))
-        .route("/v1/update/bundle.tar.gz.sig", get(super::updates::signature))
+        // New multi-platform routes — Tauri's updater follows the
+        // ?target=… URL out of the manifest.
+        .route("/v1/update/bundle", get(super::updates::bundle))
+        .route("/v1/update/signature", get(super::updates::signature_route))
+        // Legacy single-platform routes (v0.2.x clients still hit these).
+        .route("/v1/update/bundle.tar.gz", get(super::updates::bundle_legacy))
+        .route("/v1/update/bundle.tar.gz.sig", get(super::updates::signature_legacy))
         .route("/kin", any(ws_upgrade))
         .with_state(axum_state);
 

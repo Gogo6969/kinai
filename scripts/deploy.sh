@@ -90,6 +90,85 @@ install_macos() {
 
   ls -lh /Applications/KinAI.app/Contents/MacOS/kinai "$DMG"
   echo "✓ done — open /Applications/KinAI.app"
+
+  stage_windows_update
+}
+
+# Pull the latest Windows updater bundle from GitHub and stage it
+# alongside the Mac bundle, so Windows clients connecting to this host
+# get updates pushed to them automatically — same flow Mac clients get.
+#
+# Source preference order:
+#   1. GitHub Release with matching tag (vX.Y.Z) — permanent, ideal
+#   2. Latest successful test-windows.yml workflow artifact — ephemeral
+#      (14-day expiry), used during the "Windows not yet released" phase
+#
+# Skipped silently if neither source has anything for this version.
+stage_windows_update() {
+  local TARGET=windows-x86_64
+  local STAGE_DIR="$HOME/.kinai/updates/${NEW_VERSION}/${TARGET}"
+  local BUNDLE_NAME=KinAI.msi.zip
+  local DEST="$STAGE_DIR/$BUNDLE_NAME"
+  local SIG_DEST="$DEST.sig"
+
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "ℹ skipping Windows update stage (gh CLI not installed)"
+    return
+  fi
+
+  local REPO="${KINAI_REPO:-Gogo6969/kinai}"
+  local TMP
+  TMP=$(mktemp -d)
+
+  echo "→ staging Windows updater bundle from $REPO"
+
+  # 1. Try a Release with the matching tag.
+  if gh release download "v${NEW_VERSION}" -R "$REPO" \
+       --pattern '*x64_en-US.msi.zip' --pattern '*x64_en-US.msi.zip.sig' \
+       --dir "$TMP" 2>/dev/null
+  then
+    echo "  ↳ pulled from Release v${NEW_VERSION}"
+  else
+    # 2. Fall back to the most recent successful test-windows.yml run.
+    local RUN_ID
+    RUN_ID=$(gh run list -R "$REPO" \
+      --workflow=test-windows.yml \
+      --status=success \
+      --limit 1 \
+      --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+    if [[ -z "$RUN_ID" ]]; then
+      echo "  ⚠ no Windows artifacts on GitHub yet; Windows clients won't auto-update from this host"
+      rm -rf "$TMP"
+      return
+    fi
+    echo "  ↳ pulling from test-windows.yml run $RUN_ID"
+    if ! gh run download "$RUN_ID" -R "$REPO" \
+           --name kinai-windows-x86_64 --dir "$TMP" 2>/dev/null
+    then
+      echo "  ⚠ couldn't download workflow artifact (auth? expired?). Windows clients won't auto-update."
+      rm -rf "$TMP"
+      return
+    fi
+  fi
+
+  # Find the .msi.zip + .sig in whatever subdirectory layout they came in.
+  local SRC_ZIP SRC_SIG
+  SRC_ZIP=$(find "$TMP" -name '*.msi.zip' -type f 2>/dev/null | head -1)
+  SRC_SIG=$(find "$TMP" -name '*.msi.zip.sig' -type f 2>/dev/null | head -1)
+  if [[ -z "$SRC_ZIP" || -z "$SRC_SIG" ]]; then
+    echo "  ⚠ Windows artifacts don't contain a .msi.zip + .sig pair. Skipping."
+    rm -rf "$TMP"
+    return
+  fi
+
+  mkdir -p "$STAGE_DIR"
+  cp "$SRC_ZIP" "$DEST"
+  cp "$SRC_SIG" "$SIG_DEST"
+  ln -sfn "${NEW_VERSION}" "$HOME/.kinai/updates/latest-${TARGET}"
+  rm -rf "$TMP"
+
+  echo "  ✓ staged Windows update at $STAGE_DIR"
+  echo "    ($(ls -lh "$DEST" | awk '{print $5}') zip + signature)"
 }
 
 install_linux() {

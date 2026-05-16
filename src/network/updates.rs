@@ -1,52 +1,83 @@
 //! Host-side update distribution.
 //!
-//! The deploy script stages signed update tarballs under
-//! `~/.kinai/updates/<version>/<target>/`. This module exposes them
-//! over HTTP so clients can use the host as their update source instead
-//! of (or in addition to) GitHub Releases. Three endpoints:
+//! The deploy script stages signed update bundles under
+//! `~/.kinai/updates/<version>/<target>/`, one directory per platform
+//! the host has binaries for. The Mac mini host can serve Mac AND
+//! Windows clients from a single manifest — Tauri's updater on each
+//! client picks the entry matching its own platform.
 //!
-//!   GET /v1/update/manifest             -> Tauri-format JSON manifest
-//!   GET /v1/update/bundle.tar.gz        -> streams the latest bundle
-//!   GET /v1/update/bundle.tar.gz.sig    -> Minisign signature
+//! Endpoints:
 //!
-//! All three trust LAN locality + the JWT pairing as the security
-//! boundary at the transport layer; the Tauri updater plugin verifies
-//! the Minisign signature against the pubkey baked into every client
-//! binary, so even a compromised host can't push an unsigned update.
+//!   GET /v1/update/manifest
+//!       Multi-platform manifest in Tauri's standard format. Lists
+//!       every target the host currently has a bundle for.
+//!
+//!   GET /v1/update/bundle?target=<id>
+//!       Streams the update bundle for that platform. Target is one of
+//!       darwin-aarch64, darwin-x86_64, windows-x86_64, linux-x86_64.
+//!
+//!   GET /v1/update/signature?target=<id>
+//!       Streams the Minisign signature file.
+//!
+//!   GET /v1/update/bundle.tar.gz, /v1/update/bundle.tar.gz.sig
+//!       Legacy single-platform endpoints kept for backward compatibility
+//!       with clients on v0.2.6 and older. They serve the host's OWN
+//!       platform bundle (same as before).
+//!
+//! All trust LAN locality + the JWT pairing as the transport-layer
+//! security boundary; the Tauri updater plugin verifies the Minisign
+//! signature against the pubkey baked into every client binary, so even
+//! a compromised host can't push an unsigned update.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
 use super::server::AxumState;
 
-const TARBALL_NAME: &str = "KinAI.app.tar.gz";
-const SIGNATURE_NAME: &str = "KinAI.app.tar.gz.sig";
+/// Per-target bundle filename conventions. The deploy script names
+/// staged files this way; the manifest endpoint surfaces them.
+fn bundle_filename(target: &str) -> Option<&'static str> {
+    match target {
+        "darwin-aarch64" | "darwin-x86_64" => Some("KinAI.app.tar.gz"),
+        "windows-x86_64" => Some("KinAI.msi.zip"),
+        // Future: linux-x86_64 → "KinAI.AppImage.tar.gz"
+        _ => None,
+    }
+}
+
+/// All Tauri targets we know how to serve. The manifest only includes
+/// entries for which a bundle actually exists on disk.
+const SUPPORTED_TARGETS: &[&str] = &[
+    "darwin-aarch64",
+    "darwin-x86_64",
+    "windows-x86_64",
+    // "linux-x86_64",
+];
 
 #[derive(Serialize)]
 pub struct UpdateManifest {
-    /// Version of the staged bundle. Tauri's updater compares this to
-    /// the running binary's CARGO_PKG_VERSION; updates only trigger
-    /// when this is strictly newer.
     pub version: String,
-    /// URL the client should GET to download the bundle. Returned as an
-    /// absolute URL so we don't have to coordinate base-path assumptions
-    /// with the client side.
-    pub url: String,
-    /// Minisign signature of the tarball, as plain text (matches what
-    /// Tauri signer emits). Embedding in the manifest avoids an extra
-    /// round-trip — Tauri's updater accepts it either way.
-    pub signature: String,
-    /// RFC3339 timestamp of when this bundle was staged. Useful for
-    /// "Last seen" debugging UIs and for skipping a same-version re-poll.
-    pub pub_date: String,
-    /// Free-form release notes. Empty for now.
     pub notes: String,
+    pub pub_date: String,
+    pub platforms: BTreeMap<String, PlatformBundle>,
+}
+
+#[derive(Serialize)]
+pub struct PlatformBundle {
+    pub url: String,
+    pub signature: String,
+}
+
+#[derive(Deserialize)]
+pub struct TargetQuery {
+    pub target: String,
 }
 
 fn updates_dir() -> PathBuf {
@@ -56,11 +87,7 @@ fn updates_dir() -> PathBuf {
         .join("updates")
 }
 
-fn target_id() -> &'static str {
-    // Tauri's updater uses these strings for the platforms key. The host
-    // only serves bundles built for its own architecture today — a Mac
-    // mini host won't have x86_64 binaries for a hypothetical Intel
-    // client. Cross-arch shipping is a Phase 2 problem.
+fn host_target_id() -> &'static str {
     if cfg!(target_os = "macos") && cfg!(target_arch = "aarch64") {
         "darwin-aarch64"
     } else if cfg!(target_os = "macos") && cfg!(target_arch = "x86_64") {
@@ -72,28 +99,11 @@ fn target_id() -> &'static str {
     }
 }
 
-/// Resolve `~/.kinai/updates/latest-<target>/` via the symlink the
-/// deploy script keeps current, falling back to scanning the version
-/// directories alphabetically (matches SemVer for our usage).
-fn latest_version_dir() -> Option<PathBuf> {
+/// Find the highest-versioned directory that has a bundle for at least
+/// one supported target. The deploy script stages by version, so this
+/// is the "latest staged release."
+fn latest_version_root() -> Option<(String, PathBuf)> {
     let base = updates_dir();
-    let target = target_id();
-    let symlink = base.join(format!("latest-{}", target));
-    if symlink.exists() {
-        // The symlink points at a relative path like "0.1.36"; resolve.
-        if let Ok(resolved) = std::fs::read_link(&symlink) {
-            let full = if resolved.is_absolute() {
-                resolved
-            } else {
-                base.join(resolved)
-            };
-            let candidate = full.join(target);
-            if candidate.join(TARBALL_NAME).exists() {
-                return Some(candidate);
-            }
-        }
-    }
-    // Fallback: highest-named version directory that has a bundle for us.
     let mut versions: Vec<(String, PathBuf)> = std::fs::read_dir(&base)
         .ok()?
         .filter_map(|e| e.ok())
@@ -101,23 +111,35 @@ fn latest_version_dir() -> Option<PathBuf> {
             e.file_type()
                 .map(|t| t.is_dir())
                 .unwrap_or(false)
+                && !e.file_name().to_string_lossy().starts_with("latest-")
+                && !e.file_name().to_string_lossy().starts_with("shot-backup-")
         })
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
-            let p = e.path().join(target).join(TARBALL_NAME);
-            if p.exists() {
-                Some((name, e.path().join(target)))
+            // Only consider dirs whose name parses as a SemVer-ish version.
+            if !name.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                return None;
+            }
+            let dir = e.path();
+            // Must contain at least one supported-target subdir with a bundle.
+            let has_any = SUPPORTED_TARGETS.iter().any(|t| {
+                if let Some(fname) = bundle_filename(t) {
+                    dir.join(t).join(fname).exists()
+                } else {
+                    false
+                }
+            });
+            if has_any {
+                Some((name, dir))
             } else {
                 None
             }
         })
         .collect();
     versions.sort_by(|a, b| natural_version_cmp(&a.0, &b.0));
-    versions.pop().map(|(_, p)| p)
+    versions.pop()
 }
 
-/// Comparator that orders `0.1.10` after `0.1.9` without us needing
-/// `semver` as a dependency.
 fn natural_version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     let parts = |s: &str| -> Vec<u64> {
         s.split('.')
@@ -128,52 +150,123 @@ fn natural_version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 }
 
 pub(crate) async fn manifest(State(s): State<AxumState>) -> Result<Response, (StatusCode, String)> {
-    let dir = latest_version_dir().ok_or((
+    let (version, root) = latest_version_root().ok_or((
         StatusCode::NOT_FOUND,
         "No update bundle has been staged on this host yet. Run `scripts/deploy.sh` to publish one.".into(),
     ))?;
-    let version = dir
-        .parent()
-        .and_then(|p| p.file_name())
-        .and_then(|n| n.to_str())
-        .unwrap_or("0.0.0")
-        .to_string();
-    let sig = tokio::fs::read_to_string(dir.join(SIGNATURE_NAME))
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("read .sig failed: {e}")))?;
-    let pub_date = std::fs::metadata(dir.join(TARBALL_NAME))
-        .ok()
-        .and_then(|m| m.modified().ok())
+    let host_http_base = http_base_for(&s).unwrap_or_else(|| "http://127.0.0.1".into());
+
+    let mut platforms: BTreeMap<String, PlatformBundle> = BTreeMap::new();
+    let mut latest_mtime: Option<std::time::SystemTime> = None;
+
+    for &target in SUPPORTED_TARGETS {
+        let Some(fname) = bundle_filename(target) else { continue };
+        let bundle_path = root.join(target).join(fname);
+        let sig_path = root.join(target).join(format!("{fname}.sig"));
+        if !bundle_path.exists() || !sig_path.exists() {
+            continue;
+        }
+        let Ok(sig) = tokio::fs::read_to_string(&sig_path).await else {
+            continue;
+        };
+        if let Ok(meta) = std::fs::metadata(&bundle_path) {
+            if let Ok(mt) = meta.modified() {
+                latest_mtime = Some(match latest_mtime {
+                    Some(prev) if prev > mt => prev,
+                    _ => mt,
+                });
+            }
+        }
+        platforms.insert(
+            target.to_string(),
+            PlatformBundle {
+                url: format!("{host_http_base}/v1/update/bundle?target={target}"),
+                signature: sig,
+            },
+        );
+    }
+
+    if platforms.is_empty() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "No platform bundles staged for the latest version.".into(),
+        ));
+    }
+
+    let pub_date = latest_mtime
         .map(|t| {
             let dt: chrono::DateTime<chrono::Utc> = t.into();
             dt.to_rfc3339()
         })
         .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
-    // Build an absolute URL the client can hand to Tauri's updater
-    // verbatim — pulling the host_url out of stats matches the same form
-    // we already stamp into invite JWT audiences.
-    let host_http_base = http_base_for(&s).unwrap_or_else(|| "http://127.0.0.1".into());
-    let url = format!("{host_http_base}/v1/update/bundle.tar.gz");
-    let body = UpdateManifest {
+
+    Ok(Json(UpdateManifest {
         version,
-        url,
-        signature: sig,
-        pub_date,
         notes: String::new(),
+        pub_date,
+        platforms,
+    })
+    .into_response())
+}
+
+pub(crate) async fn bundle(
+    State(_s): State<AxumState>,
+    Query(q): Query<TargetQuery>,
+) -> Result<Response, (StatusCode, String)> {
+    serve_target(&q.target, /* signature */ false).await
+}
+
+pub(crate) async fn signature_route(
+    State(_s): State<AxumState>,
+    Query(q): Query<TargetQuery>,
+) -> Result<Response, (StatusCode, String)> {
+    serve_target(&q.target, /* signature */ true).await
+}
+
+async fn serve_target(target: &str, want_signature: bool) -> Result<Response, (StatusCode, String)> {
+    if !SUPPORTED_TARGETS.contains(&target) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("Unsupported target '{target}'. Expected one of: {}", SUPPORTED_TARGETS.join(", ")),
+        ));
+    }
+    let fname = bundle_filename(target).ok_or_else(|| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("No filename mapping for target '{target}'"),
+        )
+    })?;
+    let (_, root) = latest_version_root().ok_or((
+        StatusCode::NOT_FOUND,
+        "No bundle staged".into(),
+    ))?;
+    let (path, content_type) = if want_signature {
+        (
+            root.join(target).join(format!("{fname}.sig")),
+            "text/plain; charset=utf-8",
+        )
+    } else if fname.ends_with(".zip") {
+        (root.join(target).join(fname), "application/zip")
+    } else {
+        (root.join(target).join(fname), "application/gzip")
     };
-    Ok(Json(body).into_response())
+    serve_file(&path, content_type).await
 }
 
-pub(crate) async fn bundle(State(s): State<AxumState>) -> Result<Response, (StatusCode, String)> {
-    let _ = s;
-    let dir = latest_version_dir().ok_or((StatusCode::NOT_FOUND, "no bundle staged".into()))?;
-    serve_file(&dir.join(TARBALL_NAME), "application/gzip").await
+/// Legacy single-platform tarball endpoint. Pre-v0.3 clients (Mac on
+/// v0.2.5/v0.2.6) hit this URL directly because they were built before
+/// the multi-platform manifest existed. We serve the host's OWN
+/// platform bundle so those clients can still update.
+pub(crate) async fn bundle_legacy(
+    State(_s): State<AxumState>,
+) -> Result<Response, (StatusCode, String)> {
+    serve_target(host_target_id(), /* signature */ false).await
 }
 
-pub(crate) async fn signature(State(s): State<AxumState>) -> Result<Response, (StatusCode, String)> {
-    let _ = s;
-    let dir = latest_version_dir().ok_or((StatusCode::NOT_FOUND, "no signature staged".into()))?;
-    serve_file(&dir.join(SIGNATURE_NAME), "text/plain; charset=utf-8").await
+pub(crate) async fn signature_legacy(
+    State(_s): State<AxumState>,
+) -> Result<Response, (StatusCode, String)> {
+    serve_target(host_target_id(), /* signature */ true).await
 }
 
 async fn serve_file(path: &Path, content_type: &str) -> Result<Response, (StatusCode, String)> {
@@ -192,8 +285,6 @@ async fn serve_file(path: &Path, content_type: &str) -> Result<Response, (Status
         .into_response())
 }
 
-/// HTTP origin we'd return to a client — same derivation logic as the
-/// invite audience, but with `http://` rather than `ws://`.
 fn http_base_for(s: &AxumState) -> Option<String> {
     let cfg = s.app.config.read().clone();
     let host = local_ip_address::local_ip()

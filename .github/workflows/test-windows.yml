@@ -65,5 +65,13 @@ jobs:
           path: |
             target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
             target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            # Tauri auto-update bundles — the `.msi.zip` + `.sig` files
+            # the Mac mini host stages to push updates to Windows clients.
+            # createUpdaterArtifacts: true in tauri.conf.json makes these
+            # appear next to the .msi.
+            target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi.zip
+            target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi.zip.sig
+            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.nsis.zip
+            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.nsis.zip.sig
           retention-days: 14
           if-no-files-found: error
