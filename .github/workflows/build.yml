@@ -45,9 +45,10 @@ jobs:
             librsvg2-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
             build-essential
 
+      # No version pin here — package.json's `packageManager` field
+       # ("pnpm@9.15.0") is the single source of truth. Listing both
+      # versions makes pnpm/action-setup error out on conflict.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
 
       - uses: actions/setup-node@v4
         with:
