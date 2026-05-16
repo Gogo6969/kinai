@@ -4,13 +4,23 @@ name: Release
 # Also available manually via the Actions tab for one-off test builds.
 #
 # Required repo secrets (Settings → Secrets and variables → Actions):
-#   TAURI_SIGNING_PRIVATE_KEY            — contents of ~/.kinai/keys/updater.key
-#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD   — empty string if the key has no password
 #
-# Without those secrets the build still succeeds, but the produced
-# bundles won't carry an updater signature — clients running on the
-# host-distributed updater path won't accept them, and they'll fall back
-# to GitHub-direct download.
+#   Updater signing (host-distributed update flow):
+#     TAURI_SIGNING_PRIVATE_KEY            — contents of ~/.kinai/keys/updater.key
+#     TAURI_SIGNING_PRIVATE_KEY_PASSWORD   — empty string if the key has no password
+#
+#   Apple Developer ID code signing + notarization (macOS Gatekeeper):
+#     APPLE_CERTIFICATE                    — base64 of developer-id.p12
+#     APPLE_CERTIFICATE_PASSWORD           — password used when exporting the .p12
+#     APPLE_SIGNING_IDENTITY               — "Developer ID Application: Wolfgang Gabler (L5VWNX44MY)"
+#     APPLE_API_ISSUER                     — App Store Connect API issuer UUID
+#     APPLE_API_KEY                        — App Store Connect API key ID (e.g. 8PN9W26H97)
+#     APPLE_API_KEY_BASE64                 — base64 of AuthKey_<key>.p8 (we materialize to disk in the job)
+#
+# Without the updater secret the build still succeeds, but the produced
+# bundles won't carry an updater signature. Without the Apple secrets
+# the macOS DMGs ship unsigned (Gatekeeper warning); Linux + Windows
+# builds are unaffected.
 
 on:
   push:
@@ -72,11 +82,32 @@ jobs:
 
       - run: pnpm install --frozen-lockfile=false
 
+      # Materialize the App Store Connect .p8 to disk; notarytool needs
+      # a file path (not contents). Only on macOS runners; the file is
+      # ephemeral (lives only for this job's runtime).
+      - name: Materialize Apple API key
+        if: matrix.os == 'macos-latest' && env.APPLE_API_KEY_BASE64 != ''
+        env:
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+        run: |
+          mkdir -p ~/private_keys
+          echo "$APPLE_API_KEY_BASE64" | base64 -d > ~/private_keys/AuthKey.p8
+          chmod 600 ~/private_keys/AuthKey.p8
+          echo "APPLE_API_KEY_PATH=$HOME/private_keys/AuthKey.p8" >> "$GITHUB_ENV"
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # macOS signing + notarization. tauri-action imports the .p12
+          # into a temp keychain, codesigns with hardened runtime, and
+          # submits to notary via API key. No-op on Linux/Windows.
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'KinAI ${{ github.ref_name }}'
