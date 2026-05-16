@@ -17,6 +17,34 @@
   let dragging = $state(false);
   let attachmentError = $state('');
 
+  // Slash-command autocomplete. Always shows the full list when the
+  // input is exactly "/" or matches "/<partial>"; the menu disappears as
+  // soon as the user types a space (because they're now writing the
+  // prompt body), submits, or presses Escape.
+  const SLASH_COMMANDS: Array<{ cmd: string; desc: string }> = [
+    { cmd: '/pic',    desc: 'Generate image (e.g. /pic 1280x720 sunset over Miami)' },
+    { cmd: '/picHQ',  desc: 'HQ image, slower (max quality)' },
+    { cmd: '/help',   desc: 'List slash commands' },
+  ];
+  let slashIndex = $state(0);
+  const slashFiltered = $derived.by(() => {
+    const t = input.trim();
+    if (!t.startsWith('/') || t.includes(' ') || t.includes('\n')) return [];
+    const q = t.toLowerCase();
+    return SLASH_COMMANDS.filter((c) => c.cmd.toLowerCase().startsWith(q));
+  });
+  $effect(() => {
+    void slashFiltered.length;
+    slashIndex = 0;
+  });
+  function applySlash(cmd: string) {
+    input = cmd + ' ';
+    queueMicrotask(() => {
+      inputEl?.focus();
+      autoGrowTextarea(inputEl);
+    });
+  }
+
   // Hard cap matches the server's MAX_BYTES (25 MB) so the user gets a
   // friendly local error instead of a wire-time rejection.
   const MAX_BYTES = 25 * 1024 * 1024;
@@ -307,6 +335,26 @@
     {#if attachmentError}
       <div class="text-xs text-red-300 mb-2 px-1">{attachmentError}</div>
     {/if}
+    {#if slashFiltered.length > 0}
+      <div class="kin-glass rounded-xl mb-2 overflow-hidden text-sm">
+        {#each slashFiltered as c, i}
+          <button
+            type="button"
+            class="w-full text-left px-3 py-2 flex items-center justify-between gap-3 transition-colors {i === slashIndex ? 'bg-teal-500/15 text-white' : 'text-white/80 hover:bg-white/5'}"
+            onclick={() => applySlash(c.cmd)}
+            onmouseenter={() => (slashIndex = i)}
+          >
+            <span class="font-mono text-teal-300 flex-shrink-0">{c.cmd}</span>
+            <span class="text-xs text-white/50 truncate">{c.desc}</span>
+          </button>
+        {/each}
+        <div class="px-3 py-1.5 text-[10px] text-white/40 border-t border-white/5">
+          <kbd class="bg-white/10 px-1 rounded">↑↓</kbd> navigate
+          <kbd class="bg-white/10 px-1 rounded ml-1">Tab</kbd> accept
+          <kbd class="bg-white/10 px-1 rounded ml-1">Esc</kbd> dismiss
+        </div>
+      </div>
+    {/if}
     <div class="kin-glass rounded-xl px-4 py-2.5 flex items-end gap-3">
       <button
         type="button"
@@ -327,6 +375,30 @@
         oninput={(e) => autoGrowTextarea(e.currentTarget as HTMLTextAreaElement)}
         onpaste={onPaste}
         onkeydown={(e) => {
+          // Slash-command menu navigation takes precedence when it's open.
+          if (slashFiltered.length > 0) {
+            if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              slashIndex = (slashIndex + 1) % slashFiltered.length;
+              return;
+            }
+            if (e.key === 'ArrowUp') {
+              e.preventDefault();
+              slashIndex =
+                (slashIndex - 1 + slashFiltered.length) % slashFiltered.length;
+              return;
+            }
+            if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+              e.preventDefault();
+              applySlash(slashFiltered[slashIndex].cmd);
+              return;
+            }
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              input = '';
+              return;
+            }
+          }
           if (e.key === 'Enter' && !e.shiftKey) submit(e);
         }}
       ></textarea>

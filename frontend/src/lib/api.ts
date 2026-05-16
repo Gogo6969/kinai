@@ -69,6 +69,13 @@ export interface VisionSettings {
   failover: VisionEndpoint;
 }
 
+/** Image generation via ComfyUI — powers /pic + /picHQ slash commands.
+ *  Empty base_url means disabled (no slash commands shown). */
+export interface ComfyConfig {
+  base_url: string;
+  default_model: string;
+}
+
 export interface AppConfig {
   mode: Mode;
   theme: Theme;
@@ -78,6 +85,7 @@ export interface AppConfig {
   overlay: OverlaySettings;
   tools: ToolSettings;
   vision: VisionSettings;
+  comfyui: ComfyConfig;
 }
 
 export interface ThreadMeta {
@@ -217,6 +225,13 @@ export const api = {
   testVisionEndpoint: (args: { base_url: string; model: string; api_key?: string | null }) =>
     invoke<{ ok: boolean; latency_ms: number; error: string | null; reply: string }>(
       'test_vision_endpoint',
+      { args }
+    ),
+  setComfyConfig: (comfyui: ComfyConfig) =>
+    invoke<AppConfig>('set_comfy_config', { comfyui }),
+  testComfyEndpoint: (args: { base_url: string }) =>
+    invoke<{ ok: boolean; latency_ms: number; error: string | null }>(
+      'test_comfy_endpoint',
       { args }
     ),
 

@@ -2,6 +2,7 @@
   import {
     api,
     type ClientSettings,
+    type ComfyConfig,
     type LlmSettings,
     type OverlaySettings,
     type Theme,
@@ -55,6 +56,11 @@
   });
   let visionTestState = $state<'idle' | 'testing' | 'ok' | 'fail'>('idle');
   let visionTestMsg = $state<string>('');
+
+  // Image generation (ComfyUI) — empty base_url means feature disabled.
+  let comfyui = $state<ComfyConfig>({ base_url: '', default_model: 'zimage' });
+  let comfyTestState = $state<'idle' | 'testing' | 'ok' | 'fail'>('idle');
+  let comfyTestMsg = $state<string>('');
 
   // Quick-fill presets — base_url + model only, never an API key. KinAI's
   // local-first ethos means we never ship credentials.
@@ -113,6 +119,9 @@
           primary: { ...app.config.vision.primary },
           failover: { ...app.config.vision.failover },
         };
+      }
+      if (app.config.comfyui) {
+        comfyui = { ...app.config.comfyui };
       }
     }
     // Only the host knows local model lists; in Client mode the LLM lives
@@ -192,6 +201,10 @@
           await api.setMode({ mode: app.config.mode, tools });
         }
         await api.setVisionSettings(vision);
+        await api.setComfyConfig({
+          base_url: comfyui.base_url.trim(),
+          default_model: comfyui.default_model || 'zimage',
+        });
       }
       // Always-applicable settings.
       await api.setOverlaySettings(overlay);
@@ -269,6 +282,30 @@
     } catch (e) {
       visionTestState = 'fail';
       visionTestMsg = String(e).replace(/^Error:\s*/, '');
+    }
+  }
+
+  async function testComfy() {
+    const url = comfyui.base_url.trim();
+    if (!url) {
+      comfyTestState = 'fail';
+      comfyTestMsg = 'Enter a ComfyUI URL first (e.g. http://192.168.1.25:8188).';
+      return;
+    }
+    comfyTestState = 'testing';
+    comfyTestMsg = '';
+    try {
+      const res = await api.testComfyEndpoint({ base_url: url });
+      if (res.ok) {
+        comfyTestState = 'ok';
+        comfyTestMsg = `Reachable (${res.latency_ms}ms). /pic and /picHQ will work for the whole family.`;
+      } else {
+        comfyTestState = 'fail';
+        comfyTestMsg = res.error ?? 'Test failed.';
+      }
+    } catch (e) {
+      comfyTestState = 'fail';
+      comfyTestMsg = String(e).replace(/^Error:\s*/, '');
     }
   }
 </script>
@@ -633,6 +670,57 @@
             spellcheck="false"
           />
         </label>
+      </div>
+    </div>
+    {/if}
+
+    {#if isHost}
+    <div class="kin-card space-y-4">
+      <div class="flex items-center justify-between gap-3">
+        <div class="min-w-0">
+          <h2 class="font-semibold text-lg">Image generation</h2>
+          <p class="text-xs text-white/50">
+            Optional. When set, every family member gets <code>/pic</code> and
+            <code>/picHQ</code> slash commands in chat. Leave empty to disable.
+          </p>
+        </div>
+      </div>
+
+      <label class="block">
+        <span class="text-sm text-white/70">ComfyUI URL</span>
+        <input
+          class="kin-field mt-1 font-mono"
+          bind:value={comfyui.base_url}
+          placeholder="http://192.168.1.25:8188"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <p class="text-xs text-white/50 mt-1">
+          Point at any ComfyUI server reachable from this Mac. Must have the
+          <code>z_image_turbo_bf16</code> + <code>z_image_bf16</code> models
+          installed for <code>/pic</code> and <code>/picHQ</code> respectively
+          (same setup as Olares One).
+        </p>
+      </label>
+
+      <div class="flex items-center gap-2 flex-wrap">
+        <button
+          class="kin-btn"
+          type="button"
+          onclick={testComfy}
+          disabled={comfyTestState === 'testing'}
+        >
+          {#if comfyTestState === 'testing'}
+            <Loader2 size={14} class="animate-spin" /> Testing…
+          {:else}
+            Test image-gen
+          {/if}
+        </button>
+        {#if comfyTestState === 'ok'}
+          <span class="text-xs text-emerald-300">✓ {comfyTestMsg}</span>
+        {:else if comfyTestState === 'fail'}
+          <span class="text-xs text-red-300">✗ {comfyTestMsg}</span>
+        {/if}
       </div>
     </div>
     {/if}

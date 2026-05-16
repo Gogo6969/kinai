@@ -217,6 +217,79 @@ pub async fn test_vision_endpoint(args: TestVisionArgs) -> Result<TestVisionResu
     }
 }
 
+#[tauri::command]
+pub async fn set_comfy_config(
+    state: tauri::State<'_, SharedState>,
+    comfyui: crate::config::ComfyConfig,
+) -> Result<AppConfig> {
+    let new_cfg = {
+        let mut cfg = state.config.write();
+        cfg.comfyui = comfyui;
+        cfg.save().map_err(err)?;
+        cfg.clone()
+    };
+    Ok(new_cfg)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TestComfyArgs {
+    pub base_url: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TestComfyResult {
+    pub ok: bool,
+    pub latency_ms: u64,
+    pub error: Option<String>,
+}
+
+/// Ping a ComfyUI server's `/system_stats` endpoint. Used by the
+/// Settings UI's "Test image-gen" button. No image is generated — just
+/// confirms the URL is reachable and returns valid JSON.
+#[tauri::command]
+pub async fn test_comfy_endpoint(args: TestComfyArgs) -> Result<TestComfyResult> {
+    let started = std::time::Instant::now();
+    let base = args.base_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return Ok(TestComfyResult {
+            ok: false,
+            latency_ms: 0,
+            error: Some("URL is empty".into()),
+        });
+    }
+    let url = format!("{base}/system_stats");
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return Ok(TestComfyResult {
+                ok: false,
+                latency_ms: started.elapsed().as_millis() as u64,
+                error: Some(format!("http client init: {e}")),
+            })
+        }
+    };
+    match client.get(&url).send().await {
+        Ok(r) if r.status().is_success() => Ok(TestComfyResult {
+            ok: true,
+            latency_ms: started.elapsed().as_millis() as u64,
+            error: None,
+        }),
+        Ok(r) => Ok(TestComfyResult {
+            ok: false,
+            latency_ms: started.elapsed().as_millis() as u64,
+            error: Some(format!("HTTP {}", r.status())),
+        }),
+        Err(e) => Ok(TestComfyResult {
+            ok: false,
+            latency_ms: started.elapsed().as_millis() as u64,
+            error: Some(e.to_string()),
+        }),
+    }
+}
+
 // ---- Backend detection ----
 
 #[tauri::command]

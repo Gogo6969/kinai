@@ -231,6 +231,26 @@ impl Default for VisionSettings {
     }
 }
 
+/// Image generation via ComfyUI. Empty `base_url` means disabled —
+/// no `/pic` or `/picHQ` slash commands will be advertised, and any
+/// attempt to invoke them returns a "no image-gen endpoint" error.
+///
+/// `base_url` is a ComfyUI server reachable from the host machine
+/// (e.g. http://192.168.1.25:8188). Same provider CCC chat targets.
+/// The host calls /prompt to submit a workflow, polls /history/<id>,
+/// fetches the result via /view, saves it to ~/.kinai/pics/, and serves
+/// it back to clients through /v1/pic/<filename>.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ComfyConfig {
+    /// ComfyUI base URL. Empty = feature disabled.
+    #[serde(default)]
+    pub base_url: String,
+    /// Which workflow `/pic` (without HQ) uses. Default "zimage" (Z-Image
+    /// Turbo, 8 steps, fast). `/picHQ` always uses "zimagehq".
+    #[serde(default)]
+    pub default_model: String,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
     pub mode: Mode,
@@ -248,6 +268,8 @@ pub struct AppConfig {
     pub tools: ToolSettings,
     #[serde(default)]
     pub vision: VisionSettings,
+    #[serde(default)]
+    pub comfyui: ComfyConfig,
 }
 
 impl AppConfig {

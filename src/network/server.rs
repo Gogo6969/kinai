@@ -60,6 +60,8 @@ pub async fn start(state: SharedState, app: AppHandle) -> Result<()> {
         // Legacy single-platform routes (v0.2.x clients still hit these).
         .route("/v1/update/bundle.tar.gz", get(super::updates::bundle_legacy))
         .route("/v1/update/bundle.tar.gz.sig", get(super::updates::signature_legacy))
+        // Generated images from /pic + /picHQ slash commands.
+        .route("/v1/pic/{filename}", get(super::pics::serve_pic))
         .route("/kin", any(ws_upgrade))
         .with_state(axum_state);
 
@@ -447,6 +449,37 @@ async fn run_chat_turn(
     let _ = tx.send(Envelope::Message { message: user_msg.clone() });
 
     let cfg = s.app.config.read().clone();
+
+    // Slash commands are intercepted BEFORE the LLM pipeline. The user
+    // message is already persisted above so the chat history shows their
+    // exact input ("/pic 1280x720 sunset over Miami"); the synthetic
+    // assistant reply below shows the resulting image (or a usage hint /
+    // error if generation fails).
+    if let Some(reply) = handle_slash_command(s, &cfg, content).await {
+        let started_at = std::time::Instant::now();
+        let mut assistant_msg = s
+            .app
+            .db
+            .append_message(thread_id, "assistant", "KinAI", &reply, &[])
+            .await?;
+        let total_ms = started_at.elapsed().as_millis() as u64;
+        let metrics = crate::network::protocol::TurnMetricsWire {
+            first_token_ms: 0,
+            total_ms,
+            output_tokens: 0,
+            tps: 0.0,
+        };
+        let metrics_json = serde_json::to_value(&metrics).unwrap_or(serde_json::Value::Null);
+        let _ = s.app.db.set_message_metrics(&assistant_msg.id, &metrics_json).await;
+        assistant_msg.metrics = Some(metrics_json);
+        let _ = tx.send(Envelope::AssistantDone {
+            client_msg_id: client_msg_id.to_string(),
+            message: assistant_msg,
+            metrics,
+        });
+        return Ok(());
+    }
+
     let messages =
         context::builder::build_context(&s.app.db, &cfg, context_peer, thread_id, &user_msg)
             .await?;
@@ -550,6 +583,106 @@ async fn run_chat_turn(
         tracing::warn!("summarizer: {e:?}");
     }
     Ok(())
+}
+
+/// Return the assistant's reply text for slash commands we handle
+/// natively (no LLM call), or `None` if the message isn't a recognized
+/// command and should fall through to the regular chat pipeline.
+///
+/// Commands:
+///   /pic <prompt>          → ComfyUI Z-Image Turbo
+///   /picHQ <prompt>        → ComfyUI Z-Image Base HQ
+///   /help, ?               → list of available commands
+async fn handle_slash_command(
+    s: &AxumState,
+    cfg: &AppConfig,
+    content: &str,
+) -> Option<String> {
+    let trimmed = content.trim();
+
+    // /help and ? — always available.
+    if trimmed.eq_ignore_ascii_case("/help") || trimmed == "?" {
+        let comfy_on = crate::comfyui::is_configured(&cfg.comfyui.base_url);
+        let mut lines: Vec<String> = vec![
+            "**Available slash commands**".into(),
+            "".into(),
+        ];
+        if comfy_on {
+            lines.push("- `/pic <prompt>` — generate an image (fast, ~5s). Optional `WxH` prefix: `/pic 1280x720 sunset over Miami`".into());
+            lines.push("- `/picHQ <prompt>` — generate a higher-quality image (slower, ~30s)".into());
+        } else {
+            lines.push("- `/pic`, `/picHQ` — *(image generation not configured on this host — ask the host owner to set a ComfyUI URL in Settings → Image generation)*".into());
+        }
+        lines.push("- `/help` or `?` — show this list".into());
+        return Some(lines.join("\n"));
+    }
+
+    // /pic and /picHQ
+    if let Some((model, width, height, prompt)) = crate::comfyui::parse_slash(trimmed) {
+        if !crate::comfyui::is_configured(&cfg.comfyui.base_url) {
+            return Some(format!(
+                "**Image generation isn't configured on this host.**\n\nThe host owner can enable it in **Settings → Image generation** by pointing it at a ComfyUI server (e.g. `http://192.168.1.25:8188`)."
+            ));
+        }
+        if prompt.is_empty() {
+            return Some(format!(
+                "Usage: `/{slug} [WxH] <prompt>`\n\nExample: `/{slug} 1280x720 a sunset over Miami`\n\nDefault size is 1280×720 (or 1024×1024 for /picHQ).",
+                slug = model.slug()
+            ));
+        }
+        let started = std::time::Instant::now();
+        match crate::comfyui::generate(
+            &cfg.comfyui.base_url,
+            model,
+            &prompt,
+            width,
+            height,
+        )
+        .await
+        {
+            Ok(img) => {
+                // Build an absolute URL clients can use directly — same
+                // form the invite audience uses, so it's reachable from
+                // every paired family member regardless of which Mac/PC
+                // they're on.
+                let host_http = http_origin_for(s)
+                    .unwrap_or_else(|| String::from("http://127.0.0.1:4847"));
+                let url = format!("{host_http}{}", img.url_path);
+                Some(format!(
+                    "![{alt}]({url})\n\n{prompt}\n\n_{label} · {w}×{h} · {secs:.1}s_",
+                    alt = prompt.chars().take(120).collect::<String>(),
+                    url = url,
+                    prompt = prompt,
+                    label = model.label(),
+                    w = width,
+                    h = height,
+                    secs = img.elapsed_secs,
+                ))
+            }
+            Err(e) => {
+                let elapsed = started.elapsed().as_secs_f64();
+                Some(format!(
+                    "**/{} failed** after {:.1}s: {}",
+                    model.slug(),
+                    elapsed,
+                    e
+                ))
+            }
+        }
+    } else {
+        None
+    }
+}
+
+/// HTTP origin for the host (e.g. http://192.168.1.56:4847). Used to
+/// build absolute URLs in slash-command replies so clients can fetch
+/// generated images regardless of which device they're on.
+fn http_origin_for(s: &AxumState) -> Option<String> {
+    let cfg = s.app.config.read().clone();
+    let host = local_ip_address::local_ip()
+        .map(|ip| ip.to_string())
+        .unwrap_or_else(|_| cfg.host.bind_addr.clone());
+    Some(format!("http://{host}:{}", cfg.host.port))
 }
 
 pub async fn stop(state: SharedState) -> Result<()> {

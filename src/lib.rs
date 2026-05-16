@@ -4,6 +4,7 @@
 pub mod attachments;
 pub mod auth;
 pub mod commands;
+pub mod comfyui;
 pub mod config;
 pub mod context;
 pub mod db;
@@ -126,6 +127,8 @@ pub fn run() {
             commands::set_theme,
             commands::set_vision_settings,
             commands::test_vision_endpoint,
+            commands::set_comfy_config,
+            commands::test_comfy_endpoint,
             commands::detect_backends,
             commands::scan_local_network,
             commands::rescan_kinai_hosts,

@@ -2,6 +2,7 @@
 
 pub mod client;
 pub mod invite;
+pub mod pics;
 pub mod protocol;
 pub mod ratelimit;
 pub mod server;
