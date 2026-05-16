@@ -71,8 +71,13 @@
         {cs === null ? 'Connecting' : cs.connected ? 'Connected to' : 'Disconnected from'}
       </div>
       <div class="text-xs text-white/70 px-2 truncate">
-        {app.config.client.host_label}
+        {app.hostInfo?.family_name ?? app.config.client.host_label}
       </div>
+      {#if app.hostInfo?.family_name && app.config.client.host_label && app.hostInfo.family_name !== app.config.client.host_label}
+        <div class="text-[10px] text-white/40 px-2 truncate">
+          joined as {app.config.client.host_label}
+        </div>
+      {/if}
       {#if cs && !cs.connected && cs.error}
         <div class="text-[11px] text-red-300/80 px-2 mt-1 break-words">{cs.error}</div>
       {/if}
