@@ -7,9 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  # macOS-only. A "CI green on Linux/Windows" badge would imply those
-  # builds are usable; they aren't until someone validates the bundles
-  # on a real machine. Better to skip the runners than to lie.
+  # macOS only. Windows and Linux are coming.
   build:
     strategy:
       fail-fast: false

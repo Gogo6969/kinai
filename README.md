@@ -13,24 +13,17 @@
 [![Rust](https://img.shields.io/badge/Rust-stable-CE422B.svg)](https://www.rust-lang.org/)
 [![SvelteKit](https://img.shields.io/badge/SvelteKit-2-FF3E00.svg)](https://kit.svelte.dev/)
 [![macOS](https://img.shields.io/badge/macOS-available-22c55e.svg)](https://github.com/Gogo6969/kinai/releases)
-[![Windows](https://img.shields.io/badge/Windows-coming%20soon-9ca3af.svg)](https://github.com/Gogo6969/kinai/issues)
-[![Linux](https://img.shields.io/badge/Linux-coming%20soon-9ca3af.svg)](https://github.com/Gogo6969/kinai/issues)
 
 </div>
 
-> [!IMPORTANT]
-> **v0.2.x is macOS-only (Apple Silicon + Intel).** The codebase is
-> cross-platform Rust + SvelteKit, the protocol is OS-agnostic, and the
-> build pipeline already includes Windows + Linux runners — but the
-> binaries for those platforms aren't validated yet. Windows ships in
-> **v0.3**, Linux in **v0.4**. Until then, the host *and* clients must
-> run on a Mac.
+> [!NOTE]
+> macOS only for now. Windows and Linux are coming.
 
 ---
 
 ## ⚡ Five-second pitch
 
-You already run a local LLM on one of your machines — Ollama, LM Studio, vLLM, llama.cpp, whatever. KinAI is the **family-sharing layer** on top of it. Install KinAI on that same Mac in **Host Mode** to expose your model to the family. Install it on every other device in **Client Mode** (lightweight, no models downloaded) and join with a 6-character invite. Press **`Cmd+Space`** (macOS) or **`Ctrl+Space`** (Windows/Linux) from any app, ask anything, get an answer.
+You already run a local LLM on one of your machines — Ollama, LM Studio, vLLM, llama.cpp, whatever. KinAI is the **family-sharing layer** on top of it. Install KinAI on that same Mac in **Host Mode** to expose your model to the family. Install it on every other device in **Client Mode** (lightweight, no models downloaded) and join with a 6-character invite. Press **`Cmd+Space`** from any app, ask anything, get an answer.
 
 100% local. 100% private. 100% free. MIT licensed forever.
 
@@ -55,10 +48,8 @@ You already run a local LLM on one of your machines — Ollama, LM Studio, vLLM,
 
 ## 🚀 Install on your Mac
 
-KinAI runs on macOS today (Apple Silicon + Intel). Windows + Linux are
-coming in v0.3 / v0.4. You'll install KinAI **twice**: once on the Mac
-that has the LLM (the *Host*), and once on every other Mac in your
-family (the *Clients*).
+You'll install KinAI **twice**: once on the Mac that has the LLM (the
+*Host*), and once on every other Mac in your family (the *Clients*).
 
 ### Step 1 — Get a local LLM running on the host Mac
 
@@ -86,8 +77,8 @@ on-ramp:
 
 1. Go to the **[Releases page](https://github.com/Gogo6969/kinai/releases/latest)**.
 2. Download the matching DMG under *Assets*:
-   - **Apple Silicon** (M1/M2/M3/M4): `KinAI_0.2.5_aarch64.dmg`
-   - **Intel Mac**: *not yet built in v0.2.5 — [open an issue](https://github.com/Gogo6969/kinai/issues/new) and we'll prioritize.*
+   - **Apple Silicon** (M1/M2/M3/M4): `KinAI_*_aarch64.dmg`
+   - **Intel Mac**: `KinAI_*_x64.dmg`
 3. Double-click the downloaded `.dmg` file. A new window opens with
    the KinAI icon and an `Applications` shortcut.
 4. **Drag `KinAI` onto the `Applications` folder shortcut** inside that
@@ -171,7 +162,7 @@ When a thread exceeds 30 unsummarized messages, the oldest are folded into a lon
 | Global hotkey overlay (Spotlight-style, translucent) | ✅ |
 | Host mode with **auto-detection** of Ollama, LM Studio, vLLM, llama.cpp, Open WebUI | ✅ |
 | Client mode with one-click invite join (6-char code or QR) | ✅ |
-| Push-to-talk **voice input** (macOS Speech Recognition, Edge WebView2 on Windows) | ✅ |
+| Push-to-talk **voice input** (macOS Speech Recognition) | ✅ |
 | **PDF attachments** — drag-drop a PDF, model reads the text | ✅ |
 | **Image attachments** + vision routing (CCC-style: chat-model-if-capable → Gemini Flash → Claude Haiku failover) | ✅ |
 | **Image search** tool — find pictures via Wikimedia Commons (free) or Exa | ✅ |
@@ -212,9 +203,11 @@ When a thread exceeds 30 unsummarized messages, the oldest are folded into a lon
 |---|---|---|
 | **v0.1** | MVP | Hotkey overlay, host/client, invite + JWT, tools, mDNS *(macOS)* |
 | **v0.2** ⬅ *current* | Vision, attachments, family-grade updates *(macOS)* | PDFs, image attach + vision routing, image search inline, host-distributed signed updates, per-peer context isolation, reconnect supervisor |
-| **v0.3** | **Windows support** + image generation | Validated Windows builds via CI, ComfyUI / A1111 routing, web-page ingest |
-| **v0.4** | **Linux support** + RAG basics | Validated Linux builds (.deb / AppImage), doc upload + vector search |
+| **v0.3** | Image generation + web-page ingest | ComfyUI / A1111 routing, page-to-context |
+| **v0.4** | RAG basics | Doc upload + vector search |
 | **v0.5** | Mobile + voice | iOS / Android via Tauri Mobile, Whisper STT + Piper TTS, voice-thread memory |
+
+*Windows and Linux clients are coming.*
 | **v1.0** | Plugins & polish | Custom-tool marketplace, multi-host switcher, admin dashboard, Olares One deep integration |
 | **v2.0+** | Family knowledge | Advanced RAG over photos / PDFs / recipes, real-time translation |
 
@@ -225,7 +218,7 @@ All releases stay 100% open-source, local-first, and free forever.
 ```
 ┌──────────────────────────────────────────────────────────┐
 │  Family devices (Clients)                                 │
-│  macOS · Windows · Linux · (iOS/Android v0.4)             │
+│  macOS                                                    │
 │         ▼ hotkey / chat / attach PDF or photo ▼           │
 │        KinAI Overlay  →  WS Envelope                      │
 └──────────────────────────┬───────────────────────────────┘
@@ -312,10 +305,8 @@ pnpm install                    # also installs frontend workspace
 pnpm tauri dev                  # dev build (auto-reload)
 pnpm tauri build                # production binary for this OS
 
-# Per-OS bundle output:
+# Bundle output:
 #   macOS:   target/release/bundle/dmg/*.dmg + macos/*.app.tar.gz (updater)
-#   Windows: target/release/bundle/{msi,nsis}/*
-#   Linux:   target/release/bundle/{deb,appimage,rpm}/*
 
 # Signing updater bundles (optional, host-distributed updates need this):
 #   pnpm tauri signer generate -w ~/.kinai/keys/updater.key --ci

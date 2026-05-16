@@ -231,12 +231,7 @@ sync over your LAN, and self-distributed updates.
 
 ### Known limitations
 
-- No Windows build yet. The GitHub Actions workflow includes a
-  `windows-latest` runner but the first real Windows compile has not
-  been validated. See `Compatibility` in the README.
-- The host serves bundles only for its own architecture (a Mac mini
-  host won't have Windows binaries staged for Windows clients to
-  auto-update until CI fills `~/.kinai/updates/<v>/windows-x86_64/`).
+- macOS only. Windows and Linux are coming.
 - The vision pipeline disables tools for image turns — most providers
   reject function calling on multipart messages and we'd rather get
   a clean image analysis than silent failures.
