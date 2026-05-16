@@ -12,6 +12,7 @@ pub mod discovery;
 pub mod hotkey;
 pub mod llm;
 pub mod network;
+pub mod slash;
 pub mod tools;
 pub mod tray;
 pub mod updater;

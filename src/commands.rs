@@ -632,6 +632,48 @@ pub async fn send_message(
     let _ = app.emit("kinai://message", &user_msg);
 
     let cfg = state.config.read().clone();
+
+    // Slash commands (/pic, /picHQ, /help, ?) are intercepted BEFORE the
+    // LLM pipeline. Same handler the WebSocket dispatcher uses for client
+    // peers — keeps the two chat paths identical.
+    if let Some(reply) = crate::slash::handle(&cfg, &args.content).await {
+        let started_at = std::time::Instant::now();
+        let mut assistant_msg = state
+            .db
+            .append_message(&args.thread_id, "assistant", "KinAI", &reply, &[])
+            .await
+            .map_err(err)?;
+        let total_ms = started_at.elapsed().as_millis() as u64;
+        let metrics = TurnMetrics {
+            first_token_ms: 0,
+            total_ms,
+            output_tokens: 0,
+            tps: 0.0,
+        };
+        let metrics_json = serde_json::to_value(&metrics).unwrap_or(serde_json::Value::Null);
+        let _ = state
+            .db
+            .set_message_metrics(&assistant_msg.id, &metrics_json)
+            .await;
+        assistant_msg.metrics = Some(metrics_json);
+        let _ = app.emit("kinai://message", &assistant_msg);
+        // Same final emit shape the LLM path uses below, so the UI's
+        // assistant-done listener treats this turn identically.
+        let _ = app.emit(
+            "kinai://assistant-done",
+            serde_json::json!({
+                "client_msg_id": &args.client_msg_id,
+                "message": &assistant_msg,
+                "metrics": &metrics,
+            }),
+        );
+        return Ok(SendMessageResult {
+            user_message: user_msg,
+            assistant_message: assistant_msg,
+            metrics,
+        });
+    }
+
     let messages =
         context::builder::build_context(&state.db, &cfg, db::HOST_PEER, &args.thread_id, &user_msg)
             .await
