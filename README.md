@@ -53,29 +53,92 @@ You already run a local LLM on one of your machines — Ollama, LM Studio, vLLM,
 
 </div>
 
-## 🚀 60-second install
+## 🚀 Install on your Mac
 
-### Host (the machine with your local LLM)
+KinAI runs on macOS today (Apple Silicon + Intel). Windows + Linux are
+coming in v0.3 / v0.4. You'll install KinAI **twice**: once on the Mac
+that has the LLM (the *Host*), and once on every other Mac in your
+family (the *Clients*).
 
-```bash
-# 1. Get any OpenAI-compatible LLM running. The most popular:
-ollama pull llama3.1:8b   # or: download LM Studio, vLLM, llama.cpp …
+### Step 1 — Get a local LLM running on the host Mac
 
-# 2. Install KinAI from Releases, then:
-kinai          # opens setup wizard → click "Host KinAI here"
-               # KinAI auto-detects Ollama/LM Studio/vLLM/llama.cpp
-```
+KinAI doesn't bundle a model — it connects to one you already have. If
+you don't have one yet, **[Ollama](https://ollama.com)** is the easiest
+on-ramp:
 
-The tray icon appears. Click **Create Invite** → a 6-character code + QR pop up.
+1. Download Ollama from <https://ollama.com> (one-click installer).
+2. Open **Terminal** (`Cmd+Space` → type "Terminal" → Enter — we'll
+   fix the Spotlight conflict in a minute).
+3. Run:
 
-### Client (every other family device)
+   ```bash
+   ollama pull llama3.1:8b
+   ```
 
-```bash
-kinai          # → "Join an existing host"
-               # paste the code, type your name, done
-```
+   That's about a 5 GB download. When it's done, run `ollama list` to
+   verify the model is installed.
 
-Press the global hotkey anywhere → KinAI overlay drops down → ask → done.
+> Other backends KinAI auto-detects on first launch: **LM Studio**,
+> **vLLM**, **llama.cpp server**, **Open WebUI**. Any
+> OpenAI-compatible endpoint works.
+
+### Step 2 — Install KinAI on the host Mac
+
+1. Go to the **[Releases page](https://github.com/Gogo6969/kinai/releases/latest)**.
+2. Download the matching DMG under *Assets*:
+   - **Apple Silicon** (M1/M2/M3/M4): `KinAI_0.2.5_aarch64.dmg`
+   - **Intel Mac**: *not yet built in v0.2.5 — [open an issue](https://github.com/Gogo6969/kinai/issues/new) and we'll prioritize.*
+3. Double-click the downloaded `.dmg` file. A new window opens with
+   the KinAI icon and an `Applications` shortcut.
+4. **Drag `KinAI` onto the `Applications` folder shortcut** inside that
+   window.
+5. Open your **Applications** folder, find `KinAI`, and **right-click
+   → Open** (not double-click — the right-click is important the
+   first time).
+6. macOS will warn: *"KinAI can't be opened because Apple cannot check
+   it for malicious software."* This is normal for any app that
+   isn't paid into the Apple Developer Program. Click **Open** in
+   that dialog. You only have to do this once per Mac.
+7. KinAI launches → click **🏠 Host KinAI here**.
+8. The wizard auto-detects your local LLM in a few seconds → pick it
+   → **Continue**, confirm the search engine + (optional) Vision
+   endpoint → **Start hosting**.
+9. From the chat sidebar, click **Manage family → + Invite**. You'll
+   get a **6-character code** and a QR code — share one with each
+   family member.
+
+### Step 3 — Install KinAI on every other Mac in the family
+
+On each other Mac:
+
+1. Download the same DMG from the Releases page.
+2. Drag `KinAI.app` into Applications, right-click → **Open** (same
+   Gatekeeper dance as Step 2.5–6 above).
+3. Click **👋 Join an existing host**.
+4. Type your name (this is how the host sees you in *Manage family*).
+5. Either pick the host from the auto-discovered list, **or** type the
+   **6-character code** from the host. Click **Connect**.
+6. Done. Start chatting.
+
+### Daily use
+
+Press **`Cmd+Space`** anywhere to summon the KinAI overlay (like
+Spotlight, but for your family's AI). Type, press Enter, get an
+answer.
+
+> **Hotkey conflict with Spotlight?** `Cmd+Space` is the default for
+> both. Pick one to remap in **System Settings → Keyboard → Keyboard
+> Shortcuts → Spotlight** (change Spotlight to e.g.
+> `Cmd+Option+Space`), or change KinAI's hotkey in **KinAI → Settings
+> → Overlay → Global hotkey**.
+
+### Updates
+
+After everyone is on **v0.2.5 or later**, future updates flow
+**automatically from your host to the rest of the family** — no
+download needed. Each client shows a *"KinAI vX.Y.Z is available ·
+from your host"* banner the moment the host ships a new version; click
+**Install & restart** and you're on the latest.
 
 ## 🧠 How context never gets lost
 
