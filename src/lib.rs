@@ -177,6 +177,26 @@ pub fn run() {
                 if let Some(w) = app.get_webview_window("main") {
                     let _ = w.show();
                     let _ = w.set_focus();
+
+                    // Intercept the close button (X) so the window hides
+                    // instead of being destroyed. Without this, on Windows
+                    // the user can close the window, the process stays
+                    // alive in the tray (which means the global hotkey
+                    // still works), but launching KinAI again from the
+                    // Start menu trips the single-instance handler which
+                    // calls show() on a destroyed window — silent no-op,
+                    // user sees nothing.
+                    //
+                    // Now the window is just hidden; show()/single-instance
+                    // can bring it back. Real quit goes via tray → Quit or
+                    // Cmd-Q.
+                    let win = w.clone();
+                    w.on_window_event(move |event| {
+                        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                            let _ = win.hide();
+                            api.prevent_close();
+                        }
+                    });
                 }
 
                 match st.config.read().mode {
