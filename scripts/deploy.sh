@@ -244,9 +244,15 @@ if [[ "$OS" == "Darwin" && "$APPLE_ENABLED" == "1" ]]; then
   cp -R "$SIGN_DIR/KinAI.app" target/release/bundle/macos/KinAI.app
   # And rebuild the updater tarball + signature from the signed .app,
   # since tauri's earlier (unsigned-build) tarball is stale.
+  #
+  # COPYFILE_DISABLE=1 is CRITICAL here. Without it, macOS BSD `tar`
+  # silently includes `._*` AppleDouble metadata files alongside every
+  # real entry — Tauri's updater unpacks via Rust's `tar` crate, which
+  # then tries to write `._KinAI.app` next to `KinAI.app` and fails
+  # with the user-visible error "failed to unpack". Don't remove.
   if [[ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]]; then
     echo "→ re-tarring + minisigning signed .app for updater"
-    tar -C "$SIGN_DIR" -czf "$SIGN_DIR/KinAI.app.tar.gz" KinAI.app
+    COPYFILE_DISABLE=1 tar -C "$SIGN_DIR" -czf "$SIGN_DIR/KinAI.app.tar.gz" KinAI.app
     pnpm tauri signer sign \
       --private-key "$TAURI_SIGNING_PRIVATE_KEY" --password "" \
       "$SIGN_DIR/KinAI.app.tar.gz" >/dev/null
