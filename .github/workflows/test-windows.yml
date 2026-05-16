@@ -1,0 +1,69 @@
+name: Test Windows build
+
+# Builds Windows .msi + .exe and uploads them as GitHub Actions
+# artifacts ONLY — never attached to a public Release.
+#
+# Purpose: produce a binary you can install on a real Windows machine
+# to validate it actually works (UI launches, hotkey fires, mDNS finds
+# the host, chat round-trips) BEFORE we let it anywhere near end users.
+#
+# Trigger: manually via the Actions tab, or:
+#   gh workflow run test-windows.yml -R Gogo6969/kinai
+#
+# Download the artifact from:
+#   https://github.com/Gogo6969/kinai/actions/workflows/test-windows.yml
+#   → click the latest run → scroll to "Artifacts" at the bottom
+#   → download "kinai-windows-x86_64"
+#
+# Artifacts auto-expire after 14 days. They are NOT shown on the public
+# Releases page. Only repo collaborators can download them.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile=false
+
+      # No signing yet — first goal is "does it launch at all on Windows".
+      # Code-signing for Windows is a separate step (needs a code-signing
+      # cert from DigiCert/Sectigo/etc., ~$200/year) and will come later
+      # once the binary is proven to work.
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          args: '--target x86_64-pc-windows-msvc'
+
+      # Tauri-action defaults to creating a draft release when run on a
+      # tag. On workflow_dispatch with no tag it skips the release and
+      # leaves the bundle under target/. Grab everything and stash it
+      # as a workflow artifact.
+      - name: Upload bundle artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kinai-windows-x86_64
+          path: |
+            target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          retention-days: 14
+          if-no-files-found: error
