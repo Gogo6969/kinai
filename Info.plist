@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>KinAI uses the microphone for voice input — your audio stays on this device.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>KinAI uses speech recognition to convert your voice into text for the chat.</string>
+</dict>
+</plist>

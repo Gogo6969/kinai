@@ -1,0 +1,341 @@
+//! Client-side WebSocket dialer.
+//!
+//! `supervise` is the long-running task spawned per client session — it
+//! owns the reconnect loop with exponential backoff (2s → 4s → … capped
+//! at 30s) so a host that comes online after the client started, or that
+//! restarts mid-session, gets picked back up without user intervention.
+//! Manual "Reconnect now" actions wake the sleeper through the
+//! `NetState.client_wake` Notify.
+
+use std::time::Duration;
+
+use anyhow::Result;
+use futures_util::{SinkExt, StreamExt};
+use tauri::{AppHandle, Emitter};
+use tokio::sync::mpsc;
+use tokio_tungstenite::tungstenite::Message as WsMessage;
+
+use crate::config::Mode;
+use crate::SharedState;
+
+use super::protocol::Envelope;
+
+pub async fn auto_connect(state: SharedState, app: AppHandle) -> Result<()> {
+    let (url, token) = {
+        let cfg = state.config.read();
+        match (cfg.client.host_url.clone(), cfg.client.host_token.clone()) {
+            (Some(u), Some(t)) => (u, t),
+            _ => anyhow::bail!("no host configured"),
+        }
+    };
+    supervise(state, app, url, token).await;
+    Ok(())
+}
+
+/// Wraps `connect` in a reconnect loop. Exits when the user switches
+/// away from Client mode, clears their credentials, or the task is
+/// `.abort()`ed (e.g. by `disconnect_client` or by `connect_client`
+/// installing a replacement).
+pub async fn supervise(state: SharedState, app: AppHandle, url: String, token: String) {
+    let wake = state.net.lock().await.client_wake.clone();
+    let mut backoff = Duration::from_secs(2);
+    let max_backoff = Duration::from_secs(30);
+
+    loop {
+        if !still_a_client(&state) {
+            tracing::info!("client supervise: no credentials / not Client mode, exiting");
+            return;
+        }
+
+        // Read credentials fresh each iteration so a connect_client call
+        // that swaps host_url/host_token mid-loop (then wakes us) picks
+        // up the new values rather than the snapshot supervise was
+        // spawned with.
+        let (cur_url, cur_token) = {
+            let cfg = state.config.read();
+            match (cfg.client.host_url.clone(), cfg.client.host_token.clone()) {
+                (Some(u), Some(t)) => (u, t),
+                _ => {
+                    tracing::info!("client supervise: credentials cleared");
+                    return;
+                }
+            }
+        };
+        // First iteration uses the explicit args (matches old behavior);
+        // subsequent iterations always reload — keeps tests + manual
+        // unit calls deterministic.
+        let (try_url, try_token) = if backoff == Duration::from_secs(2)
+            && cur_url == url
+            && cur_token == token
+        {
+            (url.clone(), token.clone())
+        } else {
+            (cur_url, cur_token)
+        };
+
+        let result = connect(state.clone(), app.clone(), try_url, try_token).await;
+        match result {
+            Ok(()) => {
+                tracing::info!("client supervise: WS closed cleanly, will retry");
+                backoff = Duration::from_secs(2);
+            }
+            Err(e) => {
+                tracing::warn!("client supervise: WS failed: {e:?}");
+            }
+        }
+
+        if !still_a_client(&state) {
+            return;
+        }
+
+        // Sleep until the backoff elapses OR a manual reconnect fires.
+        tracing::info!("client supervise: waiting {:?} before retry", backoff);
+        tokio::select! {
+            _ = tokio::time::sleep(backoff) => {
+                backoff = (backoff * 2).min(max_backoff);
+            }
+            _ = wake.notified() => {
+                tracing::info!("client supervise: woken for immediate retry");
+                backoff = Duration::from_secs(2);
+            }
+        }
+    }
+}
+
+fn still_a_client(state: &SharedState) -> bool {
+    let cfg = state.config.read();
+    matches!(cfg.mode, Mode::Client)
+        && cfg.client.host_url.is_some()
+        && cfg.client.host_token.is_some()
+}
+
+/// Open the WebSocket to the host, install a writer task driven by an
+/// outbound channel stored on `state.net.client_tx`, and pump inbound
+/// envelopes into Tauri events for the UI to consume.
+pub async fn connect(
+    state: SharedState,
+    app: AppHandle,
+    url: String,
+    token: String,
+) -> Result<()> {
+    let display_name = state.config.read().client.display_name.clone();
+    let url_for_ws = url.trim_start_matches("kinai://").to_string();
+
+    let (ws, _) = match tokio_tungstenite::connect_async(&url_for_ws).await {
+        Ok(v) => v,
+        Err(e) => {
+            let msg = format!("Couldn't reach the KinAI host at {url}: {e}");
+            tracing::warn!("{msg}");
+            {
+                let mut stats = state.stats.write();
+                stats.client_connected = false;
+                stats.client_error = Some(msg.clone());
+            }
+            let _ = app.emit(
+                "kinai://client-status",
+                serde_json::json!({"connected": false, "error": msg.clone()}),
+            );
+            let _ = app.emit("kinai://error", &msg);
+            return Err(anyhow::anyhow!(msg));
+        }
+    };
+    let (mut sink, mut source) = ws.split();
+
+    // Outbound channel + writer task. We store the tx half on the shared
+    // NetState so command handlers (`send_message` in Client mode, etc.)
+    // can hand envelopes to the live socket without holding the lock for
+    // the duration of the network call.
+    let (tx, mut rx) = mpsc::unbounded_channel::<Envelope>();
+    {
+        let mut net = state.net.lock().await;
+        net.client_tx = Some(tx.clone());
+    }
+
+    // Hello first — every other frame waits behind this.
+    let hello = Envelope::Hello {
+        token,
+        display_name,
+        client_version: env!("CARGO_PKG_VERSION").into(),
+    };
+    if let Err(e) = sink
+        .send(WsMessage::Text(serde_json::to_string(&hello)?.into()))
+        .await
+    {
+        let msg = format!("KinAI host accepted the connection but rejected hello: {e}");
+        {
+            let mut stats = state.stats.write();
+            stats.client_connected = false;
+            stats.client_error = Some(msg.clone());
+        }
+        let _ = app.emit(
+            "kinai://client-status",
+            serde_json::json!({"connected": false, "error": msg.clone()}),
+        );
+        let _ = app.emit("kinai://error", &msg);
+        state.net.lock().await.client_tx = None;
+        return Err(anyhow::anyhow!(msg));
+    }
+
+    {
+        let mut stats = state.stats.write();
+        stats.client_connected = true;
+        stats.client_error = None;
+    }
+    let _ = app.emit(
+        "kinai://client-status",
+        serde_json::json!({"connected": true, "url": url}),
+    );
+
+    // Re-check for updates on every successful (re)connect. The periodic
+    // 4-hour poll is the steady-state fallback; this immediate check
+    // closes the "host shipped a new version, client just (re)connected"
+    // window so updates feel instantaneous instead of taking up to 4h
+    // to be discovered. Spawned so the WS read loop isn't blocked.
+    let app_for_update = app.clone();
+    tauri::async_runtime::spawn(async move {
+        // Small delay so the WS Hello + Welcome round-trip can finish
+        // first — keeps the user-visible "Connected" indicator from
+        // racing with an update banner appearing on the same tick.
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        crate::updater::check_once(&app_for_update).await;
+    });
+
+    let writer = tokio::spawn(async move {
+        while let Some(env) = rx.recv().await {
+            let Ok(text) = serde_json::to_string(&env) else { continue };
+            if sink.send(WsMessage::Text(text.into())).await.is_err() {
+                break;
+            }
+        }
+    });
+
+    while let Some(frame) = source.next().await {
+        let frame = match frame {
+            Ok(f) => f,
+            Err(e) => {
+                tracing::warn!("ws read error: {e}");
+                break;
+            }
+        };
+        if frame.is_close() {
+            break;
+        }
+        let text = match frame.to_text() {
+            Ok(t) => t.to_string(),
+            Err(_) => continue,
+        };
+        let env: Envelope = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("bad envelope from host: {e}");
+                continue;
+            }
+        };
+        match env {
+            Envelope::Token { client_msg_id, delta } => {
+                let _ = app.emit(
+                    "kinai://token",
+                    serde_json::json!({"client_msg_id": client_msg_id, "delta": delta}),
+                );
+            }
+            Envelope::Reasoning { client_msg_id, delta } => {
+                let _ = app.emit(
+                    "kinai://reasoning",
+                    serde_json::json!({"client_msg_id": client_msg_id, "delta": delta}),
+                );
+            }
+            Envelope::Tool { client_msg_id, event } => {
+                let _ = app.emit(
+                    "kinai://tool",
+                    serde_json::json!({"client_msg_id": client_msg_id, "event": event}),
+                );
+            }
+            Envelope::Message { message } => {
+                let _ = app.emit("kinai://message", &message);
+            }
+            Envelope::AssistantDone {
+                client_msg_id,
+                message,
+                metrics,
+            } => {
+                let _ = app.emit(
+                    "kinai://assistant-done",
+                    serde_json::json!({
+                        "client_msg_id": client_msg_id,
+                        "message": message,
+                        "metrics": metrics,
+                    }),
+                );
+            }
+            Envelope::Welcome {
+                family_name,
+                host_version,
+                host_model,
+                host_search_engine,
+                host_vision,
+            } => {
+                {
+                    let mut stats = state.stats.write();
+                    stats.host_info = Some(crate::HostInfo {
+                        family_name: family_name.clone(),
+                        host_version: host_version.clone(),
+                        host_model: host_model.clone(),
+                        host_search_engine: host_search_engine.clone(),
+                        host_vision: host_vision.clone(),
+                    });
+                }
+                let _ = app.emit(
+                    "kinai://welcome",
+                    serde_json::json!({
+                        "family_name": family_name,
+                        "host_version": host_version,
+                        "host_model": host_model,
+                        "host_search_engine": host_search_engine,
+                        "host_vision": host_vision,
+                    }),
+                );
+            }
+            Envelope::Threads { threads } => {
+                let _ = app.emit("kinai://threads", &threads);
+            }
+            Envelope::ThreadMessages { thread_id, messages } => {
+                let _ = app.emit(
+                    "kinai://thread-loaded",
+                    serde_json::json!({"thread_id": thread_id, "messages": messages}),
+                );
+            }
+            Envelope::Error { message } => {
+                // Surface authoritative host-side errors (e.g. "invite revoked",
+                // "rate limit exceeded") on the sidebar status pill in addition
+                // to the global error toast.
+                {
+                    let mut stats = state.stats.write();
+                    stats.client_error = Some(message.clone());
+                }
+                let _ = app.emit("kinai://error", &message);
+            }
+            _ => {}
+        }
+    }
+
+    writer.abort();
+    state.net.lock().await.client_tx = None;
+    {
+        let mut stats = state.stats.write();
+        stats.client_connected = false;
+        // Leave `client_error` as whatever the host last sent (or None) so
+        // the sidebar can surface "invite revoked" / "rate limit" / etc.
+        // after a graceful close.
+    }
+    let _ = app.emit("kinai://client-status", serde_json::json!({"connected": false}));
+    Ok(())
+}
+
+pub async fn disconnect(state: SharedState) -> Result<()> {
+    let mut net = state.net.lock().await;
+    if let Some(task) = net.client.take() {
+        task.abort();
+    }
+    net.client_tx = None;
+    Ok(())
+}

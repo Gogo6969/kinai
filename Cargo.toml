@@ -1,0 +1,108 @@
+[package]
+name = "kinai"
+version = "0.2.5"
+description = "Share your private local AI with your family. One Mac runs the LLM, every family device joins via invite — no cloud, no accounts."
+authors = ["KinAI Contributors"]
+license = "MIT"
+repository = "https://github.com/Gogo6969/kinai"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "kinai"
+path = "src/lib.rs"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "kinai"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# --- Tauri shell ---
+# `macos-private-api` enables NSView/NSWindow plumbing for fullscreen +
+# transparency on Cocoa. The feature must stay on at the Cargo level
+# because `tauri.conf.json` sets `app.macOSPrivateApi: true` and Tauri's
+# build script requires the two to match. On Windows/Linux it's a no-op
+# (internally `#[cfg(target_os = "macos")]`-gated), so leaving it enabled
+# cross-platform does not break non-Mac builds.
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-clipboard-manager = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-shell = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-store = "2"
+tauri-plugin-updater = "2"
+
+# --- Web server (Axum) ---
+axum = { version = "0.7", features = ["ws", "macros"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace", "limit"] }
+hyper = { version = "1", features = ["full"] }
+
+# --- Async runtime ---
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+futures-util = "0.3"
+
+# --- HTTP / streaming ---
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+eventsource-stream = "0.2"
+
+# --- Serialization ---
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# --- Database (SQLx) ---
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "macros", "migrate", "chrono", "uuid"] }
+
+# --- Auth (JWT RS256) ---
+jsonwebtoken = "9"
+rsa = { version = "0.9", features = ["pem"] }
+pkcs8 = { version = "0.10", features = ["pem"] }
+rand = "0.8"
+
+# --- Networking helpers ---
+mdns-sd = "0.11"
+local-ip-address = "0.6"
+
+# --- Utility ---
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+once_cell = "1"
+parking_lot = "0.12"
+dirs = "5"
+
+# --- Crypto / hashing ---
+sha2 = "0.10"
+
+# --- Document parsing (chat attachments) ---
+# Pure-Rust PDF text extraction. Used by run_chat_turn to inline a
+# user-attached PDF's text into the prompt — no model dependency, works
+# with any chat backend.
+pdf-extract = "0.7"
+hex = "0.4"
+base64 = "0.22"
+
+# --- Tokenization ---
+tiktoken-rs = "0.5"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+strip = "debuginfo"

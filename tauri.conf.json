@@ -1,0 +1,86 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "KinAI",
+  "version": "0.2.5",
+  "identifier": "ai.kin.desktop",
+  "build": {
+    "frontendDist": "frontend/build",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "pnpm --filter kinai-frontend dev",
+    "beforeBuildCommand": "pnpm --filter kinai-frontend build"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "KinAI",
+        "width": 1080,
+        "height": 720,
+        "minWidth": 760,
+        "minHeight": 520,
+        "visible": false,
+        "decorations": true,
+        "transparent": false,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true
+      },
+      {
+        "label": "overlay",
+        "url": "overlay/",
+        "title": "KinAI Quick Chat",
+        "width": 720,
+        "height": 96,
+        "minWidth": 480,
+        "minHeight": 64,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": true,
+        "center": true,
+        "shadow": false
+      }
+    ],
+    "security": {
+      "csp": null
+    },
+    "trayIcon": {
+      "id": "main-tray",
+      "iconPath": "public/icons/tray.png",
+      "iconAsTemplate": true,
+      "tooltip": "KinAI"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": true,
+    "macOS": {
+      "infoPlist": "Info.plist"
+    },
+    "icon": [
+      "public/icons/32x32.png",
+      "public/icons/128x128.png",
+      "public/icons/128x128@2x.png",
+      "public/icons/icon.icns",
+      "public/icons/icon.ico"
+    ],
+    "category": "Productivity",
+    "shortDescription": "Share your private local AI with your family",
+    "longDescription": "KinAI is the family-sharing layer for the local LLM you already run. One Mac hosts your Ollama / LM Studio / vLLM / llama.cpp backend; every other family device joins via a 6-character invite. Each member's chat stays private to them, end-to-end JWT-authenticated over your LAN, no cloud, no accounts."
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/Gogo6969/kinai/releases/latest/download/latest.json"
+      ],
+      "dialog": false,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEExNDg1MDM1Njk0N0NCMTEKUldRUnkwZHBOVkJJb1NPeVBYM1RVUllkZ2ZnYXg5SFQ5V09RaFVROGdxVXU2aXdnaDFiSGZaSUkK",
+      "dangerousInsecureTransportProtocol": true
+    }
+  }
+}

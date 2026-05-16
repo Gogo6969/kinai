@@ -1,0 +1,54 @@
+# Build artifacts
+target/
+build/release/
+frontend/build/
+frontend/.svelte-kit/
+frontend/node_modules/
+node_modules/
+
+# Tauri generated
+gen/
+
+# Logs / DBs
+*.log
+*.db
+*.db-shm
+*.db-wal
+
+# Runtime config (the host's own keys)
+.kinai/
+config.toml
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# Env
+.env
+.env.*
+!.env.example
+
+# CI artifacts uploaded to release
+release-artifacts/
+
+# Per-version DMG / installer archive kept locally by scripts/deploy.sh.
+# These belong in GitHub Releases, not in the repo (~14 MB each, would
+# bloat clones into hundreds of MB after a few months of iteration).
+releases/
+
+# Defensive: never accidentally commit a built installer regardless of
+# where it lands.
+*.dmg
+*.msi
+*.exe
+*.app.tar.gz
+*.app.tar.gz.sig
+*.AppImage
+*.deb
+*.rpm

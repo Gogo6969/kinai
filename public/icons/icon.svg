@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="kin-house" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#00D4C8" />
+      <stop offset="100%" stop-color="#1E3A8A" />
+    </linearGradient>
+    <radialGradient id="kin-glow" cx="0.5" cy="0.55" r="0.55">
+      <stop offset="0%" stop-color="#00D4C8" stop-opacity="0.55" />
+      <stop offset="100%" stop-color="#00D4C8" stop-opacity="0" />
+    </radialGradient>
+    <linearGradient id="kin-bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0F172A" />
+      <stop offset="100%" stop-color="#020617" />
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="96" ry="96" fill="url(#kin-bg)" />
+  <circle cx="256" cy="285" r="180" fill="url(#kin-glow)" />
+
+  <!-- House outline -->
+  <path
+    d="M256 80 L432 220 L432 408 a28 28 0 0 1 -28 28 L108 436 a28 28 0 0 1 -28 -28 L80 220 Z"
+    fill="none"
+    stroke="url(#kin-house)"
+    stroke-width="22"
+    stroke-linejoin="round"
+  />
+
+  <!-- Neural nodes (5 dots) -->
+  <g fill="#00D4C8">
+    <circle cx="168" cy="280" r="16" />
+    <circle cx="344" cy="280" r="16" />
+    <circle cx="256" cy="220" r="16" />
+    <circle cx="256" cy="350" r="16" />
+    <circle cx="256" cy="285" r="10" />
+  </g>
+
+  <!-- Connections -->
+  <g stroke="#00D4C8" stroke-width="6" stroke-linecap="round" opacity="0.85">
+    <line x1="168" y1="280" x2="256" y2="220" />
+    <line x1="344" y1="280" x2="256" y2="220" />
+    <line x1="168" y1="280" x2="256" y2="350" />
+    <line x1="344" y1="280" x2="256" y2="350" />
+    <line x1="168" y1="280" x2="256" y2="285" />
+    <line x1="344" y1="280" x2="256" y2="285" />
+    <line x1="256" y1="220" x2="256" y2="285" />
+    <line x1="256" y1="285" x2="256" y2="350" />
+  </g>
+</svg>

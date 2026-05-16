@@ -1,0 +1,20 @@
+{
+  "name": "kinai-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "description": "KinAI monorepo — Rust backend + SvelteKit frontend",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "frontend:dev": "pnpm --filter kinai-frontend dev",
+    "frontend:build": "pnpm --filter kinai-frontend build",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.1.0"
+  },
+  "workspaces": [
+    "frontend"
+  ],
+  "packageManager": "pnpm@9.15.0"
+}

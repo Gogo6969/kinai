@@ -1,0 +1,277 @@
+@import 'katex/dist/katex.min.css';
+@import 'highlight.js/styles/github-dark.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --kin-overlay-font-size: 14px;
+}
+
+html.light {
+  color-scheme: light;
+}
+
+/* ---- Light theme ----------------------------------------------------- */
+/* Re-skin the dark surfaces so the existing components still look right
+   in light mode. Components keep their semantic class names; only the
+   resolved colors change. */
+html.light body {
+  background: #f8fafc;
+  color: #0f172a;
+}
+html.light .kin-glass {
+  background: rgb(255 255 255 / 0.85);
+  border-color: rgb(15 23 42 / 0.1);
+  color: #0f172a;
+}
+html.light .kin-card {
+  background: rgb(255 255 255 / 0.7);
+  border-color: rgb(15 23 42 / 0.08);
+  color: #0f172a;
+}
+html.light .kin-btn {
+  background: rgb(15 23 42 / 0.05);
+  color: #0f172a;
+  border-color: rgb(15 23 42 / 0.1);
+}
+html.light .kin-btn:hover {
+  background: rgb(15 23 42 / 0.1);
+}
+html.light .kin-field {
+  background: rgb(255 255 255 / 0.85);
+  color: #0f172a;
+  border-color: rgb(15 23 42 / 0.15);
+}
+html.light .kin-field::placeholder {
+  color: rgb(15 23 42 / 0.45);
+}
+html.light .kin-message-assistant,
+html.light .kin-prose code:not(pre code) {
+  color: #0f172a;
+}
+html.light .text-ink-50 {
+  color: #0f172a;
+}
+html.light .text-white\/40,
+html.light .text-white\/50,
+html.light .text-white\/60,
+html.light .text-white\/70,
+html.light .text-white\/80 {
+  color: rgb(15 23 42 / 0.7);
+}
+html.light .bg-ink-950,
+html.light .bg-ink-900\/40,
+html.light .bg-ink-950\/60,
+html.light .bg-ink-950\/70 {
+  background-color: #f8fafc;
+}
+html.light .border-white\/5,
+html.light .border-white\/10 {
+  border-color: rgb(15 23 42 / 0.1);
+}
+/* Native select chevron is replaced by a single SVG painted on the right edge.
+   These rules live OUTSIDE @layer components so they always win over the
+   browser's default + any Tailwind utility cascade. */
+select.kin-field {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  -moz-appearance: none !important;
+  background-repeat: no-repeat !important;
+  background-position: right 0.625rem center !important;
+  background-size: 16px 16px !important;
+  padding-right: 2rem !important;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%23ffffff80'><path d='M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.21 8.29a.75.75 0 01.02-1.08z'/></svg>");
+}
+html.light select.kin-field {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%230f172a80'><path d='M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.24a.75.75 0 01-1.06 0L5.21 8.29a.75.75 0 01.02-1.08z'/></svg>") !important;
+}
+
+/* Markdown prose colors for light mode — the dark defaults use ink-50 (off-
+   white), which becomes invisible on a light page. */
+html.light .kin-prose,
+html.light .kin-prose p,
+html.light .kin-prose li {
+  color: #0f172a;
+}
+html.light .kin-prose blockquote {
+  color: rgb(15 23 42 / 0.85);
+  border-color: rgb(8 145 178 / 0.6); /* teal-600 */
+}
+html.light .kin-prose code:not(pre code) {
+  background: rgb(15 23 42 / 0.07);
+  color: #155e75; /* teal-800 */
+}
+html.light .kin-prose pre {
+  background: rgb(15 23 42 / 0.06);
+  color: #0f172a;
+}
+html.light .kin-prose a {
+  color: #0e7490; /* teal-700 */
+}
+html.light .kin-prose th {
+  border-color: rgb(15 23 42 / 0.15);
+}
+html.light .kin-prose td {
+  border-color: rgb(15 23 42 / 0.07);
+}
+
+/* Assistant message bubble background — `bg-white/5` is nearly transparent on
+   a light page. */
+html.light .bg-white\/5 {
+  background-color: rgb(15 23 42 / 0.05);
+}
+html.light .bg-white\/10 {
+  background-color: rgb(15 23 42 / 0.08);
+}
+html.light .bg-black\/30,
+html.light .bg-black\/40,
+html.light .bg-black\/60 {
+  background-color: rgb(15 23 42 / 0.06);
+}
+
+/* Faded text colors used throughout the UI — these are dark-mode tints of
+   white; flip the channel for light mode. */
+html.light .text-ink-50\/80 {
+  color: rgb(15 23 42 / 0.8);
+}
+html.light .text-ink-50\/60,
+html.light .text-ink-50\/70 {
+  color: rgb(15 23 42 / 0.7);
+}
+
+/* Streaming-cursor caret + spinning dots */
+html.light .bg-current {
+  background-color: rgb(15 23 42 / 0.7);
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+@layer components {
+  .kin-glass {
+    @apply bg-ink-900/70 backdrop-blur-2xl border border-white/10 shadow-2xl;
+  }
+
+  .kin-card {
+    @apply rounded-xl bg-white/5 border border-white/10 p-5;
+  }
+
+  .kin-input {
+    @apply w-full bg-transparent border-0 outline-none text-ink-50 placeholder:text-white/40;
+  }
+
+  .kin-field {
+    @apply w-full bg-black/30 border border-white/10 rounded-lg px-3 text-sm text-ink-50
+           focus:outline-none focus:ring-2 focus:ring-teal-500/50 focus:border-teal-500/50
+           transition-colors;
+  }
+  /* Fixed 40px height for inputs and selects so they line up regardless of
+     the OS chrome on native <select>. */
+  input.kin-field,
+  select.kin-field {
+    @apply h-10 leading-none;
+  }
+  /* Textareas keep their `rows` sizing — restore vertical padding. */
+  textarea.kin-field {
+    @apply py-2 leading-relaxed;
+  }
+  .kin-btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3
+           h-10 leading-none
+           bg-white/5 hover:bg-white/10 text-ink-50 text-sm font-medium
+           transition-colors border border-white/10;
+  }
+
+  .kin-btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4
+           h-10 leading-none
+           bg-teal-500 hover:bg-teal-400 text-ink-900 text-sm font-semibold
+           transition-colors shadow-lg shadow-teal-500/20;
+  }
+
+  .kin-btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-3 py-2
+           hover:bg-white/10 text-ink-50/80 text-sm font-medium transition-colors;
+  }
+
+  .kin-badge {
+    @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium
+           bg-teal-500/15 text-teal-300 border border-teal-500/30;
+  }
+
+  /* Prose styling for markdown messages */
+  .kin-prose {
+    @apply text-[15px] leading-relaxed;
+  }
+  .kin-prose h1 { @apply text-xl font-semibold mt-4 mb-2; }
+  .kin-prose h2 { @apply text-lg font-semibold mt-4 mb-2; }
+  .kin-prose h3 { @apply text-base font-semibold mt-3 mb-1.5; }
+  .kin-prose p { @apply mb-2; }
+  .kin-prose ul { @apply list-disc pl-5 mb-2 space-y-1; }
+  .kin-prose ol { @apply list-decimal pl-5 mb-2 space-y-1; }
+  .kin-prose a { @apply text-teal-300 hover:text-teal-200 underline; }
+  .kin-prose strong { @apply font-semibold; }
+  .kin-prose code:not(pre code) {
+    @apply px-1.5 py-0.5 rounded bg-black/40 text-teal-200 font-mono text-[0.92em];
+  }
+  .kin-prose pre {
+    @apply my-3 p-3 rounded-lg bg-black/60 overflow-x-auto text-[13px] leading-snug;
+  }
+  .kin-prose pre code {
+    @apply font-mono;
+  }
+  .kin-prose blockquote {
+    @apply border-l-2 border-teal-500/40 pl-3 italic text-ink-50/80;
+  }
+  .kin-prose table {
+    @apply w-full text-sm my-3 border-collapse;
+  }
+  /* Inline images rendered by the markdown pipeline (image_search results,
+     vision-prompt previews, etc.). Capped at 320px tall so a single tool
+     call returning 5 images doesn't push the rest of the conversation off
+     screen, and rounded to match the bubble corners. */
+  .kin-prose .kin-img,
+  .kin-img {
+    @apply rounded-lg border border-white/10 my-2;
+    max-height: 320px;
+    max-width: 100%;
+    height: auto;
+    width: auto;
+    object-fit: contain;
+    display: block;
+  }
+  html.light .kin-img {
+    border-color: rgb(15 23 42 / 0.1);
+  }
+  .kin-prose th {
+    @apply text-left font-semibold border-b border-white/15 px-2 py-1.5;
+  }
+  .kin-prose td {
+    @apply border-b border-white/5 px-2 py-1.5;
+  }
+}
