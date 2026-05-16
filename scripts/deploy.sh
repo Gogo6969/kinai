@@ -151,15 +151,31 @@ stage_windows_update() {
     fi
   fi
 
-  # Find the .msi.zip + .sig in whatever subdirectory layout they came in.
-  local SRC_ZIP SRC_SIG
+  # Tauri-bundler produces one of two updater bundle types on Windows:
+  # .msi.zip (when bundles=msi,updater) or .nsis.zip (when bundles=
+  # nsis,updater). Either works for auto-update; the file extension
+  # tells the client how to unpack. Prefer MSI (closer to enterprise
+  # norms); fall back to NSIS.
+  local SRC_ZIP SRC_SIG DEST_NAME
   SRC_ZIP=$(find "$TMP" -name '*.msi.zip' -type f 2>/dev/null | head -1)
   SRC_SIG=$(find "$TMP" -name '*.msi.zip.sig' -type f 2>/dev/null | head -1)
+  DEST_NAME="KinAI.msi.zip"
   if [[ -z "$SRC_ZIP" || -z "$SRC_SIG" ]]; then
-    echo "  ⚠ Windows artifacts don't contain a .msi.zip + .sig pair. Skipping."
+    SRC_ZIP=$(find "$TMP" -name '*.nsis.zip' -type f 2>/dev/null | head -1)
+    SRC_SIG=$(find "$TMP" -name '*.nsis.zip.sig' -type f 2>/dev/null | head -1)
+    DEST_NAME="KinAI.nsis.zip"
+  fi
+  if [[ -z "$SRC_ZIP" || -z "$SRC_SIG" ]]; then
+    echo "  ⚠ Windows artifacts don't contain a .msi.zip / .nsis.zip + .sig pair. Skipping."
     rm -rf "$TMP"
     return
   fi
+  # Override the canonical destination filename when NSIS — the host's
+  # /v1/update/manifest endpoint serves whatever filename matches the
+  # target. We pass DEST_NAME through to the rest of the function via
+  # the (now-redefined) DEST/SIG_DEST below.
+  DEST="$STAGE_DIR/$DEST_NAME"
+  SIG_DEST="$DEST.sig"
 
   mkdir -p "$STAGE_DIR"
   cp "$SRC_ZIP" "$DEST"

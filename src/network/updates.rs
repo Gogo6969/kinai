@@ -41,15 +41,32 @@ use tokio::io::AsyncReadExt;
 
 use super::server::AxumState;
 
-/// Per-target bundle filename conventions. The deploy script names
-/// staged files this way; the manifest endpoint surfaces them.
-fn bundle_filename(target: &str) -> Option<&'static str> {
+/// Candidate bundle filenames per target. The manifest endpoint serves
+/// whichever one is actually on disk (Tauri produces .msi.zip on Windows
+/// when `--bundles msi,updater`, or .nsis.zip when `--bundles nsis,updater`;
+/// either works for auto-update — Tauri's updater dispatches off the
+/// extension).
+fn bundle_filenames(target: &str) -> &'static [&'static str] {
     match target {
-        "darwin-aarch64" | "darwin-x86_64" => Some("KinAI.app.tar.gz"),
-        "windows-x86_64" => Some("KinAI.msi.zip"),
-        // Future: linux-x86_64 → "KinAI.AppImage.tar.gz"
-        _ => None,
+        "darwin-aarch64" | "darwin-x86_64" => &["KinAI.app.tar.gz"],
+        "windows-x86_64" => &["KinAI.msi.zip", "KinAI.nsis.zip"],
+        // Future: linux-x86_64 → &["KinAI.AppImage.tar.gz"]
+        _ => &[],
     }
+}
+
+/// Resolve the actual on-disk bundle file (and its `.sig` sibling) for
+/// the given target inside a per-version dir. Returns None if no
+/// candidate exists.
+fn resolve_bundle(root: &std::path::Path, target: &str) -> Option<(std::path::PathBuf, std::path::PathBuf, &'static str)> {
+    for &name in bundle_filenames(target) {
+        let bundle = root.join(target).join(name);
+        let sig = root.join(target).join(format!("{name}.sig"));
+        if bundle.exists() && sig.exists() {
+            return Some((bundle, sig, name));
+        }
+    }
+    None
 }
 
 /// All Tauri targets we know how to serve. The manifest only includes
@@ -116,19 +133,13 @@ fn latest_version_root() -> Option<(String, PathBuf)> {
         })
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
-            // Only consider dirs whose name parses as a SemVer-ish version.
             if !name.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
                 return None;
             }
             let dir = e.path();
-            // Must contain at least one supported-target subdir with a bundle.
-            let has_any = SUPPORTED_TARGETS.iter().any(|t| {
-                if let Some(fname) = bundle_filename(t) {
-                    dir.join(t).join(fname).exists()
-                } else {
-                    false
-                }
-            });
+            let has_any = SUPPORTED_TARGETS
+                .iter()
+                .any(|t| resolve_bundle(&dir, t).is_some());
             if has_any {
                 Some((name, dir))
             } else {
@@ -160,12 +171,9 @@ pub(crate) async fn manifest(State(s): State<AxumState>) -> Result<Response, (St
     let mut latest_mtime: Option<std::time::SystemTime> = None;
 
     for &target in SUPPORTED_TARGETS {
-        let Some(fname) = bundle_filename(target) else { continue };
-        let bundle_path = root.join(target).join(fname);
-        let sig_path = root.join(target).join(format!("{fname}.sig"));
-        if !bundle_path.exists() || !sig_path.exists() {
+        let Some((bundle_path, sig_path, _)) = resolve_bundle(&root, target) else {
             continue;
-        }
+        };
         let Ok(sig) = tokio::fs::read_to_string(&sig_path).await else {
             continue;
         };
@@ -230,25 +238,22 @@ async fn serve_target(target: &str, want_signature: bool) -> Result<Response, (S
             format!("Unsupported target '{target}'. Expected one of: {}", SUPPORTED_TARGETS.join(", ")),
         ));
     }
-    let fname = bundle_filename(target).ok_or_else(|| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("No filename mapping for target '{target}'"),
-        )
-    })?;
     let (_, root) = latest_version_root().ok_or((
         StatusCode::NOT_FOUND,
         "No bundle staged".into(),
     ))?;
-    let (path, content_type) = if want_signature {
+    let (bundle_path, sig_path, fname) = resolve_bundle(&root, target).ok_or_else(|| {
         (
-            root.join(target).join(format!("{fname}.sig")),
-            "text/plain; charset=utf-8",
+            StatusCode::NOT_FOUND,
+            format!("No bundle staged for target '{target}'"),
         )
+    })?;
+    let (path, content_type) = if want_signature {
+        (sig_path, "text/plain; charset=utf-8")
     } else if fname.ends_with(".zip") {
-        (root.join(target).join(fname), "application/zip")
+        (bundle_path, "application/zip")
     } else {
-        (root.join(target).join(fname), "application/gzip")
+        (bundle_path, "application/gzip")
     };
     serve_file(&path, content_type).await
 }

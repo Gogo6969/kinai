@@ -52,7 +52,13 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          args: '--target x86_64-pc-windows-msvc'
+          # Explicit `updater` bundle is REQUIRED on Windows. Without it
+          # tauri-bundler only produces the raw .msi + .exe — no
+          # .msi.zip + .sig pair next to them, which is what the host's
+          # cross-platform auto-update flow serves to Windows clients.
+          # (On macOS the `updater` bundle is implicit in `app`; not so
+          # on Windows.)
+          args: '--target x86_64-pc-windows-msvc --bundles msi,nsis,updater'
 
       # Tauri-action defaults to creating a draft release when run on a
       # tag. On workflow_dispatch with no tag it skips the release and
