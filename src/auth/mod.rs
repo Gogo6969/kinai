@@ -58,13 +58,24 @@ pub fn validate_token(token: &str, expected_host_url: &str) -> Result<Claims> {
     Ok(data.claims)
 }
 
-/// Validate without enforcing audience — used by clients that only know the token, not their host URL.
+/// Decode the JWT claims WITHOUT verifying the signature.
+///
+/// This is called client-side on an invite-URL paste, on a token signed by
+/// a DIFFERENT machine's private key (the host's). The client doesn't have
+/// the host's public key yet — that comes later, on the WebSocket connect,
+/// where the host itself verifies its own signature.
+///
+/// Previously this used `ensure_keys()` and validated with the LOCAL public
+/// key, which always failed cross-machine ("Invalid signature") and broke
+/// the URL-paste pairing flow for any device joining a different host.
 pub fn peek_token(token: &str) -> Result<Claims> {
-    let (_, public_pem) = ensure_keys()?;
-    let key = DecodingKey::from_rsa_pem(public_pem.as_bytes())?;
     let mut v = Validation::new(Algorithm::RS256);
     v.set_issuer(&["kinai"]);
     v.validate_aud = false;
+    v.insecure_disable_signature_validation();
+    // DecodingKey contents are ignored when signature validation is off,
+    // but the API still requires a key — use an empty one.
+    let key = DecodingKey::from_secret(&[]);
     let data = decode::<Claims>(token, &key, &v).map_err(|e| anyhow!("jwt: {e}"))?;
     Ok(data.claims)
 }
