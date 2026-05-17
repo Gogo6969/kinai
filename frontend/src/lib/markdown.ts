@@ -35,18 +35,33 @@ marked.use({
       }
       const href = raw.replace(/"/g, '&quot;');
       // Lazy + decoded async so a chat with 20 images doesn't stall
-      // first paint. Wrap in a kin-img-open link so a single click
-      // routes through the shell plugin and opens the image in the
-      // user's default viewer (Preview on macOS, Photos on Windows).
-      // Tauri's WebView blocks the built-in right-click → "Open Image
-      // in New Window" silently, so we provide a reliable click-to-open.
-      // data: URLs (inline-embedded images) skip the wrapper — they
-      // can't be opened externally and the cursor-pointer would be a
-      // lie.
+      // first paint. data: URLs (inline-embedded images) can't be
+      // opened externally — skip the wrapper for those.
+      //
+      // For real URLs, wrap in a <figure> with two buttons:
+      //   • "Open" — single-click the image OR the open icon to launch
+      //     it in the system's default image viewer (Preview on macOS,
+      //     Photos on Windows). Routes via the shell plugin since
+      //     Tauri's WebView blocks browser-native "open in new window".
+      //   • "Download" — opens a Save dialog and writes the bytes to
+      //     the chosen path. Browser-native "Save Image As" is also
+      //     blocked by Tauri's WebView.
       const isData = raw.startsWith('data:');
       const img = `<img src="${href}" alt="${alt}"${titleAttr} class="kin-img" loading="lazy" decoding="async" />`;
       if (isData) return img;
-      return `<a href="${href}" class="kin-img-open" title="Click to open in default image viewer" data-kin-open="${href}">${img}</a>`;
+      // Note: data-kin-action attributes are picked up by a global
+      // click delegate in +layout.svelte.
+      return `<figure class="kin-img-figure">
+        <a href="${href}" class="kin-img-open" title="Click to open in default image viewer">${img}</a>
+        <div class="kin-img-actions">
+          <button type="button" class="kin-img-action" data-kin-action="open" data-kin-url="${href}" title="Open in default viewer">
+            <span class="kin-img-action-icon">↗</span> Open
+          </button>
+          <button type="button" class="kin-img-action" data-kin-action="download" data-kin-url="${href}" title="Save to disk…">
+            <span class="kin-img-action-icon">↓</span> Download
+          </button>
+        </div>
+      </figure>`;
     },
   },
 });

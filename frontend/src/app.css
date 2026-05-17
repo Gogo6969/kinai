@@ -291,6 +291,23 @@ body {
   .kin-img-open:hover {
     transform: scale(1.005);
   }
+  .kin-img-figure {
+    @apply my-2 inline-block max-w-full;
+  }
+  .kin-img-figure .kin-img {
+    @apply my-0;
+  }
+  .kin-img-actions {
+    @apply flex gap-1.5 mt-1.5 opacity-70 hover:opacity-100 transition-opacity;
+  }
+  .kin-img-action {
+    @apply inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded
+           bg-white/5 hover:bg-white/10 border border-white/10 text-white/80
+           hover:text-white transition-colors cursor-pointer;
+  }
+  .kin-img-action-icon {
+    @apply text-teal-300 font-bold;
+  }
   .kin-prose th {
     @apply text-left font-semibold border-b border-white/15 px-2 py-1.5;
   }
