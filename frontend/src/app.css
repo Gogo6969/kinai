@@ -281,6 +281,16 @@ body {
   html.light .kin-img {
     border-color: rgb(15 23 42 / 0.1);
   }
+  /* The wrapper anchor around generated images — single-click opens in
+   * the system's default image viewer (Preview on macOS, Photos on
+   * Windows) via the shell plugin. Cursor + subtle hover lift signals
+   * to the user that the image is interactive. */
+  .kin-img-open {
+    @apply inline-block cursor-zoom-in transition-transform;
+  }
+  .kin-img-open:hover {
+    transform: scale(1.005);
+  }
   .kin-prose th {
     @apply text-left font-semibold border-b border-white/15 px-2 py-1.5;
   }

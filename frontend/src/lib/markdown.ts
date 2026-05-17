@@ -35,10 +35,18 @@ marked.use({
       }
       const href = raw.replace(/"/g, '&quot;');
       // Lazy + decoded async so a chat with 20 images doesn't stall
-      // first paint. Click opens the source page (if there's a title
-      // link wrapping us, marked handles that; the wrapping <a> turns
-      // this into a clickable thumb naturally).
-      return `<img src="${href}" alt="${alt}"${titleAttr} class="kin-img" loading="lazy" decoding="async" />`;
+      // first paint. Wrap in a kin-img-open link so a single click
+      // routes through the shell plugin and opens the image in the
+      // user's default viewer (Preview on macOS, Photos on Windows).
+      // Tauri's WebView blocks the built-in right-click → "Open Image
+      // in New Window" silently, so we provide a reliable click-to-open.
+      // data: URLs (inline-embedded images) skip the wrapper — they
+      // can't be opened externally and the cursor-pointer would be a
+      // lie.
+      const isData = raw.startsWith('data:');
+      const img = `<img src="${href}" alt="${alt}"${titleAttr} class="kin-img" loading="lazy" decoding="async" />`;
+      if (isData) return img;
+      return `<a href="${href}" class="kin-img-open" title="Click to open in default image viewer" data-kin-open="${href}">${img}</a>`;
     },
   },
 });
