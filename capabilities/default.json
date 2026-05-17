@@ -25,6 +25,10 @@
     "fs:allow-read-text-file",
     "fs:allow-write-text-file",
     "fs:allow-write-file",
+    {
+      "identifier": "fs:scope",
+      "allow": ["**"]
+    },
     "notification:default",
     "shell:allow-open",
     "store:default",
