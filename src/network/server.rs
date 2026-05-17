@@ -61,7 +61,8 @@ pub async fn start(state: SharedState, app: AppHandle) -> Result<()> {
         .route("/v1/update/bundle.tar.gz", get(super::updates::bundle_legacy))
         .route("/v1/update/bundle.tar.gz.sig", get(super::updates::signature_legacy))
         // Generated images from /pic + /picHQ slash commands.
-        .route("/v1/pic/{filename}", get(super::pics::serve_pic))
+        // Axum 0.7 path-parameter syntax is `:name` (Axum 0.8+ uses {name}).
+        .route("/v1/pic/:filename", get(super::pics::serve_pic))
         .route("/kin", any(ws_upgrade))
         .with_state(axum_state);
 
