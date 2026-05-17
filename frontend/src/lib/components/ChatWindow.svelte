@@ -21,10 +21,18 @@
   // input is exactly "/" or matches "/<partial>"; the menu disappears as
   // soon as the user types a space (because they're now writing the
   // prompt body), submits, or presses Escape.
-  const SLASH_COMMANDS: Array<{ cmd: string; desc: string }> = [
-    { cmd: '/pic',    desc: 'Generate image (e.g. /pic 1280x720 sunset over Miami)' },
-    { cmd: '/picHQ',  desc: 'HQ image, slower (max quality)' },
-    { cmd: '/help',   desc: 'List slash commands' },
+  const SLASH_COMMANDS: Array<{ cmd: string; desc: string; hint?: string }> = [
+    {
+      cmd: '/pic',
+      desc: 'Generate image · default 1280×720, ~5s',
+      hint: 'Optional WxH prefix: /pic 1024x1024 sunset over Miami',
+    },
+    {
+      cmd: '/picHQ',
+      desc: 'HQ image · default 1024×1024, ~30s',
+      hint: 'Optional WxH prefix: /picHQ 1280x720 sunset over Miami',
+    },
+    { cmd: '/help', desc: 'List slash commands' },
   ];
   let slashIndex = $state(0);
   const slashFiltered = $derived.by(() => {
@@ -348,6 +356,11 @@
             <span class="text-xs text-white/50 truncate">{c.desc}</span>
           </button>
         {/each}
+        {#if slashFiltered[slashIndex]?.hint}
+          <div class="px-3 py-1.5 text-[11px] text-teal-200/70 border-t border-white/5 font-mono">
+            {slashFiltered[slashIndex].hint}
+          </div>
+        {/if}
         <div class="px-3 py-1.5 text-[10px] text-white/40 border-t border-white/5">
           <kbd class="bg-white/10 px-1 rounded">↑↓</kbd> navigate
           <kbd class="bg-white/10 px-1 rounded ml-1">Tab</kbd> accept

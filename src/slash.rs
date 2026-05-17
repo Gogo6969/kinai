@@ -28,8 +28,9 @@ pub async fn handle(cfg: &AppConfig, content: &str) -> Option<String> {
             "".into(),
         ];
         if comfy_on {
-            lines.push("- `/pic <prompt>` — generate an image (fast, ~5s). Optional `WxH` prefix: `/pic 1280x720 sunset over Miami`".into());
-            lines.push("- `/picHQ <prompt>` — generate a higher-quality image (slower, ~30s)".into());
+            lines.push("- `/pic <prompt>` — generate an image (fast, ~5s, default 1280×720)".into());
+            lines.push("- `/picHQ <prompt>` — higher-quality image (slower, ~30s, default 1024×1024)".into());
+            lines.push("- Add an optional `WxH` prefix to override the size, e.g. `/pic 1024x1024 a sunset over Miami` or `/picHQ 1280x720 a sunset over Miami` — any size from 64×64 to 2048×2048.".into());
         } else {
             lines.push("- `/pic`, `/picHQ` — *(image generation not configured on this host — ask the host owner to set a ComfyUI URL in Settings → Image generation)*".into());
         }
