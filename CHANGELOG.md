@@ -5,6 +5,92 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.9] — 2026-05-18
+
+### Added
+- **Windows client.** Windows 10/11 (x86_64) is now a first-class
+  client platform. Pair to a Mac host via 6-character invite code
+  or full `kinai://join?…` link, send messages, get streamed replies
+  back from the Mac mini's local LLM. The installer is an MSI (or
+  NSIS-style `.exe`) under *Releases → Assets*. Windows code-signing
+  isn't in this release yet, so SmartScreen will warn the first time
+  — click *More info → Run anyway* (one-time). The full source is
+  public, so the binary is auditable end-to-end. **Windows is
+  client-only for now** — hosting still requires macOS.
+- **`/pic` and `/picHQ` slash commands.** Optional. When the host
+  owner points KinAI's Settings → Image generation at a ComfyUI
+  server (e.g. an Olares One on the LAN), every paired family device
+  gets two new chat commands: `/pic <prompt>` (Z-Image Turbo,
+  ~5s, 1280×720) and `/picHQ <prompt>` (Z-Image Base, ~30s,
+  1024×1024). Optional `WxH` prefix overrides the size
+  (`/pic 1024x1024 a sunset over Miami`). Empty `base_url` =
+  feature disabled, no flags visible.
+- **`/help` and `?`.** Lists available slash commands in chat.
+  Adapts based on whether image-gen is configured.
+- **Slash-command autocomplete popup** in the chat input — type
+  `/`, get a menu, ↑↓ to navigate, Tab to accept, Esc to dismiss.
+  Resolution hint surfaces under the highlighted command.
+- **`↗ Open` + `↓ Download` buttons** under every chat image.
+  Tauri's WebView blocks the browser-native right-click options
+  (Open in New Window, Save Image As…) on both platforms, so the
+  buttons route through the shell + fs plugins explicitly. Click
+  the image itself = Open. Download pops a Save dialog.
+- **Host auto-pulls new GitHub releases hourly** and stages them
+  for connected family clients. No more manual deploy steps —
+  publish a release on GitHub, every family Mac auto-updates from
+  the host within hours. (Windows in-app auto-update is still
+  manual until we ship the `.nsis.zip` updater bundle alongside.)
+
+### Fixed
+- **Cross-machine URL-paste pairing.** Pasting a `kinai://join?…`
+  invite link on any device that wasn't the one that minted it
+  used to fail with *"Invalid signature"* — `peek_token` was
+  validating the JWT against the LOCAL public key, but the host
+  signed with a DIFFERENT keypair. Signature is now only verified
+  on the WebSocket handshake (where the host actually has the
+  matching key). Unblocked Windows pairing entirely.
+- **Sidebar showed the invite label as the host name** ("WindowsPC"
+  instead of "Our Family"). Now uses `hostInfo.family_name` from
+  the Welcome envelope, with the invite label as a small subtitle
+  *"joined as WindowsPC"*.
+- **Window can't reopen after close.** On Windows, closing the X
+  destroyed the main window; relaunching the .exe trickled into
+  the single-instance handler which called `show()` on a destroyed
+  window — silent no-op. Now the X hides the window; show()
+  brings it back.
+- **Overlay too transparent on Windows.** WebView2 doesn't render
+  backdrop-blur as effectively as macOS NSVisualEffectView. Bumped
+  the glass-card opacity from 70% → 90%.
+- **Visible feedback when saving Settings** — green ✓ pill next to
+  the Save button for 2.5s after success, red inline error on
+  failure.
+- **macOS image download "TypeError: Load failed".** WKWebView's
+  App Transport Security blocked JS `fetch()` against the host's
+  plain-HTTP `/v1/pic/...` URL (even though `<img src>` loaded the
+  same URL fine via a different code path). Download now goes
+  through a Rust IPC command using `reqwest`, which has no ATS
+  restriction.
+- **Auto-updater on macOS** stopped producing the signed
+  `.app.tar.gz` updater bundle because the deploy script's
+  internal tar invocation included AppleDouble metadata files
+  (`._KinAI.app`) that Rust's `tar` crate then tried to write
+  alongside the real `.app` directory and crashed with *"failed
+  to unpack"*. Added `COPYFILE_DISABLE=1` to the tar step.
+
+### Known limitations
+- macOS only for hosting. Windows + Linux host support is a later
+  roadmap item.
+- **Windows auto-update inside the app is not wired up yet.**
+  Tauri's `--bundles updater` flag isn't producing the `.nsis.zip`
+  / `.msi.zip` auto-update bundles we'd need to push updates to
+  Windows clients silently. Until that's resolved, Windows users
+  re-download the `.msi` from GitHub Releases when notified of a
+  new version. macOS clients auto-update through the host on every
+  release.
+- **SmartScreen warning on first install of the Windows MSI.**
+  Cleared by a one-time *More info → Run anyway*. Goes away once
+  we buy a Windows code-signing certificate ($200–500/yr).
+
 ## [0.2.6] — 2026-05-16
 
 ### Added

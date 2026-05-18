@@ -13,17 +13,18 @@
 [![Rust](https://img.shields.io/badge/Rust-stable-CE422B.svg)](https://www.rust-lang.org/)
 [![SvelteKit](https://img.shields.io/badge/SvelteKit-2-FF3E00.svg)](https://kit.svelte.dev/)
 [![macOS](https://img.shields.io/badge/macOS-available-22c55e.svg)](https://github.com/Gogo6969/kinai/releases)
+[![Windows](https://img.shields.io/badge/Windows-available-22c55e.svg)](https://github.com/Gogo6969/kinai/releases)
 
 </div>
 
 > [!NOTE]
-> macOS only for now. Windows and Linux are coming.
+> macOS (host + client) and Windows (client) are both available. Linux is coming.
 
 ---
 
 ## ⚡ Five-second pitch
 
-You already run a local LLM on one of your machines — Ollama, LM Studio, vLLM, llama.cpp, whatever. KinAI is the **family-sharing layer** on top of it. Install KinAI on that same Mac in **Host Mode** to expose your model to the family. Install it on every other device in **Client Mode** (lightweight, no models downloaded) and join with a 6-character invite. Press **`Cmd+Space`** from any app, ask anything, get an answer.
+You already run a local LLM on one of your machines — Ollama, LM Studio, vLLM, llama.cpp, whatever. KinAI is the **family-sharing layer** on top of it. Install KinAI on that same Mac in **Host Mode** to expose your model to the family. Install it on every other device — Mac or Windows — in **Client Mode** (lightweight, no models downloaded) and join with a 6-character invite. Press **`Cmd+Space`** (macOS) / **`Ctrl+Space`** (Windows) from any app, ask anything, get an answer.
 
 100% local. 100% private. 100% free. MIT licensed forever.
 
@@ -46,10 +47,26 @@ You already run a local LLM on one of your machines — Ollama, LM Studio, vLLM,
 
 </div>
 
-## 🚀 Install on your Mac
+## 🚀 Install
 
-You'll install KinAI **twice**: once on the Mac that has the LLM (the
-*Host*), and once on every other Mac in your family (the *Clients*).
+You'll install KinAI **once on the host Mac** (which runs your local
+LLM), and **once on every other family device** — Mac OR Windows.
+Clients are lightweight: no model downloads, no LLM runtime, just a
+chat window that talks to the host over your LAN.
+
+Quick links to the section you need:
+
+- [Host (Mac)](#host-mac--required)
+- [Mac client](#mac-client)
+- [Windows client](#windows-client)
+
+---
+
+## 🏠 Host (Mac) — required
+
+You'll install KinAI **twice on Mac**: once on the Mac that has the LLM
+(the *Host*), and once on every other Mac in your family (the
+*Clients*).
 
 ### Step 1 — Get a local LLM running on the host Mac
 
@@ -98,38 +115,81 @@ on-ramp:
    get a **6-character code** and a QR code — share one with each
    family member.
 
-### Step 3 — Install KinAI on every other Mac in the family
+## 🖥️ Mac client
 
-On each other Mac:
+For every other Mac in the family that should connect to the host
+above:
 
-1. Download the same DMG from the Releases page.
+1. Download the same DMG from the **[Releases page](https://github.com/Gogo6969/kinai/releases/latest)**.
 2. Drag `KinAI.app` into Applications, right-click → **Open** (same
-   Gatekeeper dance as Step 2.5–6 above).
+   Gatekeeper dance as the host's Step 2.5–6 above).
 3. Click **👋 Join an existing host**.
 4. Type your name (this is how the host sees you in *Manage family*).
 5. Either pick the host from the auto-discovered list, **or** type the
    **6-character code** from the host. Click **Connect**.
 6. Done. Start chatting.
 
-### Daily use
+## 🪟 Windows client
 
-Press **`Cmd+Space`** anywhere to summon the KinAI overlay (like
-Spotlight, but for your family's AI). Type, press Enter, get an
-answer.
+For a Windows PC on the same home network as your host Mac:
 
-> **Hotkey conflict with Spotlight?** `Cmd+Space` is the default for
-> both. Pick one to remap in **System Settings → Keyboard → Keyboard
-> Shortcuts → Spotlight** (change Spotlight to e.g.
+1. Open the **[Releases page](https://github.com/Gogo6969/kinai/releases/latest)** in Edge / Chrome / Firefox.
+2. Download **`KinAI_*_x64_en-US.msi`** under *Assets*. (There's also a
+   `*_x64-setup.exe` — same app, NSIS-style installer. Either works.)
+3. Double-click the downloaded `.msi`.
+
+   **⚠️ Windows will probably block it at first.** A blue panel
+   appears: *"Microsoft Defender SmartScreen prevented an unrecognised
+   app from starting."*
+   - Click the small **"More info"** link in that panel.
+   - A new button appears: **"Run anyway"** — click it.
+   - This happens because KinAI isn't yet signed with a Windows
+     code-signing certificate. The Mac side is properly signed +
+     notarised by Apple; Windows code-signing is a separate paid
+     process we'll add later. The binary itself is identical to the
+     one CI built from the public source — you can audit every line
+     in this repo.
+
+4. The MSI installer wizard runs (Next → Next → Install). KinAI lands
+   in **Start Menu → KinAI**.
+5. Launch it. Click **👋 Join an existing host**.
+6. Type your name.
+7. Paste the **`kinai://join?…` link** the host shared with you
+   (`+ Invite → Copy link`), OR type the **6-character code** *and*
+   pick the host from the auto-discovered list. Click **Connect**.
+8. Done. Start chatting.
+
+> **Windows client today is client-only.** It cannot run as a *host*
+> yet — only macOS can host. The chat works both ways once paired
+> (you ask, the Mac mini's local LLM answers), but the host machine
+> stays Mac for now.
+
+### Daily use (both platforms)
+
+Press **`Cmd+Space`** (macOS) / **`Ctrl+Space`** (Windows) anywhere to
+summon the KinAI overlay — like Spotlight, but for your family's AI.
+Type, press Enter, get an answer.
+
+> **Hotkey conflict with Spotlight on macOS?** `Cmd+Space` is the
+> default for both. Pick one to remap in **System Settings → Keyboard
+> → Keyboard Shortcuts → Spotlight** (change Spotlight to e.g.
 > `Cmd+Option+Space`), or change KinAI's hotkey in **KinAI → Settings
 > → Overlay → Global hotkey**.
 
 ### Updates
 
-After everyone is on **v0.2.5 or later**, future updates flow
-**automatically from your host to the rest of the family** — no
-download needed. Each client shows a *"KinAI vX.Y.Z is available ·
-from your host"* banner the moment the host ships a new version; click
-**Install & restart** and you're on the latest.
+When a new KinAI release goes out, your **host pulls it from GitHub
+automatically** (within ~1 hour of the release going live) and serves
+it to every connected family device. Each client shows a *"KinAI
+vX.Y.Z is available · from your host"* banner; click **Install &
+restart** and you're on the latest.
+
+The Mac client side is fully auto-updating today.
+**Windows auto-update inside the app is coming soon** — until then,
+when you see the in-banner notice on Windows, re-download the latest
+`.msi` from GitHub and reinstall over the top. Your settings + chat
+history are preserved across reinstalls (they live in
+`%USERPROFILE%\.kinai\`).
 
 ## 🧠 How context never gets lost
 
