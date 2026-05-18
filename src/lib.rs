@@ -15,6 +15,7 @@ pub mod network;
 pub mod slash;
 pub mod tools;
 pub mod tray;
+pub mod update_sync;
 pub mod updater;
 pub mod vision;
 
@@ -176,6 +177,12 @@ pub fn run() {
 
                 discovery::start_browser(app.handle().clone());
                 updater::schedule_periodic_check(app.handle().clone());
+                // Host-only: pull new GitHub releases hourly and stage
+                // them for the family's connected clients to auto-update
+                // to. Becomes the "GitHub → host → family" relay so the
+                // host owner doesn't have to run scripts/deploy.sh
+                // manually for every release.
+                update_sync::schedule_periodic_sync(app.handle().clone());
 
                 // Always surface the main window when the app starts. Tray +
                 // hotkey are extras, not the only entry point.
