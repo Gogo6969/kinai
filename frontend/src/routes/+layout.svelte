@@ -54,24 +54,43 @@
 
   /** Fetch the image bytes and offer the user a Save dialog. The host
    *  serves `/v1/pic/<uuid>.png` over plain HTTP on the LAN, so the
-   *  fetch is reachable from every paired family device. */
+   *  fetch is reachable from every paired family device.
+   *
+   *  Errors surface as a visible toast so the user knows what
+   *  happened instead of having to open devtools. */
   async function downloadImage(url: string) {
+    let stage = 'fetch';
     try {
+      stage = 'fetch';
       const resp = await fetch(url);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const buf = new Uint8Array(await resp.arrayBuffer());
-      // Default filename = the URL's last segment (the UUID.png).
       const defaultName =
         url.split('/').pop()?.split('?')[0] || `kinai-image-${Date.now()}.png`;
+      stage = 'dialog';
       const path = await saveDialog({
         defaultPath: defaultName,
         filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
       });
       if (!path) return; // user cancelled
+      stage = 'write';
       await writeFile(path, buf);
+      showToast(`✓ Saved to ${path.split('/').pop() || path}`);
     } catch (err) {
-      console.warn('image download failed', err);
+      const msg = String(err).replace(/^Error:\s*/, '');
+      console.warn('image download failed at', stage, err);
+      showToast(`✗ Download failed (${stage}): ${msg}`, 6000);
     }
+  }
+
+  // Brief auto-fade toast at the top of the window. Used by the
+  // download flow above and any future user-facing acknowledgements.
+  let toastMsg = $state('');
+  let toastTimer: ReturnType<typeof setTimeout> | undefined;
+  function showToast(msg: string, ms = 3000) {
+    toastMsg = msg;
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => (toastMsg = ''), ms);
   }
 
   onMount(() => {
@@ -115,3 +134,15 @@
 </script>
 
 {@render children?.()}
+
+{#if toastMsg}
+  <div
+    class="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg
+           bg-ink-900/95 border border-white/15 shadow-2xl text-sm text-white
+           max-w-[90vw] truncate animate-fade-in"
+    role="status"
+    aria-live="polite"
+  >
+    {toastMsg}
+  </div>
+{/if}

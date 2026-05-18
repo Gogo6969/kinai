@@ -25,9 +25,17 @@
     "fs:allow-read-text-file",
     "fs:allow-write-text-file",
     "fs:allow-write-file",
+    "fs:allow-home-write-recursive",
+    "fs:allow-download-write-recursive",
+    "fs:allow-document-write-recursive",
+    "fs:allow-desktop-write-recursive",
+    "fs:allow-picture-write-recursive",
     {
       "identifier": "fs:scope",
-      "allow": ["**"]
+      "allow": [
+        { "path": "/Volumes/**" },
+        { "path": "/Users/Public/**" }
+      ]
     },
     "notification:default",
     "shell:allow-open",
