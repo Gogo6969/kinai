@@ -70,7 +70,7 @@
     ],
     "category": "Productivity",
     "shortDescription": "Share your private local AI with your family",
-    "longDescription": "KinAI is the family-sharing layer for the local LLM you already run. One Mac hosts your Ollama / LM Studio / vLLM / llama.cpp backend; every other family device joins via a 6-character invite. Each member's chat stays private to them, end-to-end JWT-authenticated over your LAN, no cloud, no accounts."
+    "longDescription": "KinAI is the family-sharing layer for the local LLM you already run. One Mac hosts your Ollama / LM Studio / vLLM / llama.cpp backend; every other family device — Mac or Windows — joins via a 6-character invite. Each member's chat stays private to them, end-to-end JWT-authenticated over your LAN, no cloud, no accounts."
   },
   "plugins": {
     "updater": {
