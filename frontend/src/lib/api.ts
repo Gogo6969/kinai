@@ -321,6 +321,15 @@ export const events = {
     listen<ToolDeltaEvent>('kinai://tool', (e) => cb(e.payload)),
   onAssistantDone: (cb: (d: AssistantDone) => void): Promise<UnlistenFn> =>
     listen<AssistantDone>('kinai://assistant-done', (e) => cb(e.payload)),
+  /** Diagnostic snapshot of the full prompt sent to the LLM for a
+   *  given assistant message. Per-session in-memory only. */
+  onPromptDebug: (
+    cb: (d: { assistant_msg_id: string; prompt: string }) => void
+  ): Promise<UnlistenFn> =>
+    listen<{ assistant_msg_id: string; prompt: string }>(
+      'kinai://prompt-debug',
+      (e) => cb(e.payload)
+    ),
   onOverlayFocus: (cb: () => void): Promise<UnlistenFn> =>
     listen('kinai://overlay-focus', () => cb()),
   onOpenRoute: (cb: (route: string) => void): Promise<UnlistenFn> =>

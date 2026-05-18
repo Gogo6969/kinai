@@ -97,4 +97,16 @@ pub enum Envelope {
     Error {
         message: String,
     },
+    /// Diagnostic snapshot of the full prompt that was sent to the LLM
+    /// for a given turn. Emitted right after `AssistantDone` so the
+    /// frontend can show a "🔍 prompt" toggle next to the metrics line.
+    /// Per-session in-memory cache only — never persisted, so older
+    /// messages from before this session won't have a snapshot.
+    PromptDebug {
+        /// ID of the assistant message this prompt produced.
+        assistant_msg_id: String,
+        /// Pretty-printed JSON of the full ChatMessage array sent to the
+        /// LLM (system prompt + memory recalls + recent turns + current).
+        prompt: String,
+    },
 }

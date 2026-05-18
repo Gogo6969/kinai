@@ -1,7 +1,8 @@
 <script lang="ts">
   import type { Attachment, Message, TurnMetrics } from '$lib/api';
   import { renderMarkdown } from '$lib/markdown';
-  import { FileText } from '@lucide/svelte';
+  import { app } from '$lib/stores/app.svelte';
+  import { FileText, Search } from '@lucide/svelte';
 
   let {
     message,
@@ -12,6 +13,14 @@
     streaming?: boolean;
     metrics?: TurnMetrics | null;
   } = $props();
+
+  // Per-session prompt snapshot for assistant messages — populated by
+  // the host's kinai://prompt-debug event right after generation. Empty
+  // for: user messages, assistant messages from before this session,
+  // and any turn the host couldn't serialize. The 🔍 toggle only
+  // shows when this is non-empty.
+  const promptSnapshot = $derived(message.id ? app.promptDebug[message.id] : undefined);
+  let showPrompt = $state(false);
 
   const html = $derived(renderMarkdown(message.content));
   const attachments = $derived<Attachment[]>(message.attachments ?? []);
@@ -94,6 +103,29 @@
           · {metrics.output_tokens.toLocaleString()} tok
         </span>
       {/if}
+      {#if promptSnapshot}
+        <button
+          type="button"
+          class="ml-1 inline-flex items-center gap-1 text-white/40 hover:text-teal-300 transition-colors"
+          onclick={() => (showPrompt = !showPrompt)}
+          title="Show the exact prompt KinAI sent to the LLM for this reply"
+        >
+          <Search size={11} />
+          <span>prompt</span>
+        </button>
+      {/if}
     </div>
+    {#if showPrompt && promptSnapshot}
+      <details
+        open
+        class="mt-2 mx-1.5 rounded-lg border border-white/10 bg-black/40 text-xs"
+      >
+        <summary class="cursor-pointer select-none px-3 py-2 text-white/60 hover:text-white">
+          Prompt that produced this reply ({promptSnapshot.length.toLocaleString()} chars)
+        </summary>
+        <pre
+          class="overflow-x-auto p-3 max-h-[60vh] whitespace-pre-wrap break-words text-[11px] leading-snug text-white/75 font-mono">{promptSnapshot}</pre>
+      </details>
+    {/if}
   {/if}
 </div>

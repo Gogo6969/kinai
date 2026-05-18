@@ -26,6 +26,12 @@ class AppStore {
    *  status event arrives so the UI can avoid flashing "Disconnected"
    *  during the dial. */
   clientStatus = $state<{ connected: boolean; error?: string } | null>(null);
+  /** Per-session cache of the full prompt JSON that produced each
+   *  assistant message. Keyed by assistant message id, not persisted.
+   *  Populated when the host emits `kinai://prompt-debug` right after
+   *  generating a reply. The chat UI shows a 🔍 toggle only when an
+   *  entry exists for the rendered message. */
+  promptDebug = $state<Record<string, string>>({});
   /** Info advertised by the host on connect — model name + search engine,
    *  shown read-only on the client (the host controls these). */
   hostInfo = $state<{
@@ -192,6 +198,12 @@ class AppStore {
         }
         this.toolActivity[client_msg_id] = arr;
         this.toolActivity = { ...this.toolActivity };
+      })
+    );
+    this.cleanups.push(
+      await events.onPromptDebug(({ assistant_msg_id, prompt }) => {
+        this.promptDebug[assistant_msg_id] = prompt;
+        this.promptDebug = { ...this.promptDebug };
       })
     );
     this.cleanups.push(

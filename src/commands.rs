@@ -700,6 +700,10 @@ pub async fn send_message(
         context::builder::build_context(&state.db, &cfg, db::HOST_PEER, &args.thread_id, &user_msg)
             .await
             .map_err(err)?;
+    // Snapshot for the 🔍 debug panel — emitted alongside the
+    // assistant message after it lands. Same shape as the client-peer
+    // path in network/server.rs.
+    let prompt_debug = serde_json::to_string_pretty(&messages).ok();
     let tool_defs = registry::enabled(&cfg.tools);
     let tool_runtime = registry::ToolRuntime::from_tool_settings(&cfg.tools);
 
@@ -798,6 +802,16 @@ pub async fn send_message(
         .await;
     assistant_msg.metrics = Some(metrics_json.clone());
     let _ = app.emit("kinai://message", &assistant_msg);
+
+    if let Some(p) = prompt_debug {
+        let _ = app.emit(
+            "kinai://prompt-debug",
+            serde_json::json!({
+                "assistant_msg_id": assistant_msg.id,
+                "prompt": p,
+            }),
+        );
+    }
 
     if let Err(e) =
         context::memory::maybe_summarize(&state.db, db::HOST_PEER, &args.thread_id).await

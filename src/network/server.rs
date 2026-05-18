@@ -484,6 +484,10 @@ async fn run_chat_turn(
     let messages =
         context::builder::build_context(&s.app.db, &cfg, context_peer, thread_id, &user_msg)
             .await?;
+    // Snapshot the prompt for the per-turn diagnostic panel. Cheap
+    // (just a JSON serialization of the messages we're about to send)
+    // and only travels back as one extra envelope per turn.
+    let prompt_debug = serde_json::to_string_pretty(&messages).ok();
     let tools = registry::enabled(&cfg.tools);
     let tool_runtime = registry::ToolRuntime::from_tool_settings(&cfg.tools);
     let max_tokens = compute_max_tokens(&cfg, &messages);
@@ -570,6 +574,14 @@ async fn run_chat_turn(
     let _ = s.app.db.set_message_metrics(&assistant_msg.id, &metrics_json).await;
     assistant_msg.metrics = Some(metrics_json);
 
+    // Send the prompt snapshot first so the UI has it on hand when
+    // AssistantDone arrives and the 🔍 toggle becomes interactable.
+    if let Some(p) = prompt_debug {
+        let _ = tx.send(Envelope::PromptDebug {
+            assistant_msg_id: assistant_msg.id.clone(),
+            prompt: p,
+        });
+    }
     // AssistantDone goes only to the originating peer — same privacy rule
     // as the user echo above.
     let _ = tx.send(Envelope::AssistantDone {

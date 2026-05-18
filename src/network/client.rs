@@ -314,6 +314,18 @@ pub async fn connect(
                 }
                 let _ = app.emit("kinai://error", &message);
             }
+            Envelope::PromptDebug {
+                assistant_msg_id,
+                prompt,
+            } => {
+                let _ = app.emit(
+                    "kinai://prompt-debug",
+                    serde_json::json!({
+                        "assistant_msg_id": assistant_msg_id,
+                        "prompt": prompt,
+                    }),
+                );
+            }
             _ => {}
         }
     }

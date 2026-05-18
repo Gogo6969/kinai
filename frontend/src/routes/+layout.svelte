@@ -89,6 +89,16 @@
     toastTimer = setTimeout(() => (toastMsg = ''), ms);
   }
 
+  // Components that want to surface a toast dispatch a `kin-toast`
+  // CustomEvent on window with `{ msg, ms? }` in detail. Keeps the
+  // toast machinery in one place — components don't import showToast
+  // directly. Used by Sidebar's newChat error path, image download
+  // success/failure, etc.
+  function onKinToast(e: Event) {
+    const ce = e as CustomEvent<{ msg?: string; ms?: number }>;
+    if (ce.detail?.msg) showToast(ce.detail.msg, ce.detail.ms ?? 3000);
+  }
+
   onMount(() => {
     if (!page.url.pathname.startsWith('/overlay')) {
       void app.load().then(() => app.startListening());
@@ -97,9 +107,11 @@
       cleanups.push(await events.onOpenRoute((r) => goto(r)));
     })();
     document.addEventListener('click', interceptExternalLinks, { capture: true });
+    window.addEventListener('kin-toast', onKinToast);
     cleanups.push(() =>
       document.removeEventListener('click', interceptExternalLinks, { capture: true } as any)
     );
+    cleanups.push(() => window.removeEventListener('kin-toast', onKinToast));
   });
 
   onDestroy(() => {

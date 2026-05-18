@@ -6,7 +6,26 @@
   import { Plus, Settings as Cog, Users, Trash2, Cpu, RefreshCw } from '@lucide/svelte';
 
   async function newChat() {
-    await app.newThread();
+    const previousId = app.activeThreadId;
+    try {
+      await app.newThread();
+      // Belt-and-suspenders: if activeThreadId didn't actually change,
+      // the IPC succeeded but the store didn't pick up the new thread.
+      // Surface this rather than silently leaving the user in the old
+      // thread (the exact failure mode that caused topic-bleed bug).
+      if (!app.activeThreadId || app.activeThreadId === previousId) {
+        throw new Error(
+          'New chat created but the UI did not switch to it. Try clicking + again.'
+        );
+      }
+    } catch (e) {
+      const msg = String(e).replace(/^Error:\s*/, '');
+      console.warn('newChat failed:', e);
+      // Visible toast; reuses the global one from +layout.svelte.
+      window.dispatchEvent(
+        new CustomEvent('kin-toast', { detail: { msg: `✗ Couldn't start a new chat: ${msg}`, ms: 5000 } })
+      );
+    }
   }
 
   function select(id: string) {
