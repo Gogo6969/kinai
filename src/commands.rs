@@ -217,6 +217,28 @@ pub async fn test_vision_endpoint(args: TestVisionArgs) -> Result<TestVisionResu
     }
 }
 
+/// Fetch the bytes at `url` and write them to `dest_path`.
+///
+/// Used by the chat UI's image Download button. The webview's `fetch()`
+/// can't reach `http://192.168.1.x:4847` on macOS because WebKit's ATS
+/// blocks plain HTTP requests from JS (even though `<img src>` loads
+/// the same URL fine via a different code path). reqwest from Rust has
+/// no such restriction.
+#[tauri::command]
+pub async fn download_url_to_path(url: String, dest_path: String) -> Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(err)?;
+    let resp = client.get(&url).send().await.map_err(err)?;
+    if !resp.status().is_success() {
+        return Err(format!("HTTP {} fetching {url}", resp.status()));
+    }
+    let bytes = resp.bytes().await.map_err(err)?;
+    std::fs::write(&dest_path, &bytes).map_err(err)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn set_comfy_config(
     state: tauri::State<'_, SharedState>,

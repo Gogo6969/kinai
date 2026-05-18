@@ -7,7 +7,7 @@
   import { page } from '$app/state';
   import { open as shellOpen } from '@tauri-apps/plugin-shell';
   import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-  import { writeFile } from '@tauri-apps/plugin-fs';
+  import { invoke } from '@tauri-apps/api/core';
 
   let { children } = $props();
   const cleanups: Array<() => void> = [];
@@ -52,29 +52,25 @@
     shellOpen(href).catch((err) => console.warn('shell open failed', err));
   }
 
-  /** Fetch the image bytes and offer the user a Save dialog. The host
-   *  serves `/v1/pic/<uuid>.png` over plain HTTP on the LAN, so the
-   *  fetch is reachable from every paired family device.
-   *
-   *  Errors surface as a visible toast so the user knows what
-   *  happened instead of having to open devtools. */
+  /** Save the image at `url` to a path the user picks via Save dialog.
+   *  The actual HTTP fetch + file write are done in Rust (Tauri IPC
+   *  command) — the webview's `fetch()` can't reach
+   *  `http://192.168.1.x:4847` on macOS because WebKit's ATS blocks
+   *  plain HTTP requests from JavaScript, even though <img src> loads
+   *  the same URL fine via a different code path. Rust's reqwest has
+   *  no such restriction. */
   async function downloadImage(url: string) {
-    let stage = 'fetch';
+    let stage = 'dialog';
     try {
-      stage = 'fetch';
-      const resp = await fetch(url);
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const buf = new Uint8Array(await resp.arrayBuffer());
       const defaultName =
         url.split('/').pop()?.split('?')[0] || `kinai-image-${Date.now()}.png`;
-      stage = 'dialog';
       const path = await saveDialog({
         defaultPath: defaultName,
         filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp'] }],
       });
       if (!path) return; // user cancelled
-      stage = 'write';
-      await writeFile(path, buf);
+      stage = 'download';
+      await invoke('download_url_to_path', { url, destPath: path });
       showToast(`✓ Saved to ${path.split('/').pop() || path}`);
     } catch (err) {
       const msg = String(err).replace(/^Error:\s*/, '');

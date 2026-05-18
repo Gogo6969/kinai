@@ -130,6 +130,7 @@ pub fn run() {
             commands::test_vision_endpoint,
             commands::set_comfy_config,
             commands::test_comfy_endpoint,
+            commands::download_url_to_path,
             commands::detect_backends,
             commands::scan_local_network,
             commands::rescan_kinai_hosts,
