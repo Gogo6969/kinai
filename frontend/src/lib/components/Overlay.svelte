@@ -103,8 +103,20 @@
         })
       );
       cleanups.push(
-        await events.onAssistantDone(({ client_msg_id }) => {
-          if (client_msg_id === currentClientId) busy = false;
+        await events.onAssistantDone(({ client_msg_id, message }) => {
+          if (client_msg_id !== currentClientId) return;
+          // Slash commands (/help, /pic, /picHQ) and any non-streaming
+          // reply path never fire `onToken`, so `streamingContent` is
+          // still empty when AssistantDone arrives. The final content
+          // lives in `message.content`. Backfill from there so the
+          // overlay actually shows the reply instead of going blank.
+          // For streaming replies `streamingContent` already has the
+          // text — we only fill it when empty to avoid clobbering a
+          // partial stream if AssistantDone races the last token.
+          if (!streamingContent && message?.content) {
+            streamingContent = message.content;
+          }
+          busy = false;
         })
       );
     })();

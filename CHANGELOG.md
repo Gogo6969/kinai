@@ -5,6 +5,37 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.21] — 2026-05-19
+
+### Fixed
+
+- **Overlay slash commands (`/help`, `/pic`, `/picHQ`) now
+  actually render their reply.** The Spotlight-style overlay
+  showed an empty result area for any non-streaming reply: the
+  overlay's `onAssistantDone` listener only flipped `busy` off
+  and never read `message.content`, so slash-command outputs
+  (which the host sends in one shot, without streaming tokens)
+  ended up invisible. Streaming LLM replies worked because they
+  fed `streamingContent` via `onToken`. Now `onAssistantDone`
+  backfills `streamingContent` from `message.content` when it's
+  empty, so both streaming and non-streaming paths render in the
+  overlay.
+
+- **Mic error UX now explains the macOS two-permission model.**
+  Users granted KinAI Microphone access in System Settings and
+  still saw "Speech recognition is blocked" — because macOS
+  requires a **second** permission, *Speech Recognition*, in a
+  separate Privacy pane. The Web Speech API can't tell them
+  apart (both return `not-allowed`), so the v0.2.19 error
+  message only mentioned Microphone, leaving users stuck.
+  Now the error explicitly says both are required, includes a
+  "quit and relaunch" hint (WebKit caches the denied state for
+  the lifetime of the process), and exposes **two** deep-link
+  buttons: *Open Mic settings* and *Open Speech Recognition
+  settings*. Both link to the right Privacy panes in System
+  Settings on macOS 13+. Windows / Linux hide the buttons since
+  there's no equivalent URL.
+
 ## [0.2.20] — 2026-05-19
 
 ### Fixed

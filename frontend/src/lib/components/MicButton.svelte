@@ -37,13 +37,19 @@
 
   /** Translate Web Speech API errors into actionable human text. The
    *  raw error codes (`not-allowed`, `service-not-allowed`, `audio-
-   *  capture`, `network`, …) mean nothing to a normal user. */
+   *  capture`, `network`, …) mean nothing to a normal user.
+   *
+   *  Note on macOS: even with the Microphone toggle ON, KinAI ALSO
+   *  needs Speech Recognition enabled separately (Privacy → Speech
+   *  Recognition). The Web Speech API can't distinguish which one is
+   *  missing — both surface as `not-allowed` — so the message has to
+   *  mention both, and we expose two deep-link buttons. */
   function humanizeError(code: string): string {
     switch (code) {
       case 'not-allowed':
       case 'service-not-allowed':
         permissionDenied = true;
-        return "Microphone access is blocked. Open System Settings → Privacy & Security → Microphone and turn KinAI on.";
+        return "Speech recognition is blocked. macOS needs BOTH \"Microphone\" AND \"Speech Recognition\" enabled for KinAI in Privacy & Security — enabling just one is not enough. Open both panes below, toggle KinAI on, then quit and relaunch KinAI.";
       case 'audio-capture':
         return "No microphone detected. Plug one in (or enable your built-in mic) and try again.";
       case 'network':
@@ -65,17 +71,31 @@
     }
   }
 
-  /** Open macOS System Settings to the Microphone privacy pane so the
-   *  user can flip KinAI on with one click. On Windows / Linux there's
-   *  no equivalent deep-link; do nothing there. */
+  /** True when the renderer is on macOS — gates the Privacy-pane
+   *  deep-link buttons (Windows / Linux have no equivalent URL). */
+  const isMac =
+    typeof navigator !== 'undefined' && /mac/i.test(navigator.platform);
+
+  /** Deep-link to System Settings → Privacy & Security → Microphone.
+   *  The older `com.apple.preference.security` bundle path still works
+   *  on Sequoia / Tahoe via System Settings' shim, even though the new
+   *  bundle is `com.apple.settings.PrivacySecurity.extension`. */
   async function openMicSettings() {
     try {
-      const isMac =
-        typeof navigator !== 'undefined' &&
-        /mac/i.test(navigator.platform);
       if (isMac) {
-        // macOS 13+ deep-link to Privacy → Microphone pane.
         await shellOpen('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone');
+      }
+    } catch {}
+  }
+
+  /** Deep-link to System Settings → Privacy & Security → Speech
+   *  Recognition. This is the OTHER half of the permission pair Web
+   *  Speech API requires on macOS. Users routinely toggle Microphone
+   *  and assume that's enough — it isn't. */
+  async function openSpeechRecognitionSettings() {
+    try {
+      if (isMac) {
+        await shellOpen('x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition');
       }
     } catch {}
   }
@@ -197,26 +217,38 @@
 </button>
 
 {#if lastError}
-  <div class="text-xs text-red-300 px-2 flex items-center gap-2 max-w-[260px]">
-    <span class="flex-1">{lastError}</span>
-    {#if permissionDenied}
+  <div class="text-xs text-red-300 px-2 max-w-[420px] space-y-1.5">
+    <div class="flex items-start gap-2">
+      <span class="flex-1 leading-relaxed">{lastError}</span>
       <button
         type="button"
-        class="kin-btn !text-xs !px-2 !py-0.5 shrink-0"
-        onclick={openMicSettings}
-        title="Open System Settings → Privacy & Security → Microphone"
+        class="text-red-300/60 hover:text-red-300 shrink-0"
+        onclick={() => setError(null)}
+        title="Dismiss"
+        aria-label="Dismiss error"
       >
-        Fix
+        ✕
       </button>
+    </div>
+    {#if permissionDenied && isMac}
+      <div class="flex items-center gap-2 flex-wrap">
+        <button
+          type="button"
+          class="kin-btn !text-xs !px-2 !py-0.5 shrink-0"
+          onclick={openMicSettings}
+          title="Open System Settings → Privacy & Security → Microphone"
+        >
+          Open Mic settings
+        </button>
+        <button
+          type="button"
+          class="kin-btn !text-xs !px-2 !py-0.5 shrink-0"
+          onclick={openSpeechRecognitionSettings}
+          title="Open System Settings → Privacy & Security → Speech Recognition"
+        >
+          Open Speech Recognition settings
+        </button>
+      </div>
     {/if}
-    <button
-      type="button"
-      class="text-red-300/60 hover:text-red-300 shrink-0"
-      onclick={() => setError(null)}
-      title="Dismiss"
-      aria-label="Dismiss error"
-    >
-      ✕
-    </button>
   </div>
 {/if}
