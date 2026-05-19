@@ -864,7 +864,49 @@ pub async fn test_llm_connection(args: TestConnectionArgs) -> Result<TestConnect
 
 #[tauri::command]
 pub async fn list_threads(state: tauri::State<'_, SharedState>) -> Result<Vec<db::ThreadMeta>> {
+    // Mode-aware. Host reads its local DB (HOST_PEER bucket); client
+    // peers ask the host over the WebSocket for the threads belonging
+    // to them (their invite_id bucket). Without this WS round-trip,
+    // client UIs couldn't see threads that exist only in the host's DB
+    // — most importantly Telegram-originated threads, which are created
+    // server-side when the bot first sees a paired chat.
+    if matches!(state.config.read().mode, Mode::Client) {
+        return client_list_threads(&state).await;
+    }
     state.db.list_threads(db::HOST_PEER).await.map_err(err)
+}
+
+async fn client_list_threads(
+    state: &tauri::State<'_, SharedState>,
+) -> Result<Vec<db::ThreadMeta>> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let tx = {
+        let mut net = state.net.lock().await;
+        net.threads_pending = Some(sender);
+        net.client_tx.clone()
+    };
+    let Some(tx) = tx else {
+        // No live WS — fall back to local DB. Better than an error
+        // toast on app boot when the client is still reconnecting.
+        state.net.lock().await.threads_pending = None;
+        return state.db.list_threads(db::HOST_PEER).await.map_err(err);
+    };
+    if tx
+        .send(crate::network::protocol::Envelope::ListThreads)
+        .is_err()
+    {
+        state.net.lock().await.threads_pending = None;
+        return state.db.list_threads(db::HOST_PEER).await.map_err(err);
+    }
+    match tokio::time::timeout(std::time::Duration::from_secs(10), receiver).await {
+        Ok(Ok(threads)) => Ok(threads),
+        _ => {
+            // Timeout or sender dropped — fall back to local DB rather
+            // than failing the UI's startup load.
+            state.net.lock().await.threads_pending = None;
+            state.db.list_threads(db::HOST_PEER).await.map_err(err)
+        }
+    }
 }
 
 #[tauri::command]
@@ -872,11 +914,58 @@ pub async fn load_thread(
     state: tauri::State<'_, SharedState>,
     thread_id: String,
 ) -> Result<Vec<db::Message>> {
+    if matches!(state.config.read().mode, Mode::Client) {
+        return client_load_thread(&state, &thread_id).await;
+    }
     state
         .db
         .load_messages(db::HOST_PEER, &thread_id, 500)
         .await
         .map_err(err)
+}
+
+async fn client_load_thread(
+    state: &tauri::State<'_, SharedState>,
+    thread_id: &str,
+) -> Result<Vec<db::Message>> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let tx = {
+        let mut net = state.net.lock().await;
+        net.thread_messages_pending = Some(sender);
+        net.client_tx.clone()
+    };
+    let Some(tx) = tx else {
+        state.net.lock().await.thread_messages_pending = None;
+        return state
+            .db
+            .load_messages(db::HOST_PEER, thread_id, 500)
+            .await
+            .map_err(err);
+    };
+    if tx
+        .send(crate::network::protocol::Envelope::LoadThread {
+            thread_id: thread_id.to_string(),
+        })
+        .is_err()
+    {
+        state.net.lock().await.thread_messages_pending = None;
+        return state
+            .db
+            .load_messages(db::HOST_PEER, thread_id, 500)
+            .await
+            .map_err(err);
+    }
+    match tokio::time::timeout(std::time::Duration::from_secs(10), receiver).await {
+        Ok(Ok(messages)) => Ok(messages),
+        _ => {
+            state.net.lock().await.thread_messages_pending = None;
+            state
+                .db
+                .load_messages(db::HOST_PEER, thread_id, 500)
+                .await
+                .map_err(err)
+        }
+    }
 }
 
 #[tauri::command]

@@ -299,9 +299,19 @@ pub async fn connect(
                 );
             }
             Envelope::Threads { threads } => {
+                let mut net = state.net.lock().await;
+                if let Some(tx) = net.threads_pending.take() {
+                    let _ = tx.send(threads.clone());
+                }
+                drop(net);
                 let _ = app.emit("kinai://threads", &threads);
             }
             Envelope::ThreadMessages { thread_id, messages } => {
+                let mut net = state.net.lock().await;
+                if let Some(tx) = net.thread_messages_pending.take() {
+                    let _ = tx.send(messages.clone());
+                }
+                drop(net);
                 let _ = app.emit(
                     "kinai://thread-loaded",
                     serde_json::json!({"thread_id": thread_id, "messages": messages}),

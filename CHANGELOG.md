@@ -5,6 +5,26 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.15] — 2026-05-19
+
+### Fixed
+
+- **Client peers couldn't see Telegram threads in their KinAI
+  sidebar.** The `list_threads` and `load_thread` Tauri commands
+  read only the client's *local* DB (filtered by `HOST_PEER`),
+  but Telegram-originated threads live in the *host's* DB tagged
+  with the client's invite_id and never made it to the client's
+  local DB. Result: even though the host correctly fanned out
+  `Envelope::Message` over the WebSocket and the client received
+  it, the sidebar refresh couldn't find the matching thread row
+  and the Telegram conversation stayed invisible.
+  Both commands are now mode-aware — in Client mode they send
+  `Envelope::ListThreads` / `LoadThread` to the host and await
+  the response (10s timeout, falls back to local DB on failure).
+  The host returns the threads + messages filtered by the
+  client's invite identity, so Telegram conversations now show
+  up in client sidebars and load fully on click.
+
 ## [0.2.14] — 2026-05-19
 
 ### Fixed

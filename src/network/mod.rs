@@ -61,6 +61,16 @@ pub struct NetState {
     pub telegram_pair_pending: Option<oneshot::Sender<TelegramPairWire>>,
     pub telegram_status_pending: Option<oneshot::Sender<TelegramStatusWire>>,
     pub telegram_unpair_pending: Option<oneshot::Sender<()>>,
+    /// Pending thread-list round-trip. Client's `list_threads` Tauri
+    /// command sends `Envelope::ListThreads` and parks a oneshot here;
+    /// the WS read loop completes it when `Envelope::Threads` arrives.
+    /// Critical so client peers can see threads that exist on the host
+    /// but never landed in their LOCAL DB (Telegram-originated ones).
+    pub threads_pending: Option<oneshot::Sender<Vec<crate::db::ThreadMeta>>>,
+    /// Pending load-thread round-trip. Same shape — `LoadThread` →
+    /// `ThreadMessages`. Lets clients page in message history that lives
+    /// in the host's DB but not the client's own.
+    pub thread_messages_pending: Option<oneshot::Sender<Vec<crate::db::Message>>>,
 }
 
 impl Default for NetState {
@@ -74,6 +84,8 @@ impl Default for NetState {
             telegram_pair_pending: None,
             telegram_status_pending: None,
             telegram_unpair_pending: None,
+            threads_pending: None,
+            thread_messages_pending: None,
         }
     }
 }
