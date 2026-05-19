@@ -114,7 +114,7 @@ jobs:
             Write-Host "Wrapping $($msi.FullName) → $zipPath"
             Compress-Archive -Force -Path $msi.FullName -DestinationPath $zipPath
             Write-Host "Signing $zipPath"
-            pnpm tauri signer sign --private-key "$env:TAURI_SIGNING_PRIVATE_KEY" --no-password "$zipPath"
+            pnpm tauri signer sign --private-key "$env:TAURI_SIGNING_PRIVATE_KEY" --password "$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "$zipPath"
           } else {
             Write-Host "::warning::No .msi found to wrap"
           }
@@ -125,7 +125,7 @@ jobs:
             Write-Host "Wrapping $($exe.FullName) → $zipPath"
             Compress-Archive -Force -Path $exe.FullName -DestinationPath $zipPath
             Write-Host "Signing $zipPath"
-            pnpm tauri signer sign --private-key "$env:TAURI_SIGNING_PRIVATE_KEY" --no-password "$zipPath"
+            pnpm tauri signer sign --private-key "$env:TAURI_SIGNING_PRIVATE_KEY" --password "$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "$zipPath"
           } else {
             Write-Host "::warning::No .exe found to wrap"
           }
