@@ -253,7 +253,11 @@ pub async fn write_prompt_snapshot(msg_id: String, body: String) -> Result<Strin
 
 #[cfg(target_os = "macos")]
 fn open_path_in_default_app(path: &str) -> std::io::Result<()> {
-    std::process::Command::new("open").arg(path).spawn()?;
+    // `open -t` opens with the default PLAIN-TEXT editor (TextEdit by
+    // default), independent of the file's extension association. Without
+    // -t, .json routes to Xcode for users with Xcode installed, which is
+    // overkill for "I just want to read what was sent to the LLM."
+    std::process::Command::new("open").args(["-t", path]).spawn()?;
     Ok(())
 }
 
