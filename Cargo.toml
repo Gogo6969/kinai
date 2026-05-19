@@ -1,6 +1,6 @@
 [package]
 name = "kinai"
-version = "0.2.23"
+version = "0.2.24"
 description = "Share your private local AI with your family. One Mac runs the LLM; every family device — Mac or Windows — joins via invite. No cloud, no accounts."
 authors = ["KinAI Contributors"]
 license = "MIT"

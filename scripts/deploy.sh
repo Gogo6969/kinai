@@ -312,12 +312,26 @@ if [[ "$OS" == "Darwin" && "$APPLE_ENABLED" == "1" ]]; then
   mkdir -p "$SIGN_DIR"
   cp -R target/release/bundle/macos/KinAI.app "$SIGN_DIR/"
 
-  echo "→ stripping xattrs + codesigning with hardened runtime"
+  echo "→ stripping xattrs + codesigning with hardened runtime + entitlements"
   xattr -cr "$SIGN_DIR/KinAI.app"
+  # The --entitlements file enables the hardened-runtime exemptions we
+  # need: audio-input (microphone), camera (future), and allow-jit
+  # (WKWebView JS performance). Without this flag the binary signs
+  # cleanly but EVERY mic access is denied at the kernel level even
+  # if the user grants Privacy permission — that's the v0.2.x mic
+  # regression. See entitlements.plist for full rationale.
+  ENTITLEMENTS_FILE="$PWD/entitlements.plist"
+  if [[ ! -f "$ENTITLEMENTS_FILE" ]]; then
+    echo "  ✗ entitlements.plist missing — mic/camera will be denied at runtime" >&2
+    exit 1
+  fi
   codesign --force --options runtime --timestamp --deep \
+    --entitlements "$ENTITLEMENTS_FILE" \
     --sign "$APPLE_SIGNING_IDENTITY" \
     "$SIGN_DIR/KinAI.app"
   codesign --verify --strict --verbose=2 "$SIGN_DIR/KinAI.app" 2>&1 | tail -3
+  echo "  ✓ entitlements attached:"
+  codesign -d --entitlements - "$SIGN_DIR/KinAI.app" 2>&1 | grep -E "audio-input|camera|allow-jit|Bool" | head -10
 
   echo "→ submitting to Apple notary (wait up to 10 min)"
   /usr/bin/ditto -c -k --sequesterRsrc --keepParent \

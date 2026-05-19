@@ -5,6 +5,35 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.24] — 2026-05-19
+
+### Fixed
+
+- **🎤 Microphone now actually works** (the v0.2.x mic regression
+  that survived v0.2.19, .21, .22, and .23). Users granted KinAI
+  **both** *Microphone* AND *Speech Recognition* in System
+  Settings and still saw "Speech recognition is blocked" because
+  KinAI's signed binary had NO hardened-runtime entitlements at
+  all. macOS's hardened runtime gates every privileged capability
+  — the `NSMicrophoneUsageDescription` in Info.plist makes the
+  OS *prompt* for permission, but the OS won't *grant* the
+  underlying syscall unless the binary also carries the matching
+  `com.apple.security.device.audio-input` entitlement. The
+  Privacy toggle becomes a no-op against an unentitled binary.
+
+  Compare with the Claude desktop app on the same machine:
+  ```
+  Claude:  com.apple.security.device.audio-input  = true ✓
+  KinAI:   <no entitlements>                              ✗
+  ```
+
+  Added `entitlements.plist` with `audio-input`, `camera` (for
+  future vision-via-webcam), and `allow-jit` (WKWebView JS), and
+  updated `scripts/deploy.sh` to pass `--entitlements` to
+  `codesign`. Verified post-build via
+  `codesign -d --entitlements -` that the bits are present, and
+  webkitSpeechRecognition.start() actually succeeds now.
+
 ## [0.2.23] — 2026-05-19
 
 ### Fixed
