@@ -14,6 +14,7 @@
 //!   - router.rs     — incoming update → chat-pipeline routing
 
 pub mod api;
+pub mod echo;
 pub mod polling;
 pub mod router;
 

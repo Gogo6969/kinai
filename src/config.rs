@@ -294,6 +294,14 @@ pub struct AppConfig {
     pub comfyui: ComfyConfig,
     #[serde(default)]
     pub telegram: TelegramConfig,
+    /// Version string the user last acknowledged in the changelog
+    /// modal. The modal opens automatically when this is empty
+    /// (first launch) or doesn't match the binary's
+    /// `CARGO_PKG_VERSION` (post-upgrade). Dismissing it stamps the
+    /// current version back in, so the modal won't re-appear until
+    /// the next update.
+    #[serde(default)]
+    pub last_seen_changelog_version: String,
 }
 
 impl AppConfig {

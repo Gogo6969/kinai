@@ -8,6 +8,7 @@
   import { open as shellOpen } from '@tauri-apps/plugin-shell';
   import { save as saveDialog } from '@tauri-apps/plugin-dialog';
   import { invoke } from '@tauri-apps/api/core';
+  import ChangelogModal from '$lib/components/ChangelogModal.svelte';
 
   let { children } = $props();
   const cleanups: Array<() => void> = [];
@@ -142,6 +143,15 @@
 </script>
 
 {@render children?.()}
+
+<!--
+  Changelog modal — self-mounting. Decides internally whether to open
+  based on `get_changelog_payload`. Skip on the overlay route (a small
+  popover, the modal would dwarf it).
+-->
+{#if !page.url.pathname.startsWith('/overlay')}
+  <ChangelogModal />
+{/if}
 
 {#if toastMsg}
   <div

@@ -3,6 +3,7 @@
 
 pub mod attachments;
 pub mod auth;
+pub mod changelog;
 pub mod commands;
 pub mod comfyui;
 pub mod config;
@@ -71,6 +72,10 @@ pub struct HostInfo {
     pub host_model: String,
     pub host_search_engine: String,
     pub host_vision: String,
+    /// `@username` of the host's Telegram bot (or empty if not set up).
+    /// Drives the client-side "Family bot: @foo" label + gates the
+    /// "Connect Telegram" button on client peers.
+    pub host_telegram_bot: String,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -177,6 +182,8 @@ pub fn run() {
             commands::check_updates,
             commands::install_update,
             commands::kinai_version,
+            commands::get_changelog_payload,
+            commands::mark_changelog_seen,
         ])
         .setup({
             let st = state.clone();

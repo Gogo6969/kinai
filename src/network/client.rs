@@ -273,6 +273,7 @@ pub async fn connect(
                 host_model,
                 host_search_engine,
                 host_vision,
+                host_telegram_bot,
             } => {
                 {
                     let mut stats = state.stats.write();
@@ -282,6 +283,7 @@ pub async fn connect(
                         host_model: host_model.clone(),
                         host_search_engine: host_search_engine.clone(),
                         host_vision: host_vision.clone(),
+                        host_telegram_bot: host_telegram_bot.clone(),
                     });
                 }
                 let _ = app.emit(
@@ -292,6 +294,7 @@ pub async fn connect(
                         "host_model": host_model,
                         "host_search_engine": host_search_engine,
                         "host_vision": host_vision,
+                        "host_telegram_bot": host_telegram_bot,
                     }),
                 );
             }
@@ -325,6 +328,74 @@ pub async fn connect(
                         "prompt": prompt,
                     }),
                 );
+            }
+            // Telegram pairing round-trip responses. Each one resolves
+            // a pending oneshot stashed by the matching Tauri command —
+            // see `src/commands.rs` `request_telegram_pair` etc. We
+            // also emit a Tauri event so the Settings UI can refresh
+            // proactively (e.g. the status poll loop).
+            Envelope::TelegramPair {
+                url,
+                expires_in_secs,
+                bot_username,
+            } => {
+                let mut net = state.net.lock().await;
+                if let Some(tx) = net.telegram_pair_pending.take() {
+                    let _ = tx.send(super::TelegramPairWire {
+                        url: url.clone(),
+                        expires_in_secs,
+                        bot_username: bot_username.clone(),
+                    });
+                }
+                drop(net);
+                let _ = app.emit(
+                    "kinai://telegram-pair",
+                    serde_json::json!({
+                        "url": url,
+                        "expires_in_secs": expires_in_secs,
+                        "bot_username": bot_username,
+                    }),
+                );
+            }
+            Envelope::TelegramStatus {
+                bot_configured,
+                bot_username,
+                paired,
+                username,
+                first_name,
+                paired_at,
+            } => {
+                let mut net = state.net.lock().await;
+                if let Some(tx) = net.telegram_status_pending.take() {
+                    let _ = tx.send(super::TelegramStatusWire {
+                        bot_configured,
+                        bot_username: bot_username.clone(),
+                        paired,
+                        username: username.clone(),
+                        first_name: first_name.clone(),
+                        paired_at: paired_at.clone(),
+                    });
+                }
+                drop(net);
+                let _ = app.emit(
+                    "kinai://telegram-status",
+                    serde_json::json!({
+                        "bot_configured": bot_configured,
+                        "bot_username": bot_username,
+                        "paired": paired,
+                        "username": username,
+                        "first_name": first_name,
+                        "paired_at": paired_at,
+                    }),
+                );
+            }
+            Envelope::TelegramUnpairDone => {
+                let mut net = state.net.lock().await;
+                if let Some(tx) = net.telegram_unpair_pending.take() {
+                    let _ = tx.send(());
+                }
+                drop(net);
+                let _ = app.emit("kinai://telegram-unpair-done", serde_json::json!({}));
             }
             _ => {}
         }

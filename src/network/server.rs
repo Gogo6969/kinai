@@ -269,7 +269,7 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
         serde_json::json!({"id": peer_id, "name": display_name}),
     );
 
-    let (family_name, host_model, host_search_engine, host_vision) = {
+    let (family_name, host_model, host_search_engine, host_vision, host_telegram_bot) = {
         let cfg = s.app.config.read();
         let vision_label = if crate::vision::is_vision_capable(&cfg.llm.model) {
             // Chat model can do vision on its own — no dedicated endpoint needed.
@@ -288,11 +288,18 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
         } else {
             "off".into()
         };
+        // bot_username is empty until the host has run a successful
+        // getMe — exposing it lets the client peer's Settings card show
+        // "Family bot: @foo" + enable its Connect button. If the host
+        // hasn't configured a bot yet, the empty string tells clients
+        // to display the "ask the family owner to set up Telegram" hint
+        // instead of the QR flow.
         (
             cfg.host.family_name.clone(),
             cfg.llm.model.clone(),
             format!("{:?}", cfg.tools.search_engine).to_lowercase(),
             vision_label,
+            cfg.telegram.bot_username.clone(),
         )
     };
     let _ = tx.send(Envelope::Welcome {
@@ -301,6 +308,7 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
         host_model,
         host_search_engine,
         host_vision,
+        host_telegram_bot,
     });
 
     let writer = tokio::spawn(async move {
@@ -413,6 +421,87 @@ async fn dispatch(
             )
             .await?;
         }
+        // ---- Telegram pairing for client peers ----
+        //
+        // The handshake mirrors the host-mode Tauri commands, but the
+        // *peer_id* used for DB writes is `context_peer` (the connecting
+        // client's stable invite id) instead of the host's HOST_PEER.
+        // Same `telegram_links` table, same `redeem_pair` function —
+        // the bot's /start handler doesn't care whether the token was
+        // minted for the host or a client peer; it just trusts the
+        // peer_id stored on the pending row.
+        Envelope::RequestTelegramPair => {
+            // Resolve the client's pending oneshot one way or another so
+            // the command-side `request_telegram_pair` returns promptly
+            // instead of hitting its 15s timeout. Sentinel for "host
+            // hasn't set up the bot" is an empty `url` field — the
+            // client treats that as an error string.
+            let cfg = s.app.config.read().clone();
+            let bot_username = cfg.telegram.bot_username.clone();
+            if bot_username.is_empty() {
+                let _ = tx.send(Envelope::TelegramPair {
+                    url: String::new(),
+                    expires_in_secs: 0,
+                    bot_username: String::new(),
+                });
+            } else {
+                match crate::db::telegram::create_pending_pair(&s.app.db.pool, context_peer)
+                    .await
+                {
+                    Ok(token) => {
+                        let _ = tx.send(Envelope::TelegramPair {
+                            url: format!("https://t.me/{bot_username}?start={token}"),
+                            expires_in_secs: 600,
+                            bot_username,
+                        });
+                    }
+                    Err(e) => {
+                        // DB failure is rare; send the sentinel + an
+                        // Error toast for visibility.
+                        let _ = tx.send(Envelope::TelegramPair {
+                            url: String::new(),
+                            expires_in_secs: 0,
+                            bot_username: String::new(),
+                        });
+                        let _ = tx.send(Envelope::Error {
+                            message: format!("Couldn't create Telegram pairing token: {e}"),
+                        });
+                    }
+                }
+            }
+        }
+        Envelope::RequestTelegramStatus => {
+            let cfg = s.app.config.read().clone();
+            match crate::db::telegram::link_for_peer(&s.app.db.pool, context_peer).await {
+                Ok(link) => {
+                    let _ = tx.send(Envelope::TelegramStatus {
+                        bot_configured: !cfg.telegram.bot_token.trim().is_empty(),
+                        bot_username: cfg.telegram.bot_username.clone(),
+                        paired: link.is_some(),
+                        username: link.as_ref().and_then(|l| l.username.clone()),
+                        first_name: link.as_ref().and_then(|l| l.first_name.clone()),
+                        paired_at: link.as_ref().map(|l| l.paired_at.clone()),
+                    });
+                }
+                Err(e) => {
+                    let _ = tx.send(Envelope::Error {
+                        message: format!("Couldn't read Telegram status: {e}"),
+                    });
+                }
+            }
+        }
+        Envelope::RequestTelegramUnpair => {
+            match crate::db::telegram::unpair(&s.app.db.pool, context_peer).await {
+                Ok(()) => {
+                    let _ = tx.send(Envelope::TelegramUnpairDone);
+                }
+                Err(e) => {
+                    let _ = tx.send(Envelope::Error {
+                        message: format!("Couldn't unpair Telegram: {e}"),
+                    });
+                }
+            }
+        }
         _ => {}
     }
     Ok(())
@@ -475,9 +564,19 @@ async fn run_chat_turn(
         assistant_msg.metrics = Some(metrics_json);
         let _ = tx.send(Envelope::AssistantDone {
             client_msg_id: client_msg_id.to_string(),
-            message: assistant_msg,
+            message: assistant_msg.clone(),
             metrics,
         });
+        // Mirror to Telegram if this is the peer's Telegram thread.
+        // No-op when the thread isn't a Telegram one or the peer
+        // hasn't paired their phone.
+        crate::telegram::echo::maybe_echo_assistant(
+            &s.app,
+            context_peer,
+            thread_id,
+            &assistant_msg.content,
+        )
+        .await;
         return Ok(());
     }
 
@@ -595,6 +694,17 @@ async fn run_chat_turn(
         message: assistant_msg.clone(),
         metrics,
     });
+
+    // Bidirectional Telegram sync: when this assistant reply landed
+    // on the peer's dedicated Telegram thread, also push it to their
+    // Telegram chat so the convo stays in step on the phone.
+    crate::telegram::echo::maybe_echo_assistant(
+        &s.app,
+        context_peer,
+        thread_id,
+        &assistant_msg.content,
+    )
+    .await;
 
     if let Err(e) =
         context::memory::maybe_summarize(&s.app.db, context_peer, thread_id).await

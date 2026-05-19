@@ -39,6 +39,11 @@ class AppStore {
     host_version: string;
     host_model: string;
     host_search_engine: string;
+    host_vision?: string;
+    /** `@username` of the host's Telegram bot (empty = not configured).
+     *  Drives the "Family bot: @foo" label in Settings → Telegram on
+     *  client peers. */
+    host_telegram_bot?: string;
   } | null>(null);
   /** mDNS-discovered KinAI hosts on the local network. Kept at the store
    *  level (not inside /client/+page.svelte) because the discovery event

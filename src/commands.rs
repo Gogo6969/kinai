@@ -393,26 +393,86 @@ pub struct TelegramPairResult {
     pub expires_in_secs: i64,
 }
 
-/// Generate a one-time pairing token for the HOST peer ("host") and
-/// return the deep-link URL the user scans with their phone. Only
-/// usable on the host machine — client peers will get this through a
-/// WebSocket round-trip in a later commit.
+/// Generate a one-time pairing token and return the deep-link URL the
+/// user scans with their phone.
+///
+/// **Mode-aware:**
+///   * Host mode → mint the token directly against the local DB for
+///     `HOST_PEER`.
+///   * Client mode → send a `RequestTelegramPair` envelope over the WS
+///     to the host, park a oneshot on `NetState`, and await the host's
+///     `TelegramPair` response (resolves the oneshot in
+///     `network::client`). The token is minted on the host with the
+///     *client's* `context_peer` (their invite short-code), so the
+///     resulting pair binds the client's KinAI account — not the host's.
+///
+/// Either way, the frontend gets a uniform `{ url, expires_in_secs }`
+/// back and renders the same QR card.
 #[tauri::command]
 pub async fn request_telegram_pair(
     state: tauri::State<'_, SharedState>,
 ) -> Result<TelegramPairResult> {
-    let bot_username = state.config.read().telegram.bot_username.clone();
-    if bot_username.is_empty() {
+    let mode = state.config.read().mode;
+    match mode {
+        crate::config::Mode::Client => {
+            client_request_telegram_pair(&state).await
+        }
+        _ => {
+            let bot_username = state.config.read().telegram.bot_username.clone();
+            if bot_username.is_empty() {
+                return Err(
+                    "Telegram bot isn't set up yet. Paste a bot token from @BotFather first.".into(),
+                );
+            }
+            let token =
+                crate::db::telegram::create_pending_pair(&state.db.pool, db::HOST_PEER)
+                    .await
+                    .map_err(err)?;
+            Ok(TelegramPairResult {
+                url: format!("https://t.me/{bot_username}?start={token}"),
+                expires_in_secs: 600,
+            })
+        }
+    }
+}
+
+async fn client_request_telegram_pair(
+    state: &tauri::State<'_, SharedState>,
+) -> Result<TelegramPairResult> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let tx = {
+        let mut net = state.net.lock().await;
+        // Replace any in-flight oneshot — the previous caller's await
+        // will drop with a Cancelled error, which their `?` turns into
+        // a user-facing "request failed" string. That's fine: the only
+        // way to get into this state is double-clicking the QR button.
+        net.telegram_pair_pending = Some(sender);
+        net.client_tx.clone()
+    };
+    let Some(tx) = tx else {
+        // Clear the stash we just installed so a later reconnect
+        // doesn't see a stale sender.
+        state.net.lock().await.telegram_pair_pending = None;
+        return Err("Not connected to a KinAI host. Reconnect and try again.".into());
+    };
+    if tx.send(crate::network::protocol::Envelope::RequestTelegramPair).is_err() {
+        state.net.lock().await.telegram_pair_pending = None;
+        return Err("KinAI host disconnected before we could send the pair request.".into());
+    }
+    let resp = tokio::time::timeout(std::time::Duration::from_secs(15), receiver)
+        .await
+        .map_err(|_| "Timed out waiting for the host to mint a pairing code.".to_string())?
+        .map_err(|_| "Host dropped the pair request without responding.".to_string())?;
+    if resp.url.is_empty() {
+        // Sentinel from server.rs — bot isn't configured on the host.
         return Err(
-            "Telegram bot isn't set up yet. Paste a bot token from @BotFather first.".into(),
+            "The family Telegram bot isn't set up yet. Ask the host owner to configure it in Settings → Telegram on their machine."
+                .into(),
         );
     }
-    let token = crate::db::telegram::create_pending_pair(&state.db.pool, db::HOST_PEER)
-        .await
-        .map_err(err)?;
     Ok(TelegramPairResult {
-        url: format!("https://t.me/{bot_username}?start={token}"),
-        expires_in_secs: 600,
+        url: resp.url,
+        expires_in_secs: resp.expires_in_secs,
     })
 }
 
@@ -426,32 +486,162 @@ pub struct TelegramLinkStatus {
     pub paired_at: Option<String>,
 }
 
-/// Current pairing state for the HOST peer (used by Settings UI to
+/// Current pairing state for the caller's peer (host in Host mode, the
+/// connected client peer in Client mode). Used by the Settings UI to
 /// render "Paired as @foo · since DATE" + an Unpair button when
-/// already paired, or the pair button when not).
+/// already paired, or the pair button when not.
 #[tauri::command]
 pub async fn telegram_link_status(
     state: tauri::State<'_, SharedState>,
 ) -> Result<TelegramLinkStatus> {
-    let cfg = state.config.read().clone();
-    let link = crate::db::telegram::link_for_peer(&state.db.pool, db::HOST_PEER)
+    let mode = state.config.read().mode;
+    match mode {
+        crate::config::Mode::Client => client_request_telegram_status(&state).await,
+        _ => {
+            let cfg = state.config.read().clone();
+            let link = crate::db::telegram::link_for_peer(&state.db.pool, db::HOST_PEER)
+                .await
+                .map_err(err)?;
+            Ok(TelegramLinkStatus {
+                bot_configured: !cfg.telegram.bot_token.trim().is_empty(),
+                bot_username: cfg.telegram.bot_username.clone(),
+                paired: link.is_some(),
+                username: link.as_ref().and_then(|l| l.username.clone()),
+                first_name: link.as_ref().and_then(|l| l.first_name.clone()),
+                paired_at: link.as_ref().map(|l| l.paired_at.clone()),
+            })
+        }
+    }
+}
+
+async fn client_request_telegram_status(
+    state: &tauri::State<'_, SharedState>,
+) -> Result<TelegramLinkStatus> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let tx = {
+        let mut net = state.net.lock().await;
+        net.telegram_status_pending = Some(sender);
+        net.client_tx.clone()
+    };
+    let Some(tx) = tx else {
+        // Status polling is a passive UI refresh — if the WS isn't up
+        // yet (Client mode but not connected), return a neutral
+        // "nothing to show" payload instead of an error toast.
+        state.net.lock().await.telegram_status_pending = None;
+        return Ok(TelegramLinkStatus {
+            bot_configured: false,
+            bot_username: String::new(),
+            paired: false,
+            username: None,
+            first_name: None,
+            paired_at: None,
+        });
+    };
+    if tx.send(crate::network::protocol::Envelope::RequestTelegramStatus).is_err() {
+        state.net.lock().await.telegram_status_pending = None;
+        return Err("KinAI host disconnected before we could fetch Telegram status.".into());
+    }
+    let resp = tokio::time::timeout(std::time::Duration::from_secs(10), receiver)
         .await
-        .map_err(err)?;
+        .map_err(|_| "Timed out waiting for Telegram status from the host.".to_string())?
+        .map_err(|_| "Host dropped the status request.".to_string())?;
     Ok(TelegramLinkStatus {
-        bot_configured: !cfg.telegram.bot_token.trim().is_empty(),
-        bot_username: cfg.telegram.bot_username.clone(),
-        paired: link.is_some(),
-        username: link.as_ref().and_then(|l| l.username.clone()),
-        first_name: link.as_ref().and_then(|l| l.first_name.clone()),
-        paired_at: link.as_ref().map(|l| l.paired_at.clone()),
+        bot_configured: resp.bot_configured,
+        bot_username: resp.bot_username,
+        paired: resp.paired,
+        username: resp.username,
+        first_name: resp.first_name,
+        paired_at: resp.paired_at,
     })
 }
 
 #[tauri::command]
 pub async fn unpair_telegram(state: tauri::State<'_, SharedState>) -> Result<()> {
-    crate::db::telegram::unpair(&state.db.pool, db::HOST_PEER)
+    let mode = state.config.read().mode;
+    match mode {
+        crate::config::Mode::Client => client_request_telegram_unpair(&state).await,
+        _ => {
+            crate::db::telegram::unpair(&state.db.pool, db::HOST_PEER)
+                .await
+                .map_err(err)
+        }
+    }
+}
+
+async fn client_request_telegram_unpair(
+    state: &tauri::State<'_, SharedState>,
+) -> Result<()> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let tx = {
+        let mut net = state.net.lock().await;
+        net.telegram_unpair_pending = Some(sender);
+        net.client_tx.clone()
+    };
+    let Some(tx) = tx else {
+        state.net.lock().await.telegram_unpair_pending = None;
+        return Err("Not connected to a KinAI host. Reconnect and try again.".into());
+    };
+    if tx
+        .send(crate::network::protocol::Envelope::RequestTelegramUnpair)
+        .is_err()
+    {
+        state.net.lock().await.telegram_unpair_pending = None;
+        return Err("KinAI host disconnected before we could send the unpair request.".into());
+    }
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(10), receiver)
         .await
-        .map_err(err)
+        .map_err(|_| "Timed out waiting for the host to confirm unpair.".to_string())?
+        .map_err(|_| "Host dropped the unpair request.".to_string())?;
+    Ok(())
+}
+
+// ============================================================
+// Changelog modal
+// ============================================================
+
+#[derive(Debug, Serialize)]
+pub struct ChangelogPayload {
+    /// Current binary version (`CARGO_PKG_VERSION`).
+    pub version: String,
+    /// Markdown body for the current version's section, parsed out of
+    /// the embedded `CHANGELOG.md`. `None` when the binary version
+    /// has no matching `## [x.y.z]` heading (dev builds, mid-release).
+    pub markdown: Option<String>,
+    /// True when the user hasn't acknowledged this version yet —
+    /// i.e. `last_seen_changelog_version != current_version` AND we
+    /// have a markdown section to show. Frontend uses this to decide
+    /// whether to open the modal automatically after launch.
+    pub should_show: bool,
+}
+
+/// Fetch the changelog entry for the running binary. Always returns a
+/// payload — the frontend decides what to do with it based on
+/// `should_show`.
+#[tauri::command]
+pub async fn get_changelog_payload(
+    state: tauri::State<'_, SharedState>,
+) -> Result<ChangelogPayload> {
+    let version = crate::changelog::current_version().to_string();
+    let last_seen = state.config.read().last_seen_changelog_version.clone();
+    let markdown = crate::changelog::section_for_version(&version);
+    let should_show = markdown.is_some() && last_seen != version;
+    Ok(ChangelogPayload {
+        version,
+        markdown,
+        should_show,
+    })
+}
+
+/// Stamp the running binary's version into `last_seen_changelog_version`
+/// so the modal doesn't reopen until the next upgrade. Saves config to
+/// disk synchronously.
+#[tauri::command]
+pub async fn mark_changelog_seen(
+    state: tauri::State<'_, SharedState>,
+) -> Result<()> {
+    let mut cfg = state.config.write();
+    cfg.last_seen_changelog_version = crate::changelog::current_version().to_string();
+    cfg.save().map_err(err)
 }
 
 #[derive(Debug, Deserialize)]
@@ -890,6 +1080,16 @@ pub async fn send_message(
                 "metrics": &metrics,
             }),
         );
+        // Bidirectional Telegram sync: if the host owner is chatting
+        // in their own Telegram thread, mirror the slash-command reply
+        // back to Telegram. No-op on regular threads.
+        crate::telegram::echo::maybe_echo_assistant(
+            &state,
+            db::HOST_PEER,
+            &args.thread_id,
+            &assistant_msg.content,
+        )
+        .await;
         return Ok(SendMessageResult {
             user_message: user_msg,
             assistant_message: assistant_msg,
@@ -1035,6 +1235,17 @@ pub async fn send_message(
             "metrics": metrics,
         }),
     );
+
+    // Bidirectional Telegram sync — if this assistant reply landed on
+    // the host owner's Telegram thread, mirror it to their Telegram
+    // chat. No-op for any non-Telegram thread.
+    crate::telegram::echo::maybe_echo_assistant(
+        &state,
+        db::HOST_PEER,
+        &args.thread_id,
+        &assistant_msg.content,
+    )
+    .await;
 
     Ok(SendMessageResult {
         user_message: user_msg,

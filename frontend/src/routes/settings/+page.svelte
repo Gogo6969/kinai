@@ -72,6 +72,17 @@
   let telegramStatus = $state<TelegramLinkStatus | null>(null);
   let telegramPairUrl = $state<string>('');
   let telegramPairQrDataUrl = $state<string>('');
+  // Resolve the family-bot username from two sources: the local status
+  // (host knows it directly) OR the host's Welcome (clients get it on
+  // connect). `botConfigured` falls back to the username presence so
+  // the pair sub-card appears for clients before their first status
+  // round-trip lands.
+  const telegramBotUsername = $derived(
+    telegramStatus?.bot_username || app.hostInfo?.host_telegram_bot || ''
+  );
+  const telegramBotConfigured = $derived(
+    telegramStatus?.bot_configured || !!telegramBotUsername
+  );
   let telegramPairing = $state(false);
 
   async function refreshTelegramStatus() {
@@ -861,77 +872,101 @@
     </div>
     {/if}
 
-    {#if isHost}
+    <!--
+      Telegram card.
+      Visible on BOTH host and client peers — each family member pairs
+      their own Telegram independently. Host owner additionally sees
+      the bot-token sub-card (only one bot in the family; only the
+      host runs it).
+    -->
     <div class="kin-card space-y-4">
       <div class="flex items-start justify-between gap-3">
         <div class="min-w-0">
           <h2 class="font-semibold text-lg">Telegram</h2>
           <p class="text-xs text-white/50">
-            Connect a Telegram bot so the family can chat with KinAI from
-            their phone. The host owner sets up <strong>one bot via
-            @BotFather</strong>; each family member then pairs their own
-            Telegram once via QR code. Slash commands (<code>/pic</code>,
-            <code>/picHQ</code>, <code>/help</code>) work the same in
-            Telegram as they do in KinAI.
+            Chat with KinAI from your phone via Telegram. The family owner
+            sets up <strong>one shared bot</strong> via @BotFather (just
+            once, on the host machine). Each family member then pairs
+            their own Telegram via QR code below.
+          </p>
+          <p class="text-xs text-white/40 mt-1">
+            Every family member has their own private 1:1 chat with the
+            bot — others can't see your messages. Slash commands
+            (<code>/pic</code>, <code>/picHQ</code>, <code>/help</code>)
+            work the same as in KinAI.
           </p>
         </div>
       </div>
 
-      <!-- Bot token (host-only setup) -->
-      <label class="block">
-        <span class="text-sm text-white/70">Bot token</span>
-        <input
-          type="password"
-          class="kin-field mt-1 font-mono"
-          bind:value={telegramTokenInput}
-          placeholder={telegramStatus?.bot_configured
-            ? `(currently configured as @${telegramStatus.bot_username || '?'} — leave blank to keep, paste new to replace)`
-            : 'Paste the token from @BotFather (e.g. 1234567890:AAH…)'}
-          autocomplete="off"
-          spellcheck="false"
-        />
-        <p class="text-xs text-white/50 mt-1">
-          On your phone, message <strong>@BotFather</strong> →
-          <code>/newbot</code> → follow the prompts → copy the token →
-          paste here. Empty token disables Telegram entirely.
-        </p>
-      </label>
+      <!-- Bot-token sub-card — host owner only. Sets up the one shared
+           family bot. Hidden from client peers since they don't run
+           the long-poll loop. -->
+      {#if isHost}
+        <div class="border border-white/5 rounded-lg p-3 space-y-3 bg-white/[0.02]">
+          <div class="text-xs uppercase tracking-wider text-white/40">
+            Bot setup (host only)
+          </div>
+          <label class="block">
+            <span class="text-sm text-white/70">Bot token</span>
+            <input
+              type="password"
+              class="kin-field mt-1 font-mono"
+              bind:value={telegramTokenInput}
+              placeholder={telegramStatus?.bot_configured
+                ? `(currently configured as @${telegramStatus.bot_username || '?'} — leave blank to keep, paste new to replace)`
+                : 'Paste the token from @BotFather (e.g. 1234567890:AAH…)'}
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <p class="text-xs text-white/50 mt-1">
+              On your phone, message <strong>@BotFather</strong> →
+              <code>/newbot</code> → follow the prompts → copy the token →
+              paste here. Empty token disables Telegram entirely for the
+              whole family.
+            </p>
+          </label>
 
-      <div class="flex items-center gap-2 flex-wrap">
-        <button
-          class="kin-btn"
-          type="button"
-          onclick={testTelegramToken}
-          disabled={telegramTestState === 'testing'}
-        >
-          {telegramTestState === 'testing' ? 'Testing…' : 'Test token'}
-        </button>
-        <button
-          class="kin-btn-primary"
-          type="button"
-          onclick={saveTelegramToken}
-          disabled={telegramSaveState === 'saving' || !telegramTokenInput.trim()}
-        >
-          {telegramSaveState === 'saving' ? 'Saving…' : 'Save token'}
-        </button>
-        {#if telegramSaveState === 'ok'}
-          <span class="text-xs text-emerald-300">✓ Saved</span>
-        {/if}
-        {#if telegramTestState === 'ok'}
-          <span class="text-xs text-emerald-300">✓ {telegramTestMsg}</span>
-        {:else if telegramTestState === 'fail'}
-          <span class="text-xs text-red-300">✗ {telegramTestMsg}</span>
-        {/if}
-      </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <button
+              class="kin-btn"
+              type="button"
+              onclick={testTelegramToken}
+              disabled={telegramTestState === 'testing'}
+            >
+              {telegramTestState === 'testing' ? 'Testing…' : 'Test token'}
+            </button>
+            <button
+              class="kin-btn-primary"
+              type="button"
+              onclick={saveTelegramToken}
+              disabled={telegramSaveState === 'saving' || !telegramTokenInput.trim()}
+            >
+              {telegramSaveState === 'saving' ? 'Saving…' : 'Save token'}
+            </button>
+            {#if telegramSaveState === 'ok'}
+              <span class="text-xs text-emerald-300">✓ Saved</span>
+            {/if}
+            {#if telegramTestState === 'ok'}
+              <span class="text-xs text-emerald-300">✓ {telegramTestMsg}</span>
+            {:else if telegramTestState === 'fail'}
+              <span class="text-xs text-red-300">✗ {telegramTestMsg}</span>
+            {/if}
+          </div>
+        </div>
+      {/if}
 
-      <!-- Pair section (only visible when a bot is configured) -->
-      {#if telegramStatus?.bot_configured}
-        <div class="border-t border-white/5 pt-4 space-y-3">
-          {#if telegramStatus.paired}
+      <!-- "Connect MY Telegram" sub-card — visible to everyone (host +
+           client peers). On client peers, the bot username comes from
+           the host's Welcome envelope (RuntimeStats.host_info); on the
+           host, it comes from the local telegram_link_status. The two
+           sources are merged into the `telegramBot*` derived values. -->
+      {#if telegramBotConfigured}
+        <div class="space-y-3">
+          {#if telegramStatus?.paired}
             <div class="flex items-start justify-between gap-3">
               <div class="text-sm">
                 <div class="text-white/80">
-                  ✓ Paired
+                  ✓ Your Telegram is paired
                   {#if telegramStatus.username}
                     as <span class="font-mono text-teal-300">@{telegramStatus.username}</span>
                   {:else if telegramStatus.first_name}
@@ -943,6 +978,11 @@
                     since {new Date(telegramStatus.paired_at).toLocaleDateString()}
                   </div>
                 {/if}
+                <div class="text-xs text-white/40 mt-1">
+                  Messages from you to <span class="font-mono">@{telegramBotUsername}</span>
+                  land in your KinAI thread. Other family members have
+                  their own separate chats.
+                </div>
               </div>
               <button class="kin-btn !text-red-300/80 hover:!text-red-300" type="button" onclick={unpairTelegram}>
                 Disconnect
@@ -953,7 +993,8 @@
               <p class="text-sm text-white/70">
                 Scan this code with your phone's camera (or tap the
                 link). Telegram will open with a "Start" button — tap it,
-                and you'll be linked.
+                and your phone will be linked to <span class="font-mono">your</span>
+                KinAI account.
               </p>
               <div class="flex items-start gap-4">
                 {#if telegramPairQrDataUrl}
@@ -976,7 +1017,7 @@
                     {telegramPairUrl}
                   </a>
                   <div class="text-white/40">
-                    Code expires in 10 minutes. The card auto-updates
+                    Code expires in 10 minutes. This card auto-updates
                     once you complete the scan.
                   </div>
                 </div>
@@ -985,19 +1026,25 @@
           {:else}
             <div class="flex items-center justify-between gap-3">
               <p class="text-sm text-white/60">
-                Pair this device with the bot so messages from
-                <span class="font-mono">@{telegramStatus.bot_username}</span>
-                land in your KinAI chat.
+                Family bot:
+                <span class="font-mono text-teal-300">@{telegramBotUsername}</span>.
+                Pair your phone so messages you send to it land in your
+                KinAI chat.
               </p>
               <button class="kin-btn" type="button" onclick={startTelegramPair} disabled={telegramPairing}>
-                {telegramPairing ? 'Generating…' : 'Connect Telegram'}
+                {telegramPairing ? 'Generating…' : 'Connect my Telegram'}
               </button>
             </div>
           {/if}
         </div>
+      {:else if isClient}
+        <p class="text-xs text-white/50 italic">
+          Telegram isn't set up for this family yet. Ask the host owner to
+          configure it in Settings → Telegram on their machine, then come
+          back here to pair your phone.
+        </p>
       {/if}
     </div>
-    {/if}
 
     <div class="kin-card space-y-4">
       <h2 class="font-semibold text-lg">Overlay</h2>

@@ -5,6 +5,73 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.13] — 2026-05-19
+
+### Added
+
+- **Telegram is now a first-class family chat surface.** Every
+  family member can chat with KinAI from their phone over Telegram
+  — same model, same memory, same threads. The host owner sets up
+  **one shared bot via @BotFather** (once), and each member pairs
+  their own Telegram from *Settings → Telegram* via QR code. Each
+  user has their own private 1:1 chat with the bot; other family
+  members never see your messages.
+- **Bidirectional sync.** Messages sent from Telegram show up in
+  the matching KinAI thread instantly. Assistant replies generated
+  inside KinAI on that thread are also mirrored back to your
+  Telegram chat, so the conversation stays in step on the phone.
+- **Slash commands work in Telegram.** `/help`, `/pic`, `/picHQ`
+  behave identically to in-app — and `/pic`-generated images are
+  uploaded as actual Telegram photos (not just links).
+- **Client-mode pairing via WebSocket.** The Connect-Telegram QR
+  flow works for the host AND for every connected client peer.
+  Behind the scenes, the client's Tauri command sends a
+  `RequestTelegramPair` envelope to the host, which mints a token
+  bound to that client's invite identity and replies with the
+  scannable URL. No bot tokens ever leave the host machine.
+- **Changelog window.** Pops up once after each update so you can
+  see what's new. Built from this `CHANGELOG.md` embedded in the
+  binary; "Got it" stamps the seen version into your local config.
+
+### Fixed
+
+- **Bot-username advertised over Welcome.** The host's `Welcome`
+  envelope now carries `host_telegram_bot` so client peers can
+  show *"Family bot: @vidfame_kinai_bot"* and enable their pair
+  button without a separate round-trip.
+
+## [0.2.11] — 2026-05-19
+
+### Added
+
+- **Telegram foundation (host-only).** First slice of the Telegram
+  integration: bot token Setting, long-poll loop against the
+  Telegram Bot API, router that handles `/start` pairing,
+  inbound messages → KinAI LLM → reply back, slash commands,
+  `/pic` outbound as actual photos. Pairing UI initially gated to
+  the host peer; client-mode pairing followed in v0.2.13.
+
+## [0.2.10] — 2026-05-18
+
+### Fixed
+
+- **Window close button** now hides the main window on macOS
+  instead of destroying it, matching the Windows behavior added in
+  0.2.9 — relaunching KinAI from the Dock now brings the window
+  back instead of silently no-op'ing.
+- **Overlay transparency on macOS** also bumped to 90% (was
+  Windows-only in 0.2.9). Improves readability over light desktop
+  backgrounds.
+- **Settings save feedback** flashes a green ✓ for 2.5s next to the
+  Save button after every successful settings change.
+- **macOS image download** routed through a Rust IPC command so
+  WKWebView's App Transport Security doesn't block plain-HTTP
+  attachment downloads from the host.
+- **Prompt debug panel** ("🔍 prompt" toggle under each assistant
+  message) strips inline image data URLs before serializing — a
+  single attached PNG used to bloat the JSON to 7-8 MB and lock
+  the WebView when the user clicked the button.
+
 ## [0.2.9] — 2026-05-18
 
 ### Added

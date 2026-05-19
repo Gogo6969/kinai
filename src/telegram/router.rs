@@ -289,7 +289,7 @@ async fn send_assistant_reply(
 /// If `reply` contains `![…](http://<our-host>/v1/pic/<uuid>.<ext>)`,
 /// return the absolute filesystem path to that image. None if the
 /// reply has no such reference.
-fn extract_local_pic_path(state: &SharedState, reply: &str) -> Option<std::path::PathBuf> {
+pub(super) fn extract_local_pic_path(state: &SharedState, reply: &str) -> Option<std::path::PathBuf> {
     let re = regex::Regex::new(r"!\[[^\]]*\]\(http[s]?://[^/]+/v1/pic/([A-Za-z0-9_\-]+\.[a-z]+)\)").ok()?;
     let caps = re.captures(reply)?;
     let filename = caps.get(1)?.as_str();
@@ -303,7 +303,7 @@ fn extract_local_pic_path(state: &SharedState, reply: &str) -> Option<std::path:
     }
 }
 
-fn strip_inline_image_markdown(reply: &str) -> String {
+pub(super) fn strip_inline_image_markdown(reply: &str) -> String {
     let re = match regex::Regex::new(r"!\[[^\]]*\]\(http[s]?://[^)]+\)\s*\n*") {
         Ok(r) => r,
         Err(_) => return reply.to_string(),
@@ -314,7 +314,7 @@ fn strip_inline_image_markdown(reply: &str) -> String {
 /// Deterministic thread id for `<peer>`'s Telegram conversation. UUID
 /// shape so the host's threads table accepts it; first segment encodes
 /// the peer so it's easy to debug (`grep telegram-` against the DB).
-fn telegram_thread_id_for_peer(peer_id: &str) -> String {
+pub fn telegram_thread_id_for_peer(peer_id: &str) -> String {
     // We can't put `peer_id` directly into a UUID slot, so fold it
     // into a stable hash and format as a UUID-shaped string.
     use std::hash::{Hash, Hasher};

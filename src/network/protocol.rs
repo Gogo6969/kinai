@@ -40,7 +40,45 @@ pub enum Envelope {
         /// user paste an image and get a wire-time error.
         #[serde(default)]
         host_vision: String,
+        /// `@username` of the host's Telegram bot, or empty string when
+        /// the host hasn't configured one yet. Clients display this so
+        /// the family member knows which bot to expect when scanning
+        /// the QR; it also gates the "Connect Telegram" button on the
+        /// client (no bot configured → no point pairing).
+        #[serde(default)]
+        host_telegram_bot: String,
     },
+    /// Client → Host: please mint a pairing token for me (the requesting
+    /// client peer). The host responds with `TelegramPair`. No payload —
+    /// the client peer is identified by the WS session (`context_peer`).
+    RequestTelegramPair,
+    /// Host → Client: the pairing token's URL + how long it's valid for
+    /// + the bot username (so the client can label the QR card).
+    TelegramPair {
+        url: String,
+        expires_in_secs: i64,
+        bot_username: String,
+    },
+    /// Client → Host: what's my current Telegram pairing state? Used
+    /// when the Settings card first mounts on a client, and during the
+    /// 2s poll loop after the user starts a pairing handshake so the
+    /// UI flips from "QR shown" → "✓ Paired" automatically.
+    RequestTelegramStatus,
+    /// Host → Client: snapshot of the requesting peer's pairing row.
+    TelegramStatus {
+        bot_configured: bool,
+        bot_username: String,
+        paired: bool,
+        username: Option<String>,
+        first_name: Option<String>,
+        paired_at: Option<String>,
+    },
+    /// Client → Host: drop my Telegram pairing. Host responds with
+    /// `TelegramUnpairDone` so the UI can refresh deterministically
+    /// (rather than relying on the user clicking Refresh).
+    RequestTelegramUnpair,
+    /// Host → Client: pairing removed; please refresh.
+    TelegramUnpairDone,
     SendMessage {
         thread_id: String,
         content: String,

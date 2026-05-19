@@ -181,6 +181,10 @@ export interface HostInfo {
   host_model: string;
   host_search_engine: string;
   host_vision: string;
+  /** `@username` of the host's Telegram bot, or empty string if the
+   *  host owner hasn't configured one. Drives the "Family bot: @foo"
+   *  label + Connect-Telegram button on client peers. */
+  host_telegram_bot: string;
 }
 
 export interface RuntimeStats {
