@@ -76,6 +76,22 @@ export interface ComfyConfig {
   default_model: string;
 }
 
+/** Telegram bot integration — host-side. Empty bot_token means
+ *  the feature is off (no long-poll loop, no UI for clients). */
+export interface TelegramConfig {
+  bot_token: string;
+  bot_username: string;
+}
+
+export interface TelegramLinkStatus {
+  bot_configured: boolean;
+  bot_username: string;
+  paired: boolean;
+  username: string | null;
+  first_name: string | null;
+  paired_at: string | null;
+}
+
 export interface AppConfig {
   mode: Mode;
   theme: Theme;
@@ -86,6 +102,7 @@ export interface AppConfig {
   tools: ToolSettings;
   vision: VisionSettings;
   comfyui: ComfyConfig;
+  telegram: TelegramConfig;
 }
 
 export interface ThreadMeta {
@@ -234,6 +251,17 @@ export const api = {
       'test_comfy_endpoint',
       { args }
     ),
+  testTelegramToken: (args: { bot_token: string }) =>
+    invoke<{ ok: boolean; bot_username: string | null; error: string | null }>(
+      'test_telegram_token',
+      { args }
+    ),
+  setTelegramToken: (args: { bot_token: string }) =>
+    invoke<AppConfig>('set_telegram_token', { args }),
+  requestTelegramPair: () =>
+    invoke<{ url: string; expires_in_secs: number }>('request_telegram_pair'),
+  telegramLinkStatus: () => invoke<TelegramLinkStatus>('telegram_link_status'),
+  unpairTelegram: () => invoke<void>('unpair_telegram'),
 
   detectBackends: () => invoke<DetectedBackend[]>('detect_backends'),
   scanLocalNetwork: () => invoke<DetectedBackend[]>('scan_local_network'),

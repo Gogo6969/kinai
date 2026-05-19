@@ -167,57 +167,90 @@ async fn run_turn_for_peer(
         return Ok(());
     }
 
-    // Regular chat — build context, run the LLM, capture the final
-    // assistant content. This duplicates a chunk of run_chat_turn from
-    // network::server because we don't have a client mpsc to fan-out
-    // streaming tokens to. Future cleanup: extract the shared core.
+    // Regular chat path — build the same prompt KinAI builds for any
+    // turn (system prompt + memory recalls + recent turns + this one),
+    // run the LLM pipeline, capture the final assistant content, send
+    // it back to Telegram.
+    //
+    // Streaming tokens are dropped on the floor (Telegram doesn't have
+    // a streaming wire shape we'd use here — paid users CAN edit
+    // messages to simulate it, but the UX cost (tokens per second
+    // shimmer vs. one clean reply) isn't worth it). We just wait for
+    // the full reply.
+    use std::sync::Arc;
+    use tokio_util::sync::CancellationToken;
+    use crate::tools::loop_pipeline::PipelineHandlers;
+    use crate::tools::registry;
+
     let messages = crate::context::builder::build_context(
         &state.db,
         &cfg,
         peer_id,
         &thread_id,
-        &state
-            .db
-            .append_message(&thread_id, "user", &sender, "", &[])
-            .await
-            .ok()
-            .as_ref()
-            .map(|m| crate::db::Message {
-                id: m.id.clone(),
-                thread_id: m.thread_id.clone(),
-                role: m.role.clone(),
-                sender: m.sender.clone(),
-                content: content.to_string(),
-                attachments: vec![],
-                created_at: m.created_at.clone(),
-                summarized_into: None,
-                metrics: None,
-            })
-            .unwrap_or(crate::db::Message {
-                id: String::new(),
-                thread_id: thread_id.clone(),
-                role: "user".into(),
-                sender: sender.clone(),
-                content: content.to_string(),
-                attachments: vec![],
-                created_at: chrono::Utc::now().to_rfc3339(),
-                summarized_into: None,
-                metrics: None,
-            }),
+        &crate::db::Message {
+            id: user_msg.id.clone(),
+            thread_id: thread_id.clone(),
+            role: "user".into(),
+            sender: sender.clone(),
+            content: content.to_string(),
+            attachments: vec![],
+            created_at: user_msg.created_at.clone(),
+            summarized_into: None,
+            metrics: None,
+        },
     )
     .await?;
-    let _ = messages; // placeholder; full LLM path completed in next milestone
 
-    // For this first slice we only handle slash commands end-to-end;
-    // non-slash messages will get a friendly placeholder until the
-    // LLM-path refactor lands in the next commit.
-    api.send_message(
-        chat_id,
-        "🚧 Plain-text chat through Telegram is coming in the next update — for now I can only \
-        handle slash commands like `/pic`, `/picHQ`, `/help`. Try one of those!",
+    let tools = registry::enabled(&cfg.tools);
+    let tool_runtime = registry::ToolRuntime::from_tool_settings(&cfg.tools);
+    let max_tokens = compute_max_tokens(&cfg, &messages);
+    let llm = state.llm.lock().await.clone();
+    let cancel = CancellationToken::new();
+    // No-op handlers — we discard streaming events. Final content is
+    // captured from run_with_route's return value.
+    let handlers = PipelineHandlers {
+        on_token: Arc::new(|_| {}),
+        on_reasoning: Arc::new(|_| {}),
+        on_tool: Arc::new(|_| {}),
+    };
+    let route = crate::vision::decide(&cfg.llm.model, &[], &cfg.vision)?;
+    let result = crate::vision::run_with_route(
+        route,
+        llm,
+        &cfg.llm,
+        messages,
+        tools,
+        tool_runtime,
+        max_tokens,
+        handlers,
+        cancel,
     )
     .await?;
+
+    send_assistant_reply(api, state, &thread_id, chat_id, &result.final_content).await?;
+
+    if let Err(e) =
+        crate::context::memory::maybe_summarize(&state.db, peer_id, &thread_id).await
+    {
+        tracing::warn!("telegram summarizer: {e:?}");
+    }
     Ok(())
+}
+
+/// Same budget calc as network::server::compute_max_tokens — copied
+/// here to avoid a cross-module visibility change for what's a 4-line
+/// helper. If the LLM config has a non-zero max_tokens, honor that as
+/// the cap; otherwise feed the model the full remaining context.
+fn compute_max_tokens(
+    cfg: &crate::config::AppConfig,
+    messages: &[crate::context::ChatMessage],
+) -> Option<usize> {
+    if cfg.llm.max_tokens == 0 {
+        return None;
+    }
+    let used = crate::context::token_guard::estimate_messages(messages);
+    let remaining = cfg.llm.context_window.saturating_sub(used);
+    Some(cfg.llm.max_tokens.min(remaining))
 }
 
 /// Send the assistant reply back to Telegram. For slash-command

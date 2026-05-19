@@ -311,6 +311,149 @@ pub async fn set_comfy_config(
     Ok(new_cfg)
 }
 
+// ============================================================
+// Telegram
+// ============================================================
+
+#[derive(Debug, Deserialize)]
+pub struct TelegramTokenArgs {
+    pub bot_token: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TelegramTokenResult {
+    pub ok: bool,
+    pub bot_username: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Validate a bot token without saving it: probes getMe and returns
+/// the bot's @username on success. Used by the Settings "Test" button.
+#[tauri::command]
+pub async fn test_telegram_token(args: TelegramTokenArgs) -> Result<TelegramTokenResult> {
+    let token = args.bot_token.trim().to_string();
+    if token.is_empty() {
+        return Ok(TelegramTokenResult {
+            ok: false,
+            bot_username: None,
+            error: Some("Token is empty".into()),
+        });
+    }
+    let api = crate::telegram::BotApi::new(token);
+    match api.get_me().await {
+        Ok(me) => Ok(TelegramTokenResult {
+            ok: true,
+            bot_username: me.username,
+            error: None,
+        }),
+        Err(e) => Ok(TelegramTokenResult {
+            ok: false,
+            bot_username: None,
+            error: Some(e.to_string()),
+        }),
+    }
+}
+
+/// Save the bot token to config + (re)start the long-poll loop. Empty
+/// token disables the feature and stops the loop.
+#[tauri::command]
+pub async fn set_telegram_token(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+    args: TelegramTokenArgs,
+) -> Result<AppConfig> {
+    let cleaned = args.bot_token.trim().to_string();
+    {
+        let mut cfg = state.config.write();
+        cfg.telegram.bot_token = cleaned.clone();
+        if cleaned.is_empty() {
+            cfg.telegram.bot_username = String::new();
+        }
+        cfg.save().map_err(err)?;
+    }
+    // Restart the supervisor with the new token. Runs in background so
+    // the IPC call returns quickly; if validation fails the user sees
+    // it via the next status poll (or the Test button beforehand).
+    let st = (*state).clone();
+    let app_clone = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = crate::telegram::start_or_restart(st, app_clone).await {
+            tracing::warn!("telegram restart: {e:?}");
+        }
+    });
+    Ok(state.config.read().clone())
+}
+
+#[derive(Debug, Serialize)]
+pub struct TelegramPairResult {
+    /// The deep-link URL: `https://t.me/<bot>?start=<token>`. The
+    /// frontend turns this into a QR code.
+    pub url: String,
+    /// How long (seconds) before the token expires. Currently 600.
+    pub expires_in_secs: i64,
+}
+
+/// Generate a one-time pairing token for the HOST peer ("host") and
+/// return the deep-link URL the user scans with their phone. Only
+/// usable on the host machine — client peers will get this through a
+/// WebSocket round-trip in a later commit.
+#[tauri::command]
+pub async fn request_telegram_pair(
+    state: tauri::State<'_, SharedState>,
+) -> Result<TelegramPairResult> {
+    let bot_username = state.config.read().telegram.bot_username.clone();
+    if bot_username.is_empty() {
+        return Err(
+            "Telegram bot isn't set up yet. Paste a bot token from @BotFather first.".into(),
+        );
+    }
+    let token = crate::db::telegram::create_pending_pair(&state.db.pool, db::HOST_PEER)
+        .await
+        .map_err(err)?;
+    Ok(TelegramPairResult {
+        url: format!("https://t.me/{bot_username}?start={token}"),
+        expires_in_secs: 600,
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct TelegramLinkStatus {
+    pub bot_configured: bool,
+    pub bot_username: String,
+    pub paired: bool,
+    pub username: Option<String>,
+    pub first_name: Option<String>,
+    pub paired_at: Option<String>,
+}
+
+/// Current pairing state for the HOST peer (used by Settings UI to
+/// render "Paired as @foo · since DATE" + an Unpair button when
+/// already paired, or the pair button when not).
+#[tauri::command]
+pub async fn telegram_link_status(
+    state: tauri::State<'_, SharedState>,
+) -> Result<TelegramLinkStatus> {
+    let cfg = state.config.read().clone();
+    let link = crate::db::telegram::link_for_peer(&state.db.pool, db::HOST_PEER)
+        .await
+        .map_err(err)?;
+    Ok(TelegramLinkStatus {
+        bot_configured: !cfg.telegram.bot_token.trim().is_empty(),
+        bot_username: cfg.telegram.bot_username.clone(),
+        paired: link.is_some(),
+        username: link.as_ref().and_then(|l| l.username.clone()),
+        first_name: link.as_ref().and_then(|l| l.first_name.clone()),
+        paired_at: link.as_ref().map(|l| l.paired_at.clone()),
+    })
+}
+
+#[tauri::command]
+pub async fn unpair_telegram(state: tauri::State<'_, SharedState>) -> Result<()> {
+    crate::db::telegram::unpair(&state.db.pool, db::HOST_PEER)
+        .await
+        .map_err(err)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct TestComfyArgs {
     pub base_url: String,

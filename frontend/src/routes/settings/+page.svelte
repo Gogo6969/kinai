@@ -5,6 +5,7 @@
     type ComfyConfig,
     type LlmSettings,
     type OverlaySettings,
+    type TelegramLinkStatus,
     type Theme,
     type ToolSettings,
     type VisionEndpoint,
@@ -13,6 +14,7 @@
   import { app } from '$lib/stores/app.svelte';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
+  import QRCode from 'qrcode';
   import { Loader2, RefreshCw } from '@lucide/svelte';
 
   const isClient = $derived(app.config?.mode === 'client');
@@ -61,6 +63,121 @@
   let comfyui = $state<ComfyConfig>({ base_url: '', default_model: 'zimage' });
   let comfyTestState = $state<'idle' | 'testing' | 'ok' | 'fail'>('idle');
   let comfyTestMsg = $state<string>('');
+
+  // Telegram bot integration.
+  let telegramTokenInput = $state('');
+  let telegramTestState = $state<'idle' | 'testing' | 'ok' | 'fail'>('idle');
+  let telegramTestMsg = $state<string>('');
+  let telegramSaveState = $state<'idle' | 'saving' | 'ok' | 'fail'>('idle');
+  let telegramStatus = $state<TelegramLinkStatus | null>(null);
+  let telegramPairUrl = $state<string>('');
+  let telegramPairQrDataUrl = $state<string>('');
+  let telegramPairing = $state(false);
+
+  async function refreshTelegramStatus() {
+    try {
+      telegramStatus = await api.telegramLinkStatus();
+    } catch (e) {
+      console.warn('telegram status:', e);
+      telegramStatus = null;
+    }
+  }
+
+  async function testTelegramToken() {
+    if (!telegramTokenInput.trim()) {
+      telegramTestState = 'fail';
+      telegramTestMsg = 'Paste a bot token from @BotFather first.';
+      return;
+    }
+    telegramTestState = 'testing';
+    telegramTestMsg = '';
+    try {
+      const r = await api.testTelegramToken({ bot_token: telegramTokenInput.trim() });
+      if (r.ok) {
+        telegramTestState = 'ok';
+        telegramTestMsg = `Reachable — bot is @${r.bot_username ?? '?'}`;
+      } else {
+        telegramTestState = 'fail';
+        telegramTestMsg = r.error ?? 'Test failed';
+      }
+    } catch (e) {
+      telegramTestState = 'fail';
+      telegramTestMsg = String(e).replace(/^Error:\s*/, '');
+    }
+  }
+
+  async function saveTelegramToken() {
+    telegramSaveState = 'saving';
+    try {
+      await api.setTelegramToken({ bot_token: telegramTokenInput.trim() });
+      telegramSaveState = 'ok';
+      // Pull fresh status so the rest of the card adapts (paired
+      // section if applicable, "Pair this device" button now active).
+      await refreshTelegramStatus();
+      // Don't keep the token in the input — the field is write-only.
+      telegramTokenInput = '';
+      setTimeout(() => {
+        if (telegramSaveState === 'ok') telegramSaveState = 'idle';
+      }, 2000);
+    } catch (e) {
+      telegramSaveState = 'fail';
+      telegramTestMsg = String(e).replace(/^Error:\s*/, '');
+    }
+  }
+
+  async function startTelegramPair() {
+    telegramPairing = true;
+    telegramPairUrl = '';
+    telegramPairQrDataUrl = '';
+    try {
+      const r = await api.requestTelegramPair();
+      telegramPairUrl = r.url;
+      // Generate a QR code as a data URL. 256 px, medium error-
+      // correction is plenty for a t.me link.
+      telegramPairQrDataUrl = await QRCode.toDataURL(r.url, {
+        width: 256,
+        margin: 1,
+        color: { dark: '#0f172a', light: '#ffffff' },
+      });
+    } catch (e) {
+      telegramPairUrl = '';
+      telegramPairQrDataUrl = '';
+      window.dispatchEvent(
+        new CustomEvent('kin-toast', {
+          detail: {
+            msg: `✗ Couldn't start pairing: ${String(e).replace(/^Error:\s*/, '')}`,
+            ms: 6000,
+          },
+        })
+      );
+    } finally {
+      telegramPairing = false;
+    }
+    // Poll the status briefly so when the user finishes scanning + the
+    // bot confirms pairing, the card auto-updates without a manual refresh.
+    const start = Date.now();
+    const poll = setInterval(async () => {
+      if (Date.now() - start > 11 * 60 * 1000) {
+        clearInterval(poll);
+        return;
+      }
+      await refreshTelegramStatus();
+      if (telegramStatus?.paired) {
+        clearInterval(poll);
+        telegramPairUrl = '';
+        telegramPairQrDataUrl = '';
+      }
+    }, 3000);
+  }
+
+  async function unpairTelegram() {
+    try {
+      await api.unpairTelegram();
+      await refreshTelegramStatus();
+    } catch (e) {
+      console.warn('unpair:', e);
+    }
+  }
 
   // Quick-fill presets — base_url + model only, never an API key. KinAI's
   // local-first ethos means we never ship credentials.
@@ -128,6 +245,10 @@
         comfyui = { ...app.config.comfyui };
       }
     }
+    // Pull current Telegram pairing state regardless of mode — host
+    // sees the bot-token card + their own pair status; client peers
+    // (in a later iteration) see just their pair status.
+    void refreshTelegramStatus();
     // Only the host knows local model lists; in Client mode the LLM lives
     // on another machine and there's nothing to refresh here.
     if (app.config?.mode === 'host') {
@@ -737,6 +858,144 @@
           <span class="text-xs text-red-300">✗ {comfyTestMsg}</span>
         {/if}
       </div>
+    </div>
+    {/if}
+
+    {#if isHost}
+    <div class="kin-card space-y-4">
+      <div class="flex items-start justify-between gap-3">
+        <div class="min-w-0">
+          <h2 class="font-semibold text-lg">Telegram</h2>
+          <p class="text-xs text-white/50">
+            Connect a Telegram bot so the family can chat with KinAI from
+            their phone. The host owner sets up <strong>one bot via
+            @BotFather</strong>; each family member then pairs their own
+            Telegram once via QR code. Slash commands (<code>/pic</code>,
+            <code>/picHQ</code>, <code>/help</code>) work the same in
+            Telegram as they do in KinAI.
+          </p>
+        </div>
+      </div>
+
+      <!-- Bot token (host-only setup) -->
+      <label class="block">
+        <span class="text-sm text-white/70">Bot token</span>
+        <input
+          type="password"
+          class="kin-field mt-1 font-mono"
+          bind:value={telegramTokenInput}
+          placeholder={telegramStatus?.bot_configured
+            ? `(currently configured as @${telegramStatus.bot_username || '?'} — leave blank to keep, paste new to replace)`
+            : 'Paste the token from @BotFather (e.g. 1234567890:AAH…)'}
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <p class="text-xs text-white/50 mt-1">
+          On your phone, message <strong>@BotFather</strong> →
+          <code>/newbot</code> → follow the prompts → copy the token →
+          paste here. Empty token disables Telegram entirely.
+        </p>
+      </label>
+
+      <div class="flex items-center gap-2 flex-wrap">
+        <button
+          class="kin-btn"
+          type="button"
+          onclick={testTelegramToken}
+          disabled={telegramTestState === 'testing'}
+        >
+          {telegramTestState === 'testing' ? 'Testing…' : 'Test token'}
+        </button>
+        <button
+          class="kin-btn-primary"
+          type="button"
+          onclick={saveTelegramToken}
+          disabled={telegramSaveState === 'saving' || !telegramTokenInput.trim()}
+        >
+          {telegramSaveState === 'saving' ? 'Saving…' : 'Save token'}
+        </button>
+        {#if telegramSaveState === 'ok'}
+          <span class="text-xs text-emerald-300">✓ Saved</span>
+        {/if}
+        {#if telegramTestState === 'ok'}
+          <span class="text-xs text-emerald-300">✓ {telegramTestMsg}</span>
+        {:else if telegramTestState === 'fail'}
+          <span class="text-xs text-red-300">✗ {telegramTestMsg}</span>
+        {/if}
+      </div>
+
+      <!-- Pair section (only visible when a bot is configured) -->
+      {#if telegramStatus?.bot_configured}
+        <div class="border-t border-white/5 pt-4 space-y-3">
+          {#if telegramStatus.paired}
+            <div class="flex items-start justify-between gap-3">
+              <div class="text-sm">
+                <div class="text-white/80">
+                  ✓ Paired
+                  {#if telegramStatus.username}
+                    as <span class="font-mono text-teal-300">@{telegramStatus.username}</span>
+                  {:else if telegramStatus.first_name}
+                    as <span class="text-teal-300">{telegramStatus.first_name}</span>
+                  {/if}
+                </div>
+                {#if telegramStatus.paired_at}
+                  <div class="text-xs text-white/40 mt-0.5">
+                    since {new Date(telegramStatus.paired_at).toLocaleDateString()}
+                  </div>
+                {/if}
+              </div>
+              <button class="kin-btn !text-red-300/80 hover:!text-red-300" type="button" onclick={unpairTelegram}>
+                Disconnect
+              </button>
+            </div>
+          {:else if telegramPairUrl}
+            <div class="space-y-3">
+              <p class="text-sm text-white/70">
+                Scan this code with your phone's camera (or tap the
+                link). Telegram will open with a "Start" button — tap it,
+                and you'll be linked.
+              </p>
+              <div class="flex items-start gap-4">
+                {#if telegramPairQrDataUrl}
+                  <img
+                    src={telegramPairQrDataUrl}
+                    alt="Telegram pairing QR"
+                    class="rounded-lg border border-white/10 bg-white"
+                    width="200"
+                    height="200"
+                  />
+                {/if}
+                <div class="flex-1 min-w-0 text-xs space-y-2">
+                  <div class="text-white/60">Or open directly:</div>
+                  <a
+                    href={telegramPairUrl}
+                    class="font-mono text-teal-300 underline break-all"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {telegramPairUrl}
+                  </a>
+                  <div class="text-white/40">
+                    Code expires in 10 minutes. The card auto-updates
+                    once you complete the scan.
+                  </div>
+                </div>
+              </div>
+            </div>
+          {:else}
+            <div class="flex items-center justify-between gap-3">
+              <p class="text-sm text-white/60">
+                Pair this device with the bot so messages from
+                <span class="font-mono">@{telegramStatus.bot_username}</span>
+                land in your KinAI chat.
+              </p>
+              <button class="kin-btn" type="button" onclick={startTelegramPair} disabled={telegramPairing}>
+                {telegramPairing ? 'Generating…' : 'Connect Telegram'}
+              </button>
+            </div>
+          {/if}
+        </div>
+      {/if}
     </div>
     {/if}
 

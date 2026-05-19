@@ -31,17 +31,20 @@ pub struct TelegramLink {
 /// so the caller can build the `https://t.me/<bot>?start=<token>` URL
 /// and the QR code.
 pub async fn create_pending_pair(pool: &SqlitePool, peer_id: &str) -> Result<String> {
-    use rand::Rng;
-    // 24 random URL-safe chars — Telegram's start_parameter allows
-    // up to 64 chars from [A-Za-z0-9_-].
-    const ALPHA: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
-    let mut rng = rand::thread_rng();
-    let token: String = (0..24)
-        .map(|_| {
-            let idx = rng.gen_range(0..ALPHA.len());
-            ALPHA[idx] as char
-        })
-        .collect();
+    // Generate the token in a sync scope so the non-Send ThreadRng
+    // isn't held across an await (Tauri's IPC future has a Send bound).
+    let token: String = {
+        use rand::Rng;
+        const ALPHA: &[u8] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
+        let mut rng = rand::thread_rng();
+        (0..24)
+            .map(|_| {
+                let idx = rng.gen_range(0..ALPHA.len());
+                ALPHA[idx] as char
+            })
+            .collect()
+    };
     let now = Utc::now().to_rfc3339();
     sqlx::query(
         "INSERT INTO telegram_pending_pairs (token, peer_id, created_at) VALUES (?1, ?2, ?3)",
