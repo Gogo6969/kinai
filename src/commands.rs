@@ -760,8 +760,15 @@ pub async fn send_message(
             .map_err(err)?;
     // Snapshot for the 🔍 debug panel — emitted alongside the
     // assistant message after it lands. Same shape as the client-peer
-    // path in network/server.rs.
-    let prompt_debug = serde_json::to_string_pretty(&messages).ok();
+    // path in network/server.rs. Inline image data URLs are stripped
+    // out so a single attached PNG doesn't bloat the JSON to 7-8 MB.
+    let prompt_debug = serde_json::to_string_pretty(
+        &messages
+            .iter()
+            .map(|m| m.redacted_for_debug())
+            .collect::<Vec<_>>(),
+    )
+    .ok();
     let tool_defs = registry::enabled(&cfg.tools);
     let tool_runtime = registry::ToolRuntime::from_tool_settings(&cfg.tools);
 

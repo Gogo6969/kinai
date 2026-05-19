@@ -64,6 +64,39 @@ impl ChatMessage {
             ChatMessage::Tool { content, .. } => content,
         }
     }
+
+    /// Return a copy with embedded image data URLs replaced by a tiny
+    /// placeholder. Used for the per-turn debug snapshot — without
+    /// this, a single chat image (5+ MB base64 PNG) blows the
+    /// serialized prompt JSON up to 7-8 MB, which freezes any editor
+    /// that tries to render it.
+    pub fn redacted_for_debug(&self) -> ChatMessage {
+        match self {
+            ChatMessage::User {
+                content,
+                name,
+                image_data_urls,
+            } => ChatMessage::User {
+                content: content.clone(),
+                name: name.clone(),
+                image_data_urls: image_data_urls
+                    .iter()
+                    .map(|u| {
+                        if u.starts_with("data:") {
+                            format!(
+                                "[inline {} data, {} chars elided for readability]",
+                                u.split(';').next().unwrap_or("data:").trim_start_matches("data:"),
+                                u.len()
+                            )
+                        } else {
+                            u.clone()
+                        }
+                    })
+                    .collect(),
+            },
+            other => other.clone(),
+        }
+    }
 }
 
 pub fn system_prompt(family_name: &str, addendum: &str) -> ChatMessage {

@@ -484,10 +484,16 @@ async fn run_chat_turn(
     let messages =
         context::builder::build_context(&s.app.db, &cfg, context_peer, thread_id, &user_msg)
             .await?;
-    // Snapshot the prompt for the per-turn diagnostic panel. Cheap
-    // (just a JSON serialization of the messages we're about to send)
-    // and only travels back as one extra envelope per turn.
-    let prompt_debug = serde_json::to_string_pretty(&messages).ok();
+    // Snapshot the prompt for the per-turn diagnostic panel. Replace
+    // inline image data URLs with a tiny placeholder so a single
+    // attached PNG doesn't bloat the JSON to 7-8 MB.
+    let prompt_debug = serde_json::to_string_pretty(
+        &messages
+            .iter()
+            .map(|m| m.redacted_for_debug())
+            .collect::<Vec<_>>(),
+    )
+    .ok();
     let tools = registry::enabled(&cfg.tools);
     let tool_runtime = registry::ToolRuntime::from_tool_settings(&cfg.tools);
     let max_tokens = compute_max_tokens(&cfg, &messages);
