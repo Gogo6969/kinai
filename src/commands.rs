@@ -1133,20 +1133,12 @@ pub async fn send_message(
         .map_err(err)?;
     let _ = app.emit("kinai://message", &user_msg);
 
-    // Bidirectional Telegram sync (host side): when the host owner is
-    // typing in their own Telegram thread, push the question to
-    // Telegram BEFORE the LLM runs so the chat there shows the full
-    // exchange. No-op for non-Telegram threads or when the user
-    // actually typed it on Telegram (router persists those with
-    // sender = "Telegram", which the echo skips).
-    crate::telegram::echo::maybe_echo_user(
-        &state,
-        db::HOST_PEER,
-        &args.thread_id,
-        &sender,
-        &args.content,
-    )
-    .await;
+    // Bidirectional Telegram sync (host side): if the host owner is
+    // typing inside their own Telegram thread on KinAI, show the
+    // "typing…" indicator on Telegram while the LLM thinks. The full
+    // Q&A echo (combined into one bot message) happens after the LLM
+    // finishes — see `maybe_echo_qa` calls below.
+    crate::telegram::echo::maybe_show_typing(&state, db::HOST_PEER, &args.thread_id).await;
 
     let cfg = state.config.read().clone();
 
@@ -1184,13 +1176,15 @@ pub async fn send_message(
                 "metrics": &metrics,
             }),
         );
-        // Bidirectional Telegram sync: if the host owner is chatting
-        // in their own Telegram thread, mirror the slash-command reply
-        // back to Telegram. No-op on regular threads.
-        crate::telegram::echo::maybe_echo_assistant(
+        // Bidirectional Telegram sync: mirror the full Q&A turn (the
+        // user's slash-command input + the resolved reply) to Telegram
+        // as one combined bot message. No-op on non-Telegram threads.
+        crate::telegram::echo::maybe_echo_qa(
             &state,
             db::HOST_PEER,
             &args.thread_id,
+            &sender,
+            &args.content,
             &assistant_msg.content,
         )
         .await;
@@ -1340,13 +1334,16 @@ pub async fn send_message(
         }),
     );
 
-    // Bidirectional Telegram sync — if this assistant reply landed on
-    // the host owner's Telegram thread, mirror it to their Telegram
-    // chat. No-op for any non-Telegram thread.
-    crate::telegram::echo::maybe_echo_assistant(
+    // Bidirectional Telegram sync — mirror the full Q&A turn to
+    // Telegram as one combined bot message. No-op on non-Telegram
+    // threads; `maybe_echo_qa` also skips the question quote when
+    // sender == "Telegram" so we don't bounce inbound messages.
+    crate::telegram::echo::maybe_echo_qa(
         &state,
         db::HOST_PEER,
         &args.thread_id,
+        &sender,
+        &args.content,
         &assistant_msg.content,
     )
     .await;

@@ -287,7 +287,9 @@ async fn send_assistant_reply<R: Runtime>(
     if let Some(local_path) = extract_local_pic_path(state, reply) {
         let caption = strip_inline_image_markdown(reply);
         let caption_opt = if caption.trim().is_empty() { None } else { Some(caption.as_str()) };
-        api.send_photo_file(chat_id, &local_path, caption_opt).await?;
+        // Plain-text caption (no parse_mode) — the user typed this on
+        // Telegram, so we don't need the blockquote-formatted Q&A echo.
+        api.send_photo_file(chat_id, &local_path, caption_opt, None).await?;
         return Ok(());
     }
 

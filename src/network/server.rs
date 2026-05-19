@@ -538,20 +538,12 @@ async fn run_chat_turn(
     // the peer, not to whoever happens to own the host machine.
     let _ = tx.send(Envelope::Message { message: user_msg.clone() });
 
-    // Bidirectional Telegram sync (client-peer side): mirror the user's
-    // question to Telegram BEFORE the LLM runs so the phone chat shows
-    // the full exchange when the user typed from KinAI. Skipped for
-    // non-Telegram threads or when the user actually typed it on
-    // Telegram (router persists those with sender = "Telegram", which
-    // the echo internally filters out).
-    crate::telegram::echo::maybe_echo_user(
-        &s.app,
-        context_peer,
-        thread_id,
-        sender,
-        content,
-    )
-    .await;
+    // Bidirectional Telegram sync (client-peer side): show the
+    // "typing…" indicator on the peer's Telegram chat while the host
+    // LLM thinks. The actual Q&A echo (combined into one bot message)
+    // happens after the assistant reply is finalized — see the two
+    // `maybe_echo_qa` calls further down. No-op on non-Telegram threads.
+    crate::telegram::echo::maybe_show_typing(&s.app, context_peer, thread_id).await;
 
     let cfg = s.app.config.read().clone();
 
@@ -582,13 +574,15 @@ async fn run_chat_turn(
             message: assistant_msg.clone(),
             metrics,
         });
-        // Mirror to Telegram if this is the peer's Telegram thread.
-        // No-op when the thread isn't a Telegram one or the peer
-        // hasn't paired their phone.
-        crate::telegram::echo::maybe_echo_assistant(
+        // Mirror the full Q&A turn (user question + slash-command
+        // reply) to Telegram as one combined bot message. No-op when
+        // this isn't a Telegram thread or the peer hasn't paired.
+        crate::telegram::echo::maybe_echo_qa(
             &s.app,
             context_peer,
             thread_id,
+            sender,
+            content,
             &assistant_msg.content,
         )
         .await;
@@ -710,13 +704,16 @@ async fn run_chat_turn(
         metrics,
     });
 
-    // Bidirectional Telegram sync: when this assistant reply landed
-    // on the peer's dedicated Telegram thread, also push it to their
-    // Telegram chat so the convo stays in step on the phone.
-    crate::telegram::echo::maybe_echo_assistant(
+    // Bidirectional Telegram sync: mirror the full Q&A turn as one
+    // combined bot message on the peer's Telegram chat. No-op on
+    // non-Telegram threads; the echo helper also drops the question
+    // quote when sender == "Telegram" so we don't bounce inbound.
+    crate::telegram::echo::maybe_echo_qa(
         &s.app,
         context_peer,
         thread_id,
+        sender,
+        content,
         &assistant_msg.content,
     )
     .await;

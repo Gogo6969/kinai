@@ -1,24 +1,36 @@
 //! KinAI → Telegram echo.
 //!
-//! When the assistant generates a reply on a *peer's Telegram thread*
-//! (the deterministic thread id created by `router::telegram_thread_id_for_peer`),
-//! we mirror that reply to Telegram so the conversation stays in sync
-//! on the user's phone — not just inside KinAI's UI.
+//! When the user types a question inside KinAI on a peer's Telegram
+//! thread (the deterministic id from `router::telegram_thread_id_for_peer`),
+//! we mirror the **whole Q&A turn** to Telegram so the conversation
+//! stays in sync on the user's phone.
 //!
-//! Directionality recap:
-//!   - Telegram → KinAI: `router.rs` persists the user's Telegram
-//!     message into the same thread and runs the LLM. KinAI clients
-//!     viewing that thread see it live.
-//!   - KinAI → Telegram: **this module.** Called from the host-side
-//!     chat paths (`commands::send_message` for host chats,
-//!     `network::server::run_chat_turn` for client peer chats) once
-//!     the assistant reply has been persisted. If the active thread is
-//!     a Telegram thread for the originating peer, push the reply to
-//!     the user's Telegram chat.
+//! Why combined and not two separate messages: Telegram bots can only
+//! send messages *as themselves* — they can't impersonate the human
+//! user. Sending the question as one bot message and the answer as a
+//! second bot message makes the question look like the bot talking to
+//! itself. Instead we wrap the question in a Telegram `<blockquote>`
+//! (HTML parse mode) and put the answer right after, so the phone chat
+//! sees ONE bot message structured as "quote of your question → bot's
+//! reply". That mirrors the visual pattern Telegram users already
+//! recognise from forwarded messages and reply previews.
 //!
-//! Best-effort: if the bot token is missing, the chat_id lookup
-//! returns None, or the Telegram API call fails, we just log and move
-//! on — the in-KinAI flow already succeeded.
+//! Direction recap:
+//!   - Telegram → KinAI: handled by `router.rs`. The router persists
+//!     the user's Telegram message with sender = "Telegram"; the user
+//!     already typed it on Telegram so there's no point echoing it
+//!     back to themselves. The reply goes via `send_assistant_reply`.
+//!   - KinAI → Telegram: **this module.** Called from the two chat
+//!     paths (`commands::send_message` for host chats,
+//!     `network::server::run_chat_turn` for client peer chats):
+//!       * `maybe_show_typing` before the LLM runs (UX nicety —
+//!         shows "Bot is typing…" on the phone)
+//!       * `maybe_echo_qa` after the LLM finishes, with both the
+//!         user's question text and the assistant reply.
+//!
+//! Best-effort throughout: bad token / missing pairing / Telegram
+//! network errors are logged and swallowed — the in-KinAI flow always
+//! commits before we attempt to mirror.
 
 use crate::SharedState;
 
@@ -26,127 +38,124 @@ use super::router::{
     extract_local_pic_path, strip_inline_image_markdown, telegram_thread_id_for_peer,
 };
 
-/// If `thread_id` is `peer_id`'s Telegram thread AND the peer has a
-/// paired Telegram chat, push `reply` to that chat via the bot. Returns
-/// quickly when any precondition isn't met — safe to call after every
-/// assistant message.
+/// Send a one-shot "typing…" indicator to the user's Telegram chat.
+/// Lasts ~5s on Telegram's side; we send it once at the start of the
+/// turn so the phone user gets immediate feedback that something is
+/// happening on the KinAI side even before the LLM produces tokens.
+pub async fn maybe_show_typing(state: &SharedState, peer_id: &str, thread_id: &str) {
+    let Some((api, chat_id)) = prepare_send(state, peer_id, thread_id).await else {
+        return;
+    };
+    if let Err(e) = api.send_chat_action(chat_id, "typing").await {
+        tracing::debug!("telegram echo: send_chat_action failed: {e:?}");
+    }
+}
+
+/// Mirror a complete Q&A turn (user question + assistant reply) to the
+/// user's Telegram chat as a SINGLE bot message. The question is
+/// wrapped in `<blockquote>` so it visually pops from a normal bot
+/// reply; the answer follows in plain text below.
 ///
-/// The function never returns an error: Telegram-echo failures are
-/// logged but mustn't taint the in-app chat path.
-pub async fn maybe_echo_assistant(
+/// `user_sender` controls the question-quote behaviour: when it equals
+/// `"Telegram"` the user typed it on Telegram already and we skip the
+/// quote (sending only the reply, same as the v0.2.13 behaviour). Any
+/// other sender means the user typed in KinAI's UI and we render the
+/// full Q&A.
+///
+/// For slash-command replies that resolve to a `/v1/pic/<uuid>` URL,
+/// we send a Telegram photo with the same combined block as a caption
+/// instead of two separate posts.
+pub async fn maybe_echo_qa(
     state: &SharedState,
     peer_id: &str,
     thread_id: &str,
-    reply: &str,
+    user_sender: &str,
+    user_question: &str,
+    assistant_reply: &str,
 ) {
-    // Fast paths first — none of these need to touch the network.
-    if reply.trim().is_empty() {
+    if assistant_reply.trim().is_empty() {
         return;
     }
-    if thread_id != telegram_thread_id_for_peer(peer_id) {
-        return; // not a Telegram thread, nothing to echo
-    }
-    let token = state.config.read().telegram.bot_token.clone();
-    if token.trim().is_empty() {
-        return; // bot disabled
-    }
-    let chat_id = match crate::db::telegram::chat_for_peer(&state.db.pool, peer_id).await {
-        Ok(Some(c)) => c,
-        Ok(None) => return, // peer hasn't paired their Telegram
-        Err(e) => {
-            tracing::warn!("telegram echo: chat_for_peer({peer_id}) failed: {e:?}");
-            return;
-        }
+    let Some((api, chat_id)) = prepare_send(state, peer_id, thread_id).await else {
+        return;
     };
-    let chat_id_i64: i64 = match chat_id.parse() {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!("telegram echo: invalid chat_id {chat_id:?}: {e}");
-            return;
-        }
-    };
-    let api = super::api::BotApi::new(token);
+    let include_question = user_sender != "Telegram" && !user_question.trim().is_empty();
 
-    // Same image-detection trick the router uses for the reverse
-    // direction: if the reply contains a `![](.../v1/pic/<file>)`
-    // markdown reference, upload the underlying file as a Telegram
-    // photo (with the rest of the reply as the caption) so the user
-    // sees the image inline instead of just a link.
-    if let Some(local_path) = extract_local_pic_path(state, reply) {
-        let caption = strip_inline_image_markdown(reply);
-        let caption_opt = if caption.trim().is_empty() {
+    // Image branch — slash command output that ComfyUI generated.
+    if let Some(local_path) = extract_local_pic_path(state, assistant_reply) {
+        let caption_text = strip_inline_image_markdown(assistant_reply);
+        let caption_html = format_qa_html(include_question, user_question, &caption_text);
+        let caption_opt = if caption_html.trim().is_empty() {
             None
         } else {
-            Some(caption.as_str())
+            Some(caption_html.as_str())
         };
-        if let Err(e) = api.send_photo_file(chat_id_i64, &local_path, caption_opt).await {
+        if let Err(e) = api
+            .send_photo_file(chat_id, &local_path, caption_opt, Some("HTML"))
+            .await
+        {
             tracing::warn!("telegram echo: send_photo_file failed: {e:?}");
         }
         return;
     }
 
-    if let Err(e) = api.send_message(chat_id_i64, reply).await {
-        tracing::warn!("telegram echo: send_message failed: {e:?}");
+    // Text branch — wrap question in <blockquote>, answer below in plain.
+    let html = format_qa_html(include_question, user_question, assistant_reply);
+    if let Err(e) = api.send_message_html(chat_id, &html).await {
+        tracing::warn!("telegram echo: send_message_html failed: {e:?}");
     }
 }
 
-/// Mirror a user message typed inside KinAI to Telegram, prefixed so
-/// the chat history makes sense to the human reader.
-///
-/// Telegram bots can only send messages *as themselves* — they can't
-/// impersonate the human user — so the user's KinAI-typed input would
-/// otherwise look indistinguishable from the bot replying to nothing.
-/// We prefix with `💬 You:` to make the speaker explicit. Users reading
-/// the Telegram chat then see:
-///
-///   • their original Telegram input (sent by them, right-aligned),
-///   • bot-as-themselves echo when they typed from KinAI ("💬 You: …"),
-///   • bot reply (no prefix), same as before.
-///
-/// Same gating rules as `maybe_echo_assistant`: only fires on Telegram
-/// threads for a paired peer; all failures are best-effort + logged.
-pub async fn maybe_echo_user(
+/// Common gating + setup. Returns the bot API client + chat id when we
+/// should attempt to send to Telegram, None when we shouldn't.
+async fn prepare_send(
     state: &SharedState,
     peer_id: &str,
     thread_id: &str,
-    user_sender: &str,
-    content: &str,
-) {
-    if content.trim().is_empty() {
-        return;
-    }
+) -> Option<(super::api::BotApi, i64)> {
     if thread_id != telegram_thread_id_for_peer(peer_id) {
-        return;
-    }
-    // Skip when the originating channel WAS Telegram — the user just
-    // typed this on their phone, no need to bounce it back to themselves.
-    // Router persists Telegram-originated user messages with
-    // sender = "Telegram" (see router::run_turn_for_peer).
-    if user_sender == "Telegram" {
-        return;
+        return None; // not a Telegram thread
     }
     let token = state.config.read().telegram.bot_token.clone();
     if token.trim().is_empty() {
-        return;
+        return None; // bot disabled
     }
     let chat_id = match crate::db::telegram::chat_for_peer(&state.db.pool, peer_id).await {
         Ok(Some(c)) => c,
-        Ok(None) => return,
+        Ok(None) => return None, // peer hasn't paired their Telegram
         Err(e) => {
             tracing::warn!("telegram echo: chat_for_peer({peer_id}) failed: {e:?}");
-            return;
+            return None;
         }
     };
     let chat_id_i64: i64 = match chat_id.parse() {
         Ok(v) => v,
         Err(e) => {
             tracing::warn!("telegram echo: invalid chat_id {chat_id:?}: {e}");
-            return;
+            return None;
         }
     };
-    let api = super::api::BotApi::new(token);
-    let body = format!("💬 You: {content}");
-    if let Err(e) = api.send_message(chat_id_i64, &body).await {
-        tracing::warn!("telegram echo: send_message (user) failed: {e:?}");
+    Some((super::api::BotApi::new(token), chat_id_i64))
+}
+
+/// Build the HTML body for a combined Q&A echo. When `include_question`
+/// is false (Telegram-originated user message), returns just the
+/// HTML-escaped answer.
+fn format_qa_html(include_question: bool, question: &str, answer: &str) -> String {
+    let answer_escaped = html_escape(answer);
+    if !include_question {
+        return answer_escaped;
     }
+    let q_escaped = html_escape(question.trim());
+    format!("<blockquote>{q_escaped}</blockquote>\n\n{answer_escaped}")
+}
+
+/// Escape the three characters that Telegram's HTML parse mode treats
+/// as special. Everything else (newlines, Unicode, emoji) is passed
+/// through verbatim. Deliberately tiny so we don't pull in `html-escape`
+/// for what's effectively three `replace` calls.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }

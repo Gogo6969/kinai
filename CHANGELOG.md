@@ -5,6 +5,27 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.17] — 2026-05-19
+
+### Changed
+
+- **KinAI→Telegram echo: combine Q&A into one bot message with a
+  blockquote question.** v0.2.16 sent the user's question and the
+  assistant's reply as two separate bot messages, which made the
+  question look like the bot was talking to itself (Telegram bots
+  can't impersonate the human, so both ended up styled as bot
+  messages). The two posts now collapse into a single bot message
+  where the question is rendered inside a Telegram
+  `<blockquote>` (HTML parse_mode — gives it the indented
+  left-bar look Telegram users recognise from forwards / reply
+  previews) and the assistant reply flows below it in plain text.
+  /pic photo replies use the same combined format as a caption.
+- **"Typing…" indicator while the LLM thinks.** Before kicking off
+  the LLM turn, the bot fires a one-shot `sendChatAction(typing)`
+  so the phone user sees "Bot is typing…" in the Telegram chat
+  while the response is being generated. Best-effort, ~5s default
+  on Telegram's side.
+
 ## [0.2.16] — 2026-05-19
 
 ### Fixed

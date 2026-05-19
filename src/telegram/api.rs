@@ -162,20 +162,45 @@ impl BotApi {
     }
 
     pub async fn send_message(&self, chat_id: i64, text: &str) -> Result<()> {
+        self.send_message_with_parse(chat_id, text, None).await
+    }
+
+    /// Send an HTML-formatted message (parse_mode=HTML). Telegram's HTML
+    /// mode supports `<b>`, `<i>`, `<u>`, `<s>`, `<code>`, `<pre>`,
+    /// `<a href>`, `<blockquote>`, `<tg-spoiler>` — the subset we need
+    /// for Q&A echoes (blockquote on the user's question, plain text on
+    /// the assistant reply). Caller is responsible for escaping `<`,
+    /// `>`, `&` in any user-supplied content (`html_escape` helper).
+    pub async fn send_message_html(&self, chat_id: i64, html: &str) -> Result<()> {
+        self.send_message_with_parse(chat_id, html, Some("HTML")).await
+    }
+
+    async fn send_message_with_parse(
+        &self,
+        chat_id: i64,
+        text: &str,
+        parse_mode: Option<&str>,
+    ) -> Result<()> {
         // Telegram chops messages at 4096 chars; split greedily on
-        // paragraph boundaries when over.
+        // paragraph boundaries when over. NOTE: with HTML parse mode an
+        // unlucky split could land inside a tag; for our use case the
+        // HTML structure is small (blockquote up front) and the body is
+        // mostly plain text, so split_for_telegram is safe enough. If
+        // we ever start emitting heavily-nested HTML this will need a
+        // smarter splitter that re-emits open tags on each chunk.
         for part in split_for_telegram(text) {
+            let mut body = json!({
+                "chat_id": chat_id,
+                "text": part,
+                "disable_web_page_preview": true,
+            });
+            if let Some(mode) = parse_mode {
+                body["parse_mode"] = Value::String(mode.to_string());
+            }
             let resp = self
                 .http
                 .post(self.endpoint("sendMessage"))
-                .json(&json!({
-                    "chat_id": chat_id,
-                    "text": part,
-                    // Markdown-V2 would be nicer but it requires
-                    // strict escaping of dozens of chars; plain text
-                    // avoids "Bad Request: can't parse entities".
-                    "disable_web_page_preview": true,
-                }))
+                .json(&body)
                 .send()
                 .await
                 .context("sendMessage send")?;
@@ -184,15 +209,34 @@ impl BotApi {
         Ok(())
     }
 
+    /// Fire-and-forget typing indicator. Shows "Bot is typing…" in the
+    /// chat for ~5 seconds. Used by the KinAI→Telegram echo so phone
+    /// users get a heads-up that a reply is being generated. Failures
+    /// are logged upstream; the chat flow doesn't depend on this.
+    pub async fn send_chat_action(&self, chat_id: i64, action: &str) -> Result<()> {
+        let resp = self
+            .http
+            .post(self.endpoint("sendChatAction"))
+            .json(&json!({ "chat_id": chat_id, "action": action }))
+            .send()
+            .await
+            .context("sendChatAction send")?;
+        let _: Value = Self::unwrap_response(resp).await?;
+        Ok(())
+    }
+
     /// Send an image file (from disk) as a Telegram photo with optional
     /// caption. Used by /pic and /picHQ outbound — the ComfyUI output
     /// is already saved under `~/.kinai/pics/<uuid>.png`, so we just
-    /// upload that.
+    /// upload that. `caption_parse_mode` lets the caller request HTML
+    /// rendering for the caption (used by the QA echo to format the
+    /// user's question as a blockquote).
     pub async fn send_photo_file(
         &self,
         chat_id: i64,
         path: &std::path::Path,
         caption: Option<&str>,
+        caption_parse_mode: Option<&str>,
     ) -> Result<()> {
         let file_bytes = tokio::fs::read(path)
             .await
@@ -212,7 +256,19 @@ impl BotApi {
                     .unwrap_or_else(|_| reqwest::multipart::Part::bytes(vec![])),
             );
         if let Some(c) = caption {
-            form = form.text("caption", c.to_string());
+            // Telegram caps captions at 1024 chars — trim with an
+            // ellipsis if the caller exceeds. Better a partial caption
+            // than a Bad Request that loses the whole photo.
+            let trimmed = if c.chars().count() > 1024 {
+                let truncated: String = c.chars().take(1019).collect();
+                format!("{truncated}…")
+            } else {
+                c.to_string()
+            };
+            form = form.text("caption", trimmed);
+            if let Some(mode) = caption_parse_mode {
+                form = form.text("parse_mode", mode.to_string());
+            }
         }
         let resp = self
             .http
