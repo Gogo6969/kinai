@@ -13,6 +13,7 @@ pub mod hotkey;
 pub mod llm;
 pub mod network;
 pub mod slash;
+pub mod telegram;
 pub mod tools;
 pub mod tray;
 pub mod update_sync;
@@ -35,6 +36,9 @@ pub struct AppState {
     pub llm: Mutex<llm::LlmClient>,
     pub net: Arc<Mutex<network::NetState>>,
     pub stats: RwLock<RuntimeStats>,
+    /// Telegram supervisor handle — lets the runtime stop and restart
+    /// the long-poll loop when the bot token changes in Settings.
+    pub telegram: Arc<telegram::TelegramSupervisor>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -98,6 +102,7 @@ pub fn run() {
         llm: Mutex::new(llm),
         net: net.clone(),
         stats: RwLock::new(RuntimeStats::default()),
+        telegram: Arc::new(telegram::TelegramSupervisor::default()),
     });
 
     tauri::Builder::default()
@@ -184,6 +189,16 @@ pub fn run() {
                 // host owner doesn't have to run scripts/deploy.sh
                 // manually for every release.
                 update_sync::schedule_periodic_sync(app.handle().clone());
+                // Telegram long-poll loop — no-op when the host hasn't
+                // set a bot token. Spawned via the supervisor so a token
+                // change in Settings can stop+restart cleanly.
+                let telegram_state = st.clone();
+                let telegram_app = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = telegram::start_or_restart(telegram_state, telegram_app).await {
+                        tracing::warn!("telegram start: {e:?}");
+                    }
+                });
 
                 // Always surface the main window when the app starts. Tray +
                 // hotkey are extras, not the only entry point.

@@ -231,6 +231,28 @@ impl Default for VisionSettings {
     }
 }
 
+/// Telegram bot integration — host-side only. The host owner creates
+/// ONE bot via @BotFather for the whole family, pastes its token here.
+/// Each family member then pairs their personal Telegram from their own
+/// device via Settings → Telegram → "Connect Telegram" (a one-time QR
+/// scan). Once paired, messages from that Telegram chat route into the
+/// member's KinAI thread, slash commands work the same as in KinAI's
+/// own chat, and replies are mirrored back to Telegram.
+///
+/// Empty `bot_token` = feature disabled. No long-poll loop starts, no
+/// UI shown to clients.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TelegramConfig {
+    /// Bot API token from @BotFather. Empty = feature disabled.
+    #[serde(default)]
+    pub bot_token: String,
+    /// Cached bot username (e.g. "kinai_family_bot"). Populated after
+    /// the host validates the token via getMe — used to build the
+    /// pairing deep-link `https://t.me/<username>?start=<token>`.
+    #[serde(default)]
+    pub bot_username: String,
+}
+
 /// Image generation via ComfyUI. Empty `base_url` means disabled —
 /// no `/pic` or `/picHQ` slash commands will be advertised, and any
 /// attempt to invoke them returns a "no image-gen endpoint" error.
@@ -270,6 +292,8 @@ pub struct AppConfig {
     pub vision: VisionSettings,
     #[serde(default)]
     pub comfyui: ComfyConfig,
+    #[serde(default)]
+    pub telegram: TelegramConfig,
 }
 
 impl AppConfig {

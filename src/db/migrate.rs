@@ -103,6 +103,35 @@ const STATEMENTS: &[&str] = &[
     CREATE INDEX IF NOT EXISTS memory_peer_thread
         ON memory_notes(peer_id, thread_id)
     "#,
+
+    // Telegram pairings — one paired Telegram per family peer. The
+    // bot routes incoming messages from `chat_id` to the matching
+    // peer's KinAI thread; outbound assistant replies route back to
+    // the same chat_id.
+    r#"
+    CREATE TABLE IF NOT EXISTS telegram_links (
+        peer_id      TEXT PRIMARY KEY,
+        chat_id      TEXT NOT NULL,
+        username     TEXT,
+        first_name   TEXT,
+        paired_at    TEXT NOT NULL
+    )
+    "#,
+    r#"
+    CREATE UNIQUE INDEX IF NOT EXISTS telegram_links_chat
+        ON telegram_links(chat_id)
+    "#,
+    // Short-lived pairing tokens. A client requests one, displays it
+    // as a QR/deep-link, user scans → Telegram sends /start <token>
+    // → bot looks up the token here, finds the peer, INSERTs into
+    // telegram_links above, then DELETEs the row. TTL ~10 min.
+    r#"
+    CREATE TABLE IF NOT EXISTS telegram_pending_pairs (
+        token        TEXT PRIMARY KEY,
+        peer_id      TEXT NOT NULL,
+        created_at   TEXT NOT NULL
+    )
+    "#,
 ];
 
 pub async fn run(pool: &SqlitePool) -> Result<()> {

@@ -3,6 +3,7 @@
 mod memory;
 pub mod messages;
 mod migrate;
+pub mod telegram;
 
 use std::path::Path;
 
