@@ -218,11 +218,17 @@ pub async fn test_vision_endpoint(args: TestVisionArgs) -> Result<TestVisionResu
 }
 
 /// Write a UTF-8 string to `~/.kinai/prompts/<msg_id>.json` and
-/// return the absolute path. Used by the chat UI's "🔍 prompt" button
-/// to dump the per-turn prompt snapshot to a real file so the user can
-/// open it in their default editor (TextEdit, VSCode, …) instead of
-/// asking the WebView to render a 50-100KB <pre> (which freezes the
-/// UI on big prompts).
+/// open it in the user's default editor. Used by the chat UI's "🔍
+/// prompt" button. Combines the file-write + native open into one
+/// command because the tauri-plugin-shell `open` builtin restricts to
+/// URL schemes (https/mailto/tel) — file paths get rejected by its
+/// regex-based capability scope.
+///
+/// Native open on each platform:
+///   macOS   → `open <path>`
+///   Windows → `cmd /C start "" <path>`  (the empty title is the
+///             quirk that lets `start` accept a path arg cleanly)
+///   Linux   → `xdg-open <path>`
 #[tauri::command]
 pub async fn write_prompt_snapshot(msg_id: String, body: String) -> Result<String> {
     let safe = msg_id
@@ -239,7 +245,30 @@ pub async fn write_prompt_snapshot(msg_id: String, body: String) -> Result<Strin
     std::fs::create_dir_all(&dir).map_err(err)?;
     let path = dir.join(format!("{safe}.json"));
     std::fs::write(&path, body).map_err(err)?;
-    Ok(path.to_string_lossy().to_string())
+
+    let path_str = path.to_string_lossy().to_string();
+    open_path_in_default_app(&path_str).map_err(|e| format!("file written but couldn't open: {e}"))?;
+    Ok(path_str)
+}
+
+#[cfg(target_os = "macos")]
+fn open_path_in_default_app(path: &str) -> std::io::Result<()> {
+    std::process::Command::new("open").arg(path).spawn()?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn open_path_in_default_app(path: &str) -> std::io::Result<()> {
+    std::process::Command::new("cmd")
+        .args(["/C", "start", "", path])
+        .spawn()?;
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn open_path_in_default_app(path: &str) -> std::io::Result<()> {
+    std::process::Command::new("xdg-open").arg(path).spawn()?;
+    Ok(())
 }
 
 /// Fetch the bytes at `url` and write them to `dest_path`.

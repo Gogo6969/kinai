@@ -3,7 +3,6 @@
   import { renderMarkdown } from '$lib/markdown';
   import { app } from '$lib/stores/app.svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { open as shellOpen } from '@tauri-apps/plugin-shell';
   import { FileText, Search } from '@lucide/svelte';
 
   let {
@@ -33,11 +32,14 @@
     if (!message.id || !promptSnapshot || opening) return;
     opening = true;
     try {
-      const path = await invoke<string>('write_prompt_snapshot', {
+      // The Rust command writes the file AND launches the OS's
+      // default-handler for .json in one step, so we don't need a
+      // separate shell-plugin call (and don't trip its URL-only
+      // scope guard, which rejects file paths).
+      await invoke<string>('write_prompt_snapshot', {
         msgId: message.id,
         body: promptSnapshot,
       });
-      await shellOpen(path);
     } catch (err) {
       const msg = String(err).replace(/^Error:\s*/, '');
       window.dispatchEvent(
