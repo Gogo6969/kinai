@@ -116,14 +116,36 @@ fn show_main<R: Runtime>(app: &AppHandle<R>) {
 }
 
 pub fn toggle_overlay<R: Runtime>(app: &AppHandle<R>) {
-    if let Some(w) = app.get_webview_window("overlay") {
-        let visible = w.is_visible().unwrap_or(false);
-        if visible {
-            let _ = w.hide();
-        } else {
-            let _ = w.show();
-            let _ = w.set_focus();
-            let _ = app.emit("kinai://overlay-focus", ());
+    let Some(overlay) = app.get_webview_window("overlay") else {
+        return;
+    };
+    let visible = overlay.is_visible().unwrap_or(false);
+    if visible {
+        let _ = overlay.hide();
+        return;
+    }
+
+    // Spotlight-style: when the user triggers the overlay (via the
+    // global hotkey, tray icon click, or "Toggle Overlay" menu item),
+    // they want the small "Ask KinAI…" input as a quick-chat surface
+    // — NOT the full app window also coming forward.
+    //
+    // The "whole app comes forward" effect is a cross-platform side
+    // effect of `set_focus()` on the overlay: on macOS focusing any
+    // KinAI window activates the app, pulling every visible KinAI
+    // window to the foreground; Windows behaves similarly. The fix is
+    // to hide the main window before showing the overlay so the only
+    // KinAI surface left visible is the small input.
+    //
+    // The user can bring the main window back via "Open KinAI" in the
+    // tray menu (or by relaunching the app from the Dock / Start
+    // menu). Same one-click cost as Spotlight → return-to-app.
+    if let Some(main) = app.get_webview_window("main") {
+        if main.is_visible().unwrap_or(false) {
+            let _ = main.hide();
         }
     }
+    let _ = overlay.show();
+    let _ = overlay.set_focus();
+    let _ = app.emit("kinai://overlay-focus", ());
 }

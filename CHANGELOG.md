@@ -5,6 +5,22 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.18] — 2026-05-19
+
+### Fixed
+
+- **Quick-chat overlay hotkey no longer drags the main KinAI
+  window forward.** Pressing the global hotkey (default
+  `CmdOrCtrl+Space`) was popping the small "Ask KinAI…" overlay
+  AND pulling the full app window into view at the same time. The
+  cause was a cross-platform side effect of `set_focus()` on the
+  overlay: on macOS focusing any KinAI window activates the app,
+  which brings every visible KinAI window to the foreground;
+  Windows does the equivalent. The toggle now hides the main
+  window first so the only KinAI surface left visible is the
+  Spotlight-style input. Bring the main window back via tray →
+  *Open KinAI* (or by relaunching from the Dock / Start menu).
+
 ## [0.2.17] — 2026-05-19
 
 ### Changed
