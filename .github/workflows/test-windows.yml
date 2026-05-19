@@ -78,6 +78,21 @@ jobs:
       # leaving Windows clients stranded on whatever version they
       # installed manually. `**` grabs every file under bundle/, all
       # of which stage_windows_update knows how to filter.
+      # Diagnostic: list what tauri-bundler actually left on disk
+      # right before upload-artifact scans it. We've seen the CI log
+      # claim .msi.zip + .nsis.zip files were produced ("Finished 2
+      # updater signatures … .msi.zip") but the artifact only contains
+      # the .msi + .exe + .sig pair. Either tauri-action cleans them up
+      # between bundle + upload, or the upload glob is excluding them.
+      # This step makes the truth visible in the workflow run log.
+      - name: List bundle contents pre-upload
+        shell: pwsh
+        run: |
+          Write-Host "=== msi/ ==="
+          Get-ChildItem -Force -Recurse target\x86_64-pc-windows-msvc\release\bundle\msi\ | Format-Table FullName, Length
+          Write-Host "=== nsis/ ==="
+          Get-ChildItem -Force -Recurse target\x86_64-pc-windows-msvc\release\bundle\nsis\ | Format-Table FullName, Length
+
       - name: Upload bundle artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -85,3 +100,8 @@ jobs:
           path: target/x86_64-pc-windows-msvc/release/bundle/**
           retention-days: 14
           if-no-files-found: error
+          # Tauri's updater bundles (.msi.zip / .nsis.zip) are
+          # generated AFTER the main .msi/.exe and AFTER the .sig files
+          # — including hidden files protects us from any one ending up
+          # with a hidden attribute we didn't expect.
+          include-hidden-files: true
