@@ -28,7 +28,16 @@
       MIT-licensed, fully open-source, zero telemetry. Your conversations never
       leave your hardware.
     </p>
-    <div class="flex justify-center gap-3 pt-4">
+    <div class="flex justify-center gap-3 pt-4 flex-wrap">
+      <a
+        class="kin-btn"
+        href="https://kin-ai.replit.app"
+        target="_blank"
+        rel="noreferrer"
+        title="kin-ai.replit.app"
+      >
+        Website
+      </a>
       {#if info?.repository}
         <a class="kin-btn" href={info.repository} target="_blank" rel="noreferrer">
           GitHub
@@ -36,5 +45,12 @@
       {/if}
       <button class="kin-btn-primary" onclick={() => goto('/')}>Back</button>
     </div>
+    <p class="text-xs text-white/40 pt-2">
+      Project home: <a
+        href="https://kin-ai.replit.app"
+        target="_blank"
+        rel="noreferrer"
+        class="text-teal-300 underline underline-offset-2">kin-ai.replit.app</a>
+    </p>
   </div>
 </main>

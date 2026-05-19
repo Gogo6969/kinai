@@ -5,6 +5,30 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.19] — 2026-05-19
+
+### Added
+
+- **Project website surfaced everywhere.** Added
+  [kin-ai.replit.app](https://kin-ai.replit.app) as the GitHub
+  repo homepage, the `homepage` field in `Cargo.toml`, a *Website*
+  button on the About page, and a third link in the Settings
+  footer next to *Follow on X* and *GitHub*. Every install now
+  has a one-click path to the public site.
+
+### Changed
+
+- **Friendlier mic-button errors.** Pressing the overlay's mic
+  button without microphone permission used to surface a raw
+  `Speech recognition error: not-allowed` string that lingered in
+  the UI. The message is now human-readable
+  ("Microphone access is blocked. Open System Settings → Privacy
+  & Security → Microphone and turn KinAI on."), shows a **Fix**
+  button that deep-links to macOS's Privacy → Microphone pane,
+  and auto-dismisses after 8 seconds. A small ✕ dismisses it
+  manually too. Same treatment for `audio-capture` (no mic
+  detected) and `network` (offline) errors.
+
 ## [0.2.18] — 2026-05-19
 
 ### Fixed

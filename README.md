@@ -15,6 +15,8 @@
 [![macOS](https://img.shields.io/badge/macOS-available-22c55e.svg)](https://github.com/Gogo6969/kinai/releases)
 [![Windows](https://img.shields.io/badge/Windows-available-22c55e.svg)](https://github.com/Gogo6969/kinai/releases)
 
+[**Project home → kin-ai.replit.app**](https://kin-ai.replit.app)
+
 </div>
 
 > [!NOTE]

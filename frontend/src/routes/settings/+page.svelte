@@ -490,7 +490,12 @@
              bugs or follow releases, without us shipping an analytics or
              phone-home system. The link opens in the OS default browser
              (intercepted by the global handler in +layout.svelte). -->
-        <div class="text-xs text-white/40 mt-1.5 flex items-center gap-3">
+        <div class="text-xs text-white/40 mt-1.5 flex items-center gap-3 flex-wrap">
+          <a
+            href="https://kin-ai.replit.app"
+            class="text-teal-300/80 hover:text-teal-200 underline-offset-2 hover:underline transition-colors"
+          >kin-ai.replit.app</a>
+          <span class="text-white/20">·</span>
           <a
             href="https://x.com/gogo6969"
             class="text-teal-300/80 hover:text-teal-200 underline-offset-2 hover:underline transition-colors"
