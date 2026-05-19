@@ -217,6 +217,31 @@ pub async fn test_vision_endpoint(args: TestVisionArgs) -> Result<TestVisionResu
     }
 }
 
+/// Write a UTF-8 string to `~/.kinai/prompts/<msg_id>.json` and
+/// return the absolute path. Used by the chat UI's "🔍 prompt" button
+/// to dump the per-turn prompt snapshot to a real file so the user can
+/// open it in their default editor (TextEdit, VSCode, …) instead of
+/// asking the WebView to render a 50-100KB <pre> (which freezes the
+/// UI on big prompts).
+#[tauri::command]
+pub async fn write_prompt_snapshot(msg_id: String, body: String) -> Result<String> {
+    let safe = msg_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+        .collect::<String>();
+    if safe.is_empty() {
+        return Err("invalid msg_id".into());
+    }
+    let dir = dirs::home_dir()
+        .ok_or_else(|| "no home directory".to_string())?
+        .join(".kinai")
+        .join("prompts");
+    std::fs::create_dir_all(&dir).map_err(err)?;
+    let path = dir.join(format!("{safe}.json"));
+    std::fs::write(&path, body).map_err(err)?;
+    Ok(path.to_string_lossy().to_string())
+}
+
 /// Fetch the bytes at `url` and write them to `dest_path`.
 ///
 /// Used by the chat UI's image Download button. The webview's `fetch()`

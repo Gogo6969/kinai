@@ -2,6 +2,8 @@
   import type { Attachment, Message, TurnMetrics } from '$lib/api';
   import { renderMarkdown } from '$lib/markdown';
   import { app } from '$lib/stores/app.svelte';
+  import { invoke } from '@tauri-apps/api/core';
+  import { open as shellOpen } from '@tauri-apps/plugin-shell';
   import { FileText, Search } from '@lucide/svelte';
 
   let {
@@ -17,15 +19,33 @@
   // Per-session prompt snapshot for assistant messages — populated by
   // the host's kinai://prompt-debug event right after generation. Empty
   // for: user messages, assistant messages from before this session,
-  // and any turn the host couldn't serialize. The 🔍 toggle only
+  // and any turn the host couldn't serialize. The 🔍 button only
   // shows when this is non-empty.
   const promptSnapshot = $derived(message.id ? app.promptDebug[message.id] : undefined);
-  let showPrompt = $state(false);
-  // Named handler (Svelte 5 sometimes drops inline-arrow event
-  // bindings on certain templated buttons — using a function ref is
-  // the safe path).
-  function togglePromptPanel() {
-    showPrompt = !showPrompt;
+  let opening = $state(false);
+  // Open the prompt JSON in the user's default editor — way safer than
+  // trying to render 50-100KB inside an in-app <details><pre>, which
+  // can freeze the WebView on macOS. Writes to
+  // ~/.kinai/prompts/<msg_id>.json, then asks the shell plugin to open
+  // that file path. macOS routes to TextEdit (or whatever's default for
+  // .json); Windows to Notepad / VSCode / whichever.
+  async function openPromptSnapshot() {
+    if (!message.id || !promptSnapshot || opening) return;
+    opening = true;
+    try {
+      const path = await invoke<string>('write_prompt_snapshot', {
+        msgId: message.id,
+        body: promptSnapshot,
+      });
+      await shellOpen(path);
+    } catch (err) {
+      const msg = String(err).replace(/^Error:\s*/, '');
+      window.dispatchEvent(
+        new CustomEvent('kin-toast', { detail: { msg: `✗ Couldn't open prompt: ${msg}`, ms: 5000 } })
+      );
+    } finally {
+      opening = false;
+    }
   }
 
   const html = $derived(renderMarkdown(message.content));
@@ -112,26 +132,15 @@
       {#if promptSnapshot}
         <button
           type="button"
-          class="ml-1 inline-flex items-center gap-1 text-white/40 hover:text-teal-300 transition-colors cursor-pointer"
-          onclick={togglePromptPanel}
-          title="Show the exact prompt KinAI sent to the LLM for this reply"
+          class="ml-1 inline-flex items-center gap-1 text-white/40 hover:text-teal-300 transition-colors cursor-pointer disabled:opacity-50"
+          onclick={openPromptSnapshot}
+          disabled={opening}
+          title="Open the exact prompt KinAI sent to the LLM in your default editor"
         >
           <Search size={11} />
-          <span>{showPrompt ? 'hide prompt' : 'prompt'}</span>
+          <span>{opening ? 'opening…' : 'prompt'}</span>
         </button>
       {/if}
     </div>
-    {#if showPrompt && promptSnapshot}
-      <details
-        open
-        class="mt-2 mx-1.5 rounded-lg border border-white/10 bg-black/40 text-xs"
-      >
-        <summary class="cursor-pointer select-none px-3 py-2 text-white/60 hover:text-white">
-          Prompt that produced this reply ({promptSnapshot.length.toLocaleString()} chars)
-        </summary>
-        <pre
-          class="overflow-x-auto p-3 max-h-[60vh] whitespace-pre-wrap break-words text-[11px] leading-snug text-white/75 font-mono">{promptSnapshot}</pre>
-      </details>
-    {/if}
   {/if}
 </div>
