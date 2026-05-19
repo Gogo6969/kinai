@@ -21,6 +21,12 @@
   // shows when this is non-empty.
   const promptSnapshot = $derived(message.id ? app.promptDebug[message.id] : undefined);
   let showPrompt = $state(false);
+  // Named handler (Svelte 5 sometimes drops inline-arrow event
+  // bindings on certain templated buttons — using a function ref is
+  // the safe path).
+  function togglePromptPanel() {
+    showPrompt = !showPrompt;
+  }
 
   const html = $derived(renderMarkdown(message.content));
   const attachments = $derived<Attachment[]>(message.attachments ?? []);
@@ -106,12 +112,12 @@
       {#if promptSnapshot}
         <button
           type="button"
-          class="ml-1 inline-flex items-center gap-1 text-white/40 hover:text-teal-300 transition-colors"
-          onclick={() => (showPrompt = !showPrompt)}
+          class="ml-1 inline-flex items-center gap-1 text-white/40 hover:text-teal-300 transition-colors cursor-pointer"
+          onclick={togglePromptPanel}
           title="Show the exact prompt KinAI sent to the LLM for this reply"
         >
           <Search size={11} />
-          <span>prompt</span>
+          <span>{showPrompt ? 'hide prompt' : 'prompt'}</span>
         </button>
       {/if}
     </div>
