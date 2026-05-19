@@ -62,22 +62,26 @@ jobs:
 
       # Tauri-action defaults to creating a draft release when run on a
       # tag. On workflow_dispatch with no tag it skips the release and
-      # leaves the bundle under target/. Grab everything and stash it
-      # as a workflow artifact.
+      # leaves the bundle under target/. Grab the entire bundle tree as
+      # a workflow artifact — that's the simplest way to guarantee we
+      # capture both the installers (.msi / .exe) AND the auto-updater
+      # sidecars (.msi.zip + .sig / .nsis.zip + .sig).
+      #
+      # An earlier version of this step listed each filename pattern
+      # explicitly across multiple lines. actions/upload-artifact@v4
+      # only matched the first two patterns (`*.msi` and `*.exe`) and
+      # silently dropped the four `.zip` / `.sig` patterns — uploading
+      # 2 of 6 files even though the CI log shows the .zip/.sig were
+      # produced on disk. The host's stage_windows_update in
+      # scripts/deploy.sh then found no .msi.zip + .sig pair and never
+      # advertised `windows-x86_64` in the auto-update manifest,
+      # leaving Windows clients stranded on whatever version they
+      # installed manually. `**` grabs every file under bundle/, all
+      # of which stage_windows_update knows how to filter.
       - name: Upload bundle artifacts
         uses: actions/upload-artifact@v4
         with:
           name: kinai-windows-x86_64
-          path: |
-            target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
-            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
-            # Tauri auto-update bundles — the `.msi.zip` + `.sig` files
-            # the Mac mini host stages to push updates to Windows clients.
-            # createUpdaterArtifacts: true in tauri.conf.json makes these
-            # appear next to the .msi.
-            target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi.zip
-            target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi.zip.sig
-            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.nsis.zip
-            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.nsis.zip.sig
+          path: target/x86_64-pc-windows-msvc/release/bundle/**
           retention-days: 14
           if-no-files-found: error

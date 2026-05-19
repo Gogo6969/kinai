@@ -5,6 +5,30 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.20] — 2026-05-19
+
+### Fixed
+
+- **Windows in-app auto-update is now actually wired up.** All
+  the host-side plumbing has been in place since v0.2.0 — the
+  `/v1/update/manifest` endpoint serves a per-platform Tauri
+  updater manifest, `scripts/deploy.sh::stage_windows_update`
+  pulls the latest Windows updater bundle from the
+  `test-windows.yml` workflow's artifact, and the client's
+  updater plugin polls the host on every reconnect. But the
+  workflow's `actions/upload-artifact@v4` step was only uploading
+  2 of the 6 produced files (`.msi` and `.exe` — silently dropping
+  the four `.msi.zip` / `.nsis.zip` / `.sig` patterns that the
+  multi-line glob couldn't match). The host's stage step saw no
+  updater bundle, the manifest never advertised `windows-x86_64`,
+  and Windows clients sat on whatever version they installed
+  manually with no in-app update prompt. Fixed by replacing the
+  fragile multi-line glob with a single `bundle/**` capture that
+  catches every file under the tauri-bundler output directory
+  (~7 files including all the auto-update sidecars). Windows
+  clients on v0.2.7+ should now receive an in-app update banner
+  on every release the same way macOS clients do.
+
 ## [0.2.19] — 2026-05-19
 
 ### Added
