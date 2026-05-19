@@ -5,6 +5,23 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.23] — 2026-05-19
+
+### Fixed
+
+- **shellOpen actually works now (Privacy buttons + every other
+  external link).** v0.2.22 added `plugins.shell.open` as a regex
+  string to whitelist macOS Privacy-pane URLs, but I missed that
+  Tauri 2's shell plugin wraps the regex with `^…$` anchors,
+  and my pattern had no trailing match for "rest of the URL". So
+  `^^(https?://|x-apple.systempreferences:|ms-settings:)$`
+  required URLs to END right after the scheme — meaning EVERY
+  URL was silently rejected, including http(s) ones used by the
+  X handle / GitHub / website links in Settings. Appended `.+`
+  to the regex so it matches `<scheme>` followed by the rest of
+  the URL. Tested by clicking the buttons in v0.2.23 → System
+  Settings actually opens to the right Privacy pane now.
+
 ## [0.2.22] — 2026-05-19
 
 ### Fixed

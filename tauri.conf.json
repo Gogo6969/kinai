@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "KinAI",
-  "version": "0.2.22",
+  "version": "0.2.23",
   "identifier": "ai.kin.desktop",
   "build": {
     "frontendDist": "frontend/build",
@@ -74,7 +74,7 @@
   },
   "plugins": {
     "shell": {
-      "open": "^(https?:\\/\\/|x-apple\\.systempreferences:|ms-settings:)"
+      "open": "^(https?:\\/\\/|x-apple\\.systempreferences:|ms-settings:).+"
     },
     "updater": {
       "active": true,
