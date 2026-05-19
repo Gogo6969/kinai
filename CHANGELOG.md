@@ -5,6 +5,21 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.14] — 2026-05-19
+
+### Fixed
+
+- **Telegram → KinAI fan-out.** Messages sent from a paired
+  Telegram chat were persisted on the host but never surfaced to
+  the KinAI UI in real time — the chat only appeared after the
+  user manually reloaded their thread list. The router now emits
+  `kinai://message` for the host's own Telegram thread and pushes
+  `Envelope::Message` over the WebSocket for paired client peers,
+  matching the in-app chat fan-out. The sidebar also auto-refreshes
+  its thread list when it sees a message for an unknown thread, so
+  a fresh Telegram conversation appears in the sidebar without a
+  reload.
+
 ## [0.2.13] — 2026-05-19
 
 ### Added

@@ -17,9 +17,10 @@
 //!      back via sendMessage / sendPhoto.
 
 use anyhow::Result;
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Emitter, Runtime};
 
 use crate::db::telegram as tg_db;
+use crate::network::protocol::Envelope;
 use crate::SharedState;
 
 use super::api::{BotApi, TelegramMessage, TelegramUpdate};
@@ -59,8 +60,7 @@ pub async fn handle_update<R: Runtime>(
     };
 
     // Routed — run the chat turn.
-    let _ = app; // future: app.emit to fan-out paired peer's UI
-    if let Err(e) = run_turn_for_peer(api, state, chat_id, &peer_id, &text_or_caption, msg)
+    if let Err(e) = run_turn_for_peer(api, state, app, chat_id, &peer_id, &text_or_caption, msg)
         .await
     {
         tracing::warn!("telegram run_turn: {e:?}");
@@ -129,9 +129,10 @@ async fn handle_start(
 /// send the reply back via Telegram, and also persist + emit
 /// the messages so any open KinAI client for that peer sees the
 /// exchange in real time.
-async fn run_turn_for_peer(
+async fn run_turn_for_peer<R: Runtime>(
     api: &BotApi,
     state: &SharedState,
+    app: &AppHandle<R>,
     chat_id: i64,
     peer_id: &str,
     content: &str,
@@ -157,13 +158,15 @@ async fn run_turn_for_peer(
         .db
         .append_message(&thread_id, "user", &sender, content, &[])
         .await?;
-    let _ = user_msg; // currently no UI fan-out for Telegram-originated user msgs
+    // Fan out to whichever KinAI surface(s) belong to this peer so the
+    // chat shows up live instead of only on the next thread reload.
+    fan_out_message(state, app, peer_id, &user_msg).await;
 
     let cfg = state.config.read().clone();
 
     // Slash commands intercept BEFORE the LLM.
     if let Some(reply) = crate::slash::handle(&cfg, content).await {
-        send_assistant_reply(api, state, &thread_id, chat_id, &reply).await?;
+        send_assistant_reply(api, state, app, peer_id, &thread_id, chat_id, &reply).await?;
         return Ok(());
     }
 
@@ -227,7 +230,8 @@ async fn run_turn_for_peer(
     )
     .await?;
 
-    send_assistant_reply(api, state, &thread_id, chat_id, &result.final_content).await?;
+    send_assistant_reply(api, state, app, peer_id, &thread_id, chat_id, &result.final_content)
+        .await?;
 
     if let Err(e) =
         crate::context::memory::maybe_summarize(&state.db, peer_id, &thread_id).await
@@ -257,20 +261,25 @@ fn compute_max_tokens(
 /// replies that contain a `![alt](url)` image reference, we ALSO
 /// upload the underlying file as a Telegram photo so users see the
 /// image inline in their chat rather than just a clickable link.
-async fn send_assistant_reply(
+async fn send_assistant_reply<R: Runtime>(
     api: &BotApi,
     state: &SharedState,
+    app: &AppHandle<R>,
+    peer_id: &str,
     thread_id: &str,
     chat_id: i64,
     reply: &str,
 ) -> Result<()> {
     // Persist the assistant message so it shows up in KinAI clients
     // viewing this peer's Telegram thread.
-    state
+    let persisted = state
         .db
         .append_message(thread_id, "assistant", "KinAI", reply, &[])
         .await
         .ok();
+    if let Some(msg) = persisted.as_ref() {
+        fan_out_message(state, app, peer_id, msg).await;
+    }
 
     // Detect a `![alt](http://host/v1/pic/<uuid>.png)` from ComfyUI
     // output. When found, upload the local file as a photo and send
@@ -284,6 +293,54 @@ async fn send_assistant_reply(
 
     api.send_message(chat_id, reply).await?;
     Ok(())
+}
+
+/// Surface a persisted Telegram-originated message to whichever KinAI
+/// surface(s) belong to `peer_id`:
+///   * Host's own thread (`peer_id == HOST_PEER`) → Tauri `kinai://message`
+///     event, picked up by the chat UI store's `pushMessage` listener.
+///   * Client peer's thread → walk `net.peers` for sessions whose
+///     `invite_id` matches `peer_id` (recall: `invite_id` IS the stable
+///     peer_id used by storage; the HashMap key is a per-WS UUID) and
+///     send `Envelope::Message` over their writer channel.
+///
+/// Best-effort: failures (no listeners, dropped tx) are logged but the
+/// chat flow already committed the message to the DB so the user sees
+/// it on their next reload either way.
+async fn fan_out_message<R: Runtime>(
+    state: &SharedState,
+    app: &AppHandle<R>,
+    peer_id: &str,
+    message: &crate::db::Message,
+) {
+    if peer_id == crate::db::HOST_PEER {
+        if let Err(e) = app.emit("kinai://message", message) {
+            tracing::warn!("telegram fan-out: app.emit failed: {e:?}");
+        }
+        return;
+    }
+
+    // Client peer path — find any connected WS sessions for this peer
+    // and push them the envelope. There can be more than one (rare,
+    // e.g. mid-reconnect) — send to all and let the client dedupe by
+    // message id (`pushMessage` already does this).
+    let net = state.net.lock().await;
+    let mut sent = 0usize;
+    for info in net.peers.values() {
+        if info.invite_id == peer_id {
+            let _ = info.tx.send(Envelope::Message {
+                message: message.clone(),
+            });
+            sent += 1;
+        }
+    }
+    if sent == 0 {
+        // Not an error — peer might just be offline. Their next reload
+        // will read from the DB.
+        tracing::debug!(
+            "telegram fan-out: peer {peer_id} has no live WS sessions, message stored in DB only"
+        );
+    }
 }
 
 /// If `reply` contains `![…](http://<our-host>/v1/pic/<uuid>.<ext>)`,

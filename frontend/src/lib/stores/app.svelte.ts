@@ -176,6 +176,23 @@ class AppStore {
     if (meta) {
       meta.updated_at = m.created_at;
       this.threads = [meta, ...this.threads.filter((t) => t.id !== meta.id)];
+    } else {
+      // The message landed on a thread we don't know about — most likely
+      // a Telegram-originated turn that just created a fresh thread on
+      // the host. Refresh the thread list so the sidebar surfaces it.
+      // Fire-and-forget; we don't await here because pushMessage is
+      // called from synchronous event handlers.
+      void this.refreshThreads();
+    }
+  }
+
+  /** Refetch the thread list from the host/DB. Idempotent — safe to
+   *  call from any event handler. */
+  async refreshThreads() {
+    try {
+      this.threads = await api.listThreads();
+    } catch (e) {
+      console.warn('refreshThreads failed', e);
     }
   }
 
