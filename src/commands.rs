@@ -1133,6 +1133,21 @@ pub async fn send_message(
         .map_err(err)?;
     let _ = app.emit("kinai://message", &user_msg);
 
+    // Bidirectional Telegram sync (host side): when the host owner is
+    // typing in their own Telegram thread, push the question to
+    // Telegram BEFORE the LLM runs so the chat there shows the full
+    // exchange. No-op for non-Telegram threads or when the user
+    // actually typed it on Telegram (router persists those with
+    // sender = "Telegram", which the echo skips).
+    crate::telegram::echo::maybe_echo_user(
+        &state,
+        db::HOST_PEER,
+        &args.thread_id,
+        &sender,
+        &args.content,
+    )
+    .await;
+
     let cfg = state.config.read().clone();
 
     // Slash commands (/pic, /picHQ, /help, ?) are intercepted BEFORE the

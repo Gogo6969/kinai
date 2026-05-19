@@ -5,6 +5,21 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.16] — 2026-05-19
+
+### Fixed
+
+- **User questions typed in KinAI weren't mirroring to Telegram.**
+  v0.2.13's bidirectional sync only echoed assistant replies — when
+  the user typed a question from KinAI's UI on a Telegram thread,
+  the answer arrived on Telegram but the question itself didn't,
+  leaving the phone chat with replies that had no visible prompt.
+  KinAI now also pushes the user's question to Telegram (prefixed
+  `💬 You:` since Telegram bots can't impersonate the human user).
+  Same gating: only fires on Telegram threads for a paired peer,
+  and skips messages that originated on Telegram in the first
+  place (to avoid bouncing them back).
+
 ## [0.2.15] — 2026-05-19
 
 ### Fixed

@@ -89,3 +89,64 @@ pub async fn maybe_echo_assistant(
         tracing::warn!("telegram echo: send_message failed: {e:?}");
     }
 }
+
+/// Mirror a user message typed inside KinAI to Telegram, prefixed so
+/// the chat history makes sense to the human reader.
+///
+/// Telegram bots can only send messages *as themselves* — they can't
+/// impersonate the human user — so the user's KinAI-typed input would
+/// otherwise look indistinguishable from the bot replying to nothing.
+/// We prefix with `💬 You:` to make the speaker explicit. Users reading
+/// the Telegram chat then see:
+///
+///   • their original Telegram input (sent by them, right-aligned),
+///   • bot-as-themselves echo when they typed from KinAI ("💬 You: …"),
+///   • bot reply (no prefix), same as before.
+///
+/// Same gating rules as `maybe_echo_assistant`: only fires on Telegram
+/// threads for a paired peer; all failures are best-effort + logged.
+pub async fn maybe_echo_user(
+    state: &SharedState,
+    peer_id: &str,
+    thread_id: &str,
+    user_sender: &str,
+    content: &str,
+) {
+    if content.trim().is_empty() {
+        return;
+    }
+    if thread_id != telegram_thread_id_for_peer(peer_id) {
+        return;
+    }
+    // Skip when the originating channel WAS Telegram — the user just
+    // typed this on their phone, no need to bounce it back to themselves.
+    // Router persists Telegram-originated user messages with
+    // sender = "Telegram" (see router::run_turn_for_peer).
+    if user_sender == "Telegram" {
+        return;
+    }
+    let token = state.config.read().telegram.bot_token.clone();
+    if token.trim().is_empty() {
+        return;
+    }
+    let chat_id = match crate::db::telegram::chat_for_peer(&state.db.pool, peer_id).await {
+        Ok(Some(c)) => c,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::warn!("telegram echo: chat_for_peer({peer_id}) failed: {e:?}");
+            return;
+        }
+    };
+    let chat_id_i64: i64 = match chat_id.parse() {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("telegram echo: invalid chat_id {chat_id:?}: {e}");
+            return;
+        }
+    };
+    let api = super::api::BotApi::new(token);
+    let body = format!("💬 You: {content}");
+    if let Err(e) = api.send_message(chat_id_i64, &body).await {
+        tracing::warn!("telegram echo: send_message (user) failed: {e:?}");
+    }
+}

@@ -538,6 +538,21 @@ async fn run_chat_turn(
     // the peer, not to whoever happens to own the host machine.
     let _ = tx.send(Envelope::Message { message: user_msg.clone() });
 
+    // Bidirectional Telegram sync (client-peer side): mirror the user's
+    // question to Telegram BEFORE the LLM runs so the phone chat shows
+    // the full exchange when the user typed from KinAI. Skipped for
+    // non-Telegram threads or when the user actually typed it on
+    // Telegram (router persists those with sender = "Telegram", which
+    // the echo internally filters out).
+    crate::telegram::echo::maybe_echo_user(
+        &s.app,
+        context_peer,
+        thread_id,
+        sender,
+        content,
+    )
+    .await;
+
     let cfg = s.app.config.read().clone();
 
     // Slash commands are intercepted BEFORE the LLM pipeline. The user
