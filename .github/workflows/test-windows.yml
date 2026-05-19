@@ -85,6 +85,51 @@ jobs:
       # the .msi + .exe + .sig pair. Either tauri-action cleans them up
       # between bundle + upload, or the upload glob is excluding them.
       # This step makes the truth visible in the workflow run log.
+      # The diagnostic listing in CI run 26126533617 proved this:
+      # tauri-bundler on Windows produces .msi + .msi.sig + .exe +
+      # .exe.sig — but NOT the .msi.zip / .nsis.zip auto-updater
+      # wrappers our host needs to push to Windows clients. The .zip
+      # wrapping is normally done by tauri-action AS PART of its
+      # release-upload step, and tauri-action skips that step entirely
+      # on workflow_dispatch (no release context).
+      #
+      # The Tauri 2 updater plugin for Windows expects:
+      #   <name>.msi.zip       — ZIP containing the .msi
+      #   <name>.msi.zip.sig   — minisign signature of the .msi.zip
+      # Same shape for .nsis.zip + .nsis.zip.sig wrapping the .exe.
+      #
+      # We build them by hand here: Compress-Archive to produce the
+      # ZIP, then `pnpm tauri signer sign` (already a transitive dep)
+      # to produce the .sig with the same updater key that's baked
+      # into every install via tauri.conf.json's `pubkey`.
+      - name: Build updater zip + signature (.msi.zip / .nsis.zip)
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          $msi = Get-ChildItem -Path target\x86_64-pc-windows-msvc\release\bundle\msi\ -Filter *.msi | Select-Object -First 1
+          if ($msi) {
+            $zipPath = "$($msi.FullName).zip"
+            Write-Host "Wrapping $($msi.FullName) → $zipPath"
+            Compress-Archive -Force -Path $msi.FullName -DestinationPath $zipPath
+            Write-Host "Signing $zipPath"
+            pnpm tauri signer sign --private-key "$env:TAURI_SIGNING_PRIVATE_KEY" --no-password "$zipPath"
+          } else {
+            Write-Host "::warning::No .msi found to wrap"
+          }
+
+          $exe = Get-ChildItem -Path target\x86_64-pc-windows-msvc\release\bundle\nsis\ -Filter *.exe | Select-Object -First 1
+          if ($exe) {
+            $zipPath = "$($exe.DirectoryName)\$([System.IO.Path]::GetFileNameWithoutExtension($exe.Name)).nsis.zip"
+            Write-Host "Wrapping $($exe.FullName) → $zipPath"
+            Compress-Archive -Force -Path $exe.FullName -DestinationPath $zipPath
+            Write-Host "Signing $zipPath"
+            pnpm tauri signer sign --private-key "$env:TAURI_SIGNING_PRIVATE_KEY" --no-password "$zipPath"
+          } else {
+            Write-Host "::warning::No .exe found to wrap"
+          }
+
       - name: List bundle contents pre-upload
         shell: pwsh
         run: |
