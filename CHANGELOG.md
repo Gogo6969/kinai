@@ -5,6 +5,24 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.22] — 2026-05-19
+
+### Fixed
+
+- **Mic-error Privacy-pane buttons now actually open System
+  Settings.** v0.2.21 added two helpful "Open Mic settings" /
+  "Open Speech Recognition settings" deep-links next to the
+  permission-blocked error, but clicking either was a no-op —
+  Tauri 2's shell plugin scope rejects any URL whose scheme
+  isn't in the `plugins.shell.open` regex, and we only had the
+  default (http/https). The custom `x-apple.systempreferences:`
+  scheme was silently denied. Extended the scope regex to
+  whitelist macOS's Privacy-pane deep-link scheme (and
+  `ms-settings:` for the eventual Windows equivalent), so both
+  buttons now jump straight to the right pane. The error handler
+  also surfaces a fallback message with manual instructions if
+  the shell open ever fails for any other reason.
+
 ## [0.2.21] — 2026-05-19
 
 ### Fixed

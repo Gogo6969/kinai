@@ -76,28 +76,32 @@
   const isMac =
     typeof navigator !== 'undefined' && /mac/i.test(navigator.platform);
 
-  /** Deep-link to System Settings → Privacy & Security → Microphone.
-   *  The older `com.apple.preference.security` bundle path still works
-   *  on Sequoia / Tahoe via System Settings' shim, even though the new
-   *  bundle is `com.apple.settings.PrivacySecurity.extension`. */
-  async function openMicSettings() {
+  /** Open a macOS Privacy pane via the `x-apple.systempreferences:` URL
+   *  scheme. On Ventura+ the older `com.apple.preference.security`
+   *  bundle path is silently routed by System Settings to the new
+   *  `com.apple.settings.PrivacySecurity.extension`, so the same URL
+   *  works on both Monterey and Sonoma/Sequoia. Logging real errors
+   *  surfaces the Tauri shell-plugin scope rejection we saw before
+   *  (plugins.shell.open regex must whitelist the scheme). */
+  async function openPrivacyPane(anchor: 'Microphone' | 'SpeechRecognition') {
+    if (!isMac) return;
+    const url = `x-apple.systempreferences:com.apple.preference.security?Privacy_${anchor}`;
     try {
-      if (isMac) {
-        await shellOpen('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone');
-      }
-    } catch {}
+      await shellOpen(url);
+    } catch (err) {
+      console.warn(`shellOpen(${url}) failed:`, err);
+      setError(
+        `Couldn't open System Settings automatically. Open it yourself: System Settings → Privacy & Security → ${anchor === 'Microphone' ? 'Microphone' : 'Speech Recognition'} and toggle KinAI on.`
+      );
+    }
   }
 
-  /** Deep-link to System Settings → Privacy & Security → Speech
-   *  Recognition. This is the OTHER half of the permission pair Web
-   *  Speech API requires on macOS. Users routinely toggle Microphone
-   *  and assume that's enough — it isn't. */
+  async function openMicSettings() {
+    await openPrivacyPane('Microphone');
+  }
+
   async function openSpeechRecognitionSettings() {
-    try {
-      if (isMac) {
-        await shellOpen('x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition');
-      }
-    } catch {}
+    await openPrivacyPane('SpeechRecognition');
   }
 
   function startRecording() {
