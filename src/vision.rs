@@ -128,6 +128,7 @@ pub fn endpoint_to_llm_settings(ep: &VisionEndpoint, base: &LlmSettings) -> LlmS
         temperature: base.temperature,
         max_tokens: base.max_tokens,
         system_addendum: base.system_addendum.clone(),
+        enabled: true,
     }
 }
 

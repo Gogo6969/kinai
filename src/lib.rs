@@ -135,6 +135,7 @@ pub fn run() {
             commands::get_config,
             commands::set_mode,
             commands::set_llm_settings,
+            commands::set_llm_deep_settings,
             commands::set_overlay_settings,
             commands::set_theme,
             commands::set_vision_settings,

@@ -547,12 +547,21 @@ async fn run_chat_turn(
 
     let cfg = s.app.config.read().clone();
 
+    // Resolve which LLM slot ("fast" vs "deep") this turn targets and
+    // strip the `/fast `/`/deep ` prefix before anything sees it —
+    // both the in-message slash handler (/pic, /help) AND the LLM
+    // context builder use the stripped content from here on out so
+    // the routing token doesn't leak into the model's prompt or the
+    // image-gen parser.
+    let route_pick = crate::slash::route_for(&cfg, content);
+    let llm_route_content = route_pick.stripped_content.clone();
+
     // Slash commands are intercepted BEFORE the LLM pipeline. The user
     // message is already persisted above so the chat history shows their
     // exact input ("/pic 1280x720 sunset over Miami"); the synthetic
     // assistant reply below shows the resulting image (or a usage hint /
     // error if generation fails).
-    if let Some(reply) = crate::slash::handle(&cfg, content).await {
+    if let Some(reply) = crate::slash::handle(&cfg, &llm_route_content).await {
         let started_at = std::time::Instant::now();
         let mut assistant_msg = s
             .app
@@ -589,8 +598,18 @@ async fn run_chat_turn(
         return Ok(());
     }
 
+    // Build the LLM context from a copy of user_msg where the
+    // model-routing prefix has been removed — without this strip the
+    // model sees its own routing token in the prompt ("/fast hello"
+    // instead of just "hello"). The persisted DB row still carries
+    // the original prefix so chat history shows the user's exact
+    // input, including the slash.
+    let user_msg_for_llm = crate::db::Message {
+        content: llm_route_content.clone(),
+        ..user_msg.clone()
+    };
     let messages =
-        context::builder::build_context(&s.app.db, &cfg, context_peer, thread_id, &user_msg)
+        context::builder::build_context(&s.app.db, &cfg, context_peer, thread_id, &user_msg_for_llm)
             .await?;
     // Snapshot the prompt for the per-turn diagnostic panel. Replace
     // inline image data URLs with a tiny placeholder so a single
@@ -605,7 +624,12 @@ async fn run_chat_turn(
     let tools = registry::enabled(&cfg.tools);
     let tool_runtime = registry::ToolRuntime::from_tool_settings(&cfg.tools);
     let max_tokens = compute_max_tokens(&cfg, &messages);
-    let llm = s.app.llm.lock().await.clone();
+    // Construct the LLM client from the active route's settings (fast
+    // or deep), NOT the cached `state.llm` — that one always holds
+    // the fast slot. Cheap allocation: LlmClient is a reqwest wrapper
+    // around the URL + key, and gets re-used by the pipeline below.
+    let active_llm_settings = route_pick.settings.clone();
+    let llm = crate::llm::LlmClient::new(active_llm_settings.clone());
     let cancel = CancellationToken::new();
 
     let tx_token = tx.clone();
@@ -646,12 +670,15 @@ async fn run_chat_turn(
     // Route based on attachments + model capability. The vast majority of
     // turns are plain chat → Route::Chat → same code path as before.
     // Image turns on a non-vision chat model route to the configured
-    // vision endpoint (with optional failover).
-    let route = crate::vision::decide(&cfg.llm.model, attachments, &cfg.vision)?;
+    // vision endpoint (with optional failover). We feed the
+    // model-routing slot's settings (fast vs deep) through both the
+    // vision decision and the pipeline so the chosen slot's
+    // vision-capability profile and context window apply.
+    let route = crate::vision::decide(&active_llm_settings.model, attachments, &cfg.vision)?;
     let result = crate::vision::run_with_route(
         route,
         llm,
-        &cfg.llm,
+        &active_llm_settings,
         messages,
         tools,
         tool_runtime,

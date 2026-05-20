@@ -21,7 +21,9 @@
   // input is exactly "/" or matches "/<partial>"; the menu disappears as
   // soon as the user types a space (because they're now writing the
   // prompt body), submits, or presses Escape.
-  const SLASH_COMMANDS: Array<{ cmd: string; desc: string; hint?: string }> = [
+  // Static base list — `/pic`, `/picHQ`, `/help` are always
+  // technically callable (image-gen handler decides at run time).
+  const BASE_SLASH_COMMANDS: Array<{ cmd: string; desc: string; hint?: string }> = [
     {
       cmd: '/pic',
       desc: 'Generate image · default 1280×720, ~5s',
@@ -34,6 +36,36 @@
     },
     { cmd: '/help', desc: 'List slash commands' },
   ];
+
+  // `/fast` and `/deep` only make sense when BOTH model slots are
+  // active — when only one slot is configured, there's no choice to
+  // route, so the slashes are pointless clutter. The check mirrors
+  // the backend's `LlmSettings::is_active()` so menu visibility and
+  // actual routing stay aligned.
+  function isSlotActive(slot: { enabled?: boolean; base_url?: string; model?: string } | undefined): boolean {
+    if (!slot) return false;
+    if (slot.enabled === false) return false;
+    return Boolean(slot.base_url?.trim() && slot.model?.trim());
+  }
+  const SLASH_COMMANDS = $derived.by(() => {
+    const cfg = app.config;
+    const fastActive = isSlotActive(cfg?.llm);
+    const deepActive = isSlotActive(cfg?.llm_deep);
+    const extra: Array<{ cmd: string; desc: string; hint?: string }> = [];
+    if (fastActive && deepActive) {
+      extra.push({
+        cmd: '/fast',
+        desc: `Use the fast model (${cfg!.llm.model})`,
+        hint: 'Plain messages already default to this model.',
+      });
+      extra.push({
+        cmd: '/deep',
+        desc: `Use the deep model (${cfg!.llm_deep.model})`,
+        hint: 'Slower but typically higher quality.',
+      });
+    }
+    return [...extra, ...BASE_SLASH_COMMANDS];
+  });
   let slashIndex = $state(0);
   const slashFiltered = $derived.by(() => {
     const t = input.trim();

@@ -5,6 +5,30 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.25] — 2026-05-19
+
+### Added
+
+- **Two-model chat: `Fast model` + optional `Deep model`.**
+  KinAI's Settings now exposes a second LLM slot — a typically
+  larger, slower model — alongside the existing one. Two new
+  slash commands route a turn to a specific slot:
+  - `/fast <prompt>` → the existing default model
+  - `/deep <prompt>` → the new secondary model
+  Both slashes appear in the autocomplete only when BOTH slots
+  are active (configured + not paused) — a single-model setup
+  hides them so the menu stays uncluttered. The routing token
+  is stripped before the LLM sees the prompt; the original
+  message text (including the `/fast` or `/deep`) is preserved
+  in chat history.
+  Falls back gracefully: if only `deep` is configured, plain
+  messages route there; if only `fast` is configured, behaviour
+  is identical to v0.2.24 and earlier.
+- **Pause toggle per model.** Each slot has an Active / Paused
+  switch in Settings. A paused slot is excluded from slash
+  autocomplete AND skipped during default routing — useful for
+  temporarily disabling one without losing its configuration.
+
 ## [0.2.24] — 2026-05-19
 
 ### Fixed

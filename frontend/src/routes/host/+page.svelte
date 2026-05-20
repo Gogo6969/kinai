@@ -54,6 +54,7 @@
     temperature: 0.7,
     max_tokens: 1024,
     system_addendum: '',
+    enabled: true,
   });
   let tools = $state<ToolSettings>({
     web_search: true,

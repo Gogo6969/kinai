@@ -108,6 +108,25 @@ pub async fn set_llm_settings(
     Ok(new_cfg)
 }
 
+/// Persist the secondary "deep" LLM slot. Same shape as
+/// `set_llm_settings`, just targets `cfg.llm_deep`. Doesn't touch the
+/// state.llm client — message routing re-instantiates the client per
+/// turn from the chosen slot's settings, so a config change here
+/// shows up immediately on the next chat turn.
+#[tauri::command]
+pub async fn set_llm_deep_settings(
+    state: tauri::State<'_, SharedState>,
+    llm: LlmSettings,
+) -> Result<AppConfig> {
+    let new_cfg = {
+        let mut cfg = state.config.write();
+        cfg.llm_deep = llm;
+        cfg.save().map_err(err)?;
+        cfg.clone()
+    };
+    Ok(new_cfg)
+}
+
 #[tauri::command]
 pub async fn set_overlay_settings(
     app: AppHandle,
@@ -192,6 +211,7 @@ pub async fn test_vision_endpoint(args: TestVisionArgs) -> Result<TestVisionResu
         temperature: 0.0,
         max_tokens: 64,
         system_addendum: String::new(),
+        enabled: true,
     };
     let client = crate::llm::LlmClient::new(settings);
     let messages = vec![ChatMessage::User {
@@ -1142,10 +1162,19 @@ pub async fn send_message(
 
     let cfg = state.config.read().clone();
 
+    // Resolve which LLM slot ("fast" vs "deep") this turn targets +
+    // strip the `/fast `/`/deep ` prefix. The persisted user message
+    // keeps the original text (so the slash shows in chat history);
+    // everything from here on uses the stripped content so neither
+    // the in-message slash handler (/pic, /help) nor the LLM context
+    // builder sees the routing token.
+    let route_pick = crate::slash::route_for(&cfg, &args.content);
+    let llm_route_content = route_pick.stripped_content.clone();
+
     // Slash commands (/pic, /picHQ, /help, ?) are intercepted BEFORE the
     // LLM pipeline. Same handler the WebSocket dispatcher uses for client
     // peers — keeps the two chat paths identical.
-    if let Some(reply) = crate::slash::handle(&cfg, &args.content).await {
+    if let Some(reply) = crate::slash::handle(&cfg, &llm_route_content).await {
         let started_at = std::time::Instant::now();
         let mut assistant_msg = state
             .db
@@ -1195,8 +1224,15 @@ pub async fn send_message(
         });
     }
 
+    // Build prompt with the slash-stripped user content — DB still
+    // has the original for chat history, but the model shouldn't see
+    // its own routing prefix in the prompt.
+    let user_msg_for_llm = db::Message {
+        content: llm_route_content.clone(),
+        ..user_msg.clone()
+    };
     let messages =
-        context::builder::build_context(&state.db, &cfg, db::HOST_PEER, &args.thread_id, &user_msg)
+        context::builder::build_context(&state.db, &cfg, db::HOST_PEER, &args.thread_id, &user_msg_for_llm)
             .await
             .map_err(err)?;
     // Snapshot for the 🔍 debug panel — emitted alongside the
@@ -1215,7 +1251,10 @@ pub async fn send_message(
 
     let max_tokens = compute_max_tokens(&cfg, &messages);
 
-    let llm = state.llm.lock().await.clone();
+    // Pick the LLM client from the routed slot (fast vs deep) rather
+    // than the cached state.llm (which is always the fast slot).
+    let active_llm_settings = route_pick.settings.clone();
+    let llm = crate::llm::LlmClient::new(active_llm_settings.clone());
     let cancel = CancellationToken::new();
 
     let app_for_token = app.clone();
@@ -1253,12 +1292,12 @@ pub async fn send_message(
         }),
     };
 
-    let route = crate::vision::decide(&cfg.llm.model, &args.attachments, &cfg.vision)
+    let route = crate::vision::decide(&active_llm_settings.model, &args.attachments, &cfg.vision)
         .map_err(err)?;
     let result = crate::vision::run_with_route(
         route,
         llm,
-        &cfg.llm,
+        &active_llm_settings,
         messages,
         tool_defs,
         tool_runtime,

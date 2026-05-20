@@ -40,14 +40,21 @@ pub struct LlmSettings {
     pub max_tokens: usize,
     /// Friendly system-prompt addendum (the host's preferences)
     pub system_addendum: String,
+    /// Pause toggle. When `false` this slot is hidden from slash menus
+    /// and skipped during message routing — useful for temporarily
+    /// disabling one model without losing its configuration. Defaults
+    /// to `true` so existing single-model configs (no `enabled` field
+    /// in their TOML) keep behaving the same after the upgrade.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
-impl Default for LlmSettings {
-    fn default() -> Self {
+impl LlmSettings {
+    fn default_inner(base_url: &str, model: &str) -> Self {
         Self {
             provider: "ollama".into(),
-            base_url: "http://localhost:11434".into(),
-            model: "llama3.1:8b".into(),
+            base_url: base_url.into(),
+            model: model.into(),
             context_window: 8192,
             api_key: None,
             temperature: 0.7,
@@ -56,7 +63,30 @@ impl Default for LlmSettings {
             // tokens for chain-of-thought before producing visible content.
             max_tokens: 0,
             system_addendum: String::new(),
+            enabled: true,
         }
+    }
+
+    /// Empty/disabled placeholder for the secondary "deep" slot — until
+    /// the user fills in a base_url it isn't a candidate for routing.
+    pub fn default_empty() -> Self {
+        let mut s = Self::default_inner("", "");
+        s.enabled = false;
+        s
+    }
+
+    /// True iff this slot can serve a chat turn — paused slots and
+    /// completely-unconfigured slots both return false. Used by the
+    /// slash autocomplete, message router, and /help renderer to keep
+    /// their decisions in lockstep.
+    pub fn is_active(&self) -> bool {
+        self.enabled && !self.base_url.trim().is_empty() && !self.model.trim().is_empty()
+    }
+}
+
+impl Default for LlmSettings {
+    fn default() -> Self {
+        Self::default_inner("http://localhost:11434", "llama3.1:8b")
     }
 }
 
@@ -280,6 +310,13 @@ pub struct AppConfig {
     pub theme: Theme,
     #[serde(default)]
     pub llm: LlmSettings,
+    /// Optional "deep" model slot — a slower / higher-quality model the
+    /// user can address via `/deep <prompt>`. Defaults to disabled +
+    /// empty so brand-new installs and pre-v0.2.25 configs keep their
+    /// single-model behaviour. Becomes the default routing target when
+    /// `llm` is disabled or unconfigured.
+    #[serde(default = "LlmSettings::default_empty")]
+    pub llm_deep: LlmSettings,
     #[serde(default)]
     pub host: HostSettings,
     #[serde(default)]

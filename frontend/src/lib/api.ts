@@ -13,6 +13,10 @@ export interface LlmSettings {
   temperature: number;
   max_tokens: number;
   system_addendum: string;
+  /** Pause toggle. When `false` this slot is hidden from slash menus
+   *  and skipped during message routing. Defaults to `true` for the
+   *  fast slot, `false` for the deep slot (until the user fills it). */
+  enabled: boolean;
 }
 
 export interface HostSettings {
@@ -95,7 +99,14 @@ export interface TelegramLinkStatus {
 export interface AppConfig {
   mode: Mode;
   theme: Theme;
+  /** Primary chat model. Reachable as `/fast <prompt>` when both
+   *  slots are active; the default routing target for plain
+   *  (non-slash) messages. */
   llm: LlmSettings;
+  /** Optional secondary "deep" model. Reachable as `/deep <prompt>`.
+   *  Empty + disabled by default; becomes the default routing target
+   *  when `llm` is paused or unconfigured. */
+  llm_deep: LlmSettings;
   host: HostSettings;
   client: ClientSettings;
   overlay: OverlaySettings;
@@ -238,6 +249,10 @@ export const api = {
     tools?: ToolSettings;
   }) => invoke<AppConfig>('set_mode', { args }),
   setLlmSettings: (llm: LlmSettings) => invoke<AppConfig>('set_llm_settings', { llm }),
+  /** Save the secondary "deep" LLM slot. Same shape as
+   *  setLlmSettings, separate command server-side. */
+  setLlmDeepSettings: (llm: LlmSettings) =>
+    invoke<AppConfig>('set_llm_deep_settings', { llm }),
   setOverlaySettings: (overlay: OverlaySettings) =>
     invoke<AppConfig>('set_overlay_settings', { overlay }),
   setTheme: (theme: Theme) => invoke<AppConfig>('set_theme', { theme }),

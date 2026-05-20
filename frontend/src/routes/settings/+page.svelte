@@ -20,6 +20,9 @@
   const isClient = $derived(app.config?.mode === 'client');
   const isHost = $derived(app.config?.mode === 'host');
 
+  // Fast model — the existing single slot. Reachable as `/fast` once
+  // the deep slot is also configured; the default routing target for
+  // plain (non-slash) messages.
   let llm = $state<LlmSettings>({
     provider: 'ollama',
     base_url: 'http://localhost:11434',
@@ -29,7 +32,23 @@
     temperature: 0.7,
     max_tokens: 1024,
     system_addendum: '',
+    enabled: true,
   });
+  // Deep model — new secondary slot. Disabled + empty by default so
+  // existing installs keep their single-model behaviour. Reachable as
+  // `/deep` once base_url + model are filled and `enabled` is true.
+  let llmDeep = $state<LlmSettings>({
+    provider: 'ollama',
+    base_url: '',
+    model: '',
+    context_window: 8192,
+    api_key: null,
+    temperature: 0.7,
+    max_tokens: 0,
+    system_addendum: '',
+    enabled: false,
+  });
+  let llmDeepSaveState = $state<'idle' | 'saving' | 'ok' | 'fail'>('idle');
   let overlay = $state<OverlaySettings>({
     hotkey: 'CmdOrCtrl+Space',
     always_on_top: true,
@@ -241,6 +260,9 @@
   onMount(() => {
     if (app.config) {
       llm = { ...app.config.llm };
+      if (app.config.llm_deep) {
+        llmDeep = { ...app.config.llm_deep };
+      }
       overlay = { ...app.config.overlay };
       theme = app.config.theme;
       tools = { ...app.config.tools };
@@ -335,6 +357,11 @@
       // search engine the host runs.
       if (isHost) {
         await api.setLlmSettings(llm);
+        // Save the deep slot whether or not it's configured — an
+        // empty base_url + enabled=false is a valid "disabled"
+        // state. The backend's `is_active()` check handles the
+        // visibility/routing implications.
+        await api.setLlmDeepSettings(llmDeep);
         if (app.config) {
           await api.setMode({ mode: app.config.mode, tools });
         }
@@ -564,107 +591,198 @@
     {/if}
 
     {#if isHost}
-    <div class="kin-card space-y-4">
-      <div class="flex items-center justify-between gap-3">
-        <h2 class="font-semibold text-lg">Local LLM</h2>
-        <button class="kin-btn" type="button" onclick={() => goto('/host')}>
-          Scan & pick a backend →
-        </button>
-      </div>
-      <p class="text-xs text-white/50 -mt-2">
-        Use the scan wizard to discover providers on your machine or LAN and
-        auto-fill all the fields below. Or edit manually here.
-      </p>
-      <div class="grid grid-cols-2 gap-3">
-        <label class="block">
-          <span class="text-sm text-white/70">Provider</span>
-          <select class="kin-field mt-1" bind:value={llm.provider}>
-            <option value="ollama">Ollama</option>
-            <option value="lmstudio">LM Studio</option>
-            <option value="vllm">vLLM</option>
-            <option value="llamacpp">llama.cpp server</option>
-            <option value="openai-compat">OpenAI-compatible</option>
-          </select>
-        </label>
-        <label class="block">
-          <span class="text-sm text-white/70">Base URL</span>
-          <input class="kin-field mt-1 font-mono" bind:value={llm.base_url} />
-        </label>
-      </div>
-      <div class="grid grid-cols-2 gap-3">
-        <label class="block">
-          <span class="text-sm text-white/70">Model</span>
-          <div class="flex gap-2 mt-1">
-            {#if models.length > 0}
-              <select class="kin-field font-mono flex-1" bind:value={llm.model}>
-                {#each models as m}
-                  <option value={m}>{m}</option>
-                {/each}
-                {#if llm.model && !models.includes(llm.model)}
-                  <option value={llm.model}>{llm.model} (custom)</option>
-                {/if}
-              </select>
-            {:else}
-              <input class="kin-field font-mono flex-1" bind:value={llm.model} placeholder="llama3.1:8b" />
-            {/if}
-            <button
-              class="kin-btn !px-2"
-              type="button"
-              onclick={() => refreshModels()}
-              disabled={refreshing}
-              aria-label="Refresh model list"
-              title="Refresh model list from server"
-            >
-              {#if refreshing}
-                <Loader2 size={14} class="animate-spin" />
-              {:else}
-                <RefreshCw size={14} />
-              {/if}
+    <!--
+      Two LLM cards, fast + deep, share the same form layout via a
+      snippet. The fast slot is the long-standing default (reachable
+      as `/fast` once both are configured); the deep slot is new
+      (`/deep`). Either can be paused individually via its toggle.
+      When only one slot is active, plain-text messages always route
+      there regardless of which slot is "fast" or "deep" — see
+      `slash::route_for` server-side for the actual decision logic.
+    -->
+    {#snippet modelCard(
+      title: string,
+      subtitle: string,
+      slug: 'fast' | 'deep',
+      get: () => LlmSettings,
+      set: (v: LlmSettings) => void
+    )}
+      {@const m = get()}
+      <div class="kin-card space-y-4">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <h2 class="font-semibold text-lg">{title}</h2>
+            <p class="text-xs text-white/50">{subtitle}</p>
+          </div>
+          <label class="flex items-center gap-2 text-sm text-white/70 cursor-pointer select-none shrink-0">
+            <input
+              type="checkbox"
+              checked={m.enabled}
+              onchange={(e) => {
+                const next = { ...m, enabled: (e.currentTarget as HTMLInputElement).checked };
+                set(next);
+              }}
+              class="accent-teal-400"
+            />
+            <span>{m.enabled ? 'Active' : 'Paused'}</span>
+          </label>
+        </div>
+        {#if slug === 'fast'}
+          <div class="flex items-center justify-end -mt-2">
+            <button class="kin-btn" type="button" onclick={() => goto('/host')}>
+              Scan & pick a backend →
             </button>
           </div>
-          {#if refreshMessage}
-            <p class="text-xs text-white/50 mt-1">{refreshMessage}</p>
-          {/if}
-        </label>
+          <p class="text-xs text-white/50 -mt-2">
+            Use the scan wizard to discover providers on your machine or LAN and
+            auto-fill all the fields below. Or edit manually here.
+          </p>
+        {/if}
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block">
+            <span class="text-sm text-white/70">Provider</span>
+            <select
+              class="kin-field mt-1"
+              value={m.provider}
+              onchange={(e) => set({ ...m, provider: (e.currentTarget as HTMLSelectElement).value })}
+            >
+              <option value="ollama">Ollama</option>
+              <option value="lmstudio">LM Studio</option>
+              <option value="vllm">vLLM</option>
+              <option value="llamacpp">llama.cpp server</option>
+              <option value="openai-compat">OpenAI-compatible</option>
+            </select>
+          </label>
+          <label class="block">
+            <span class="text-sm text-white/70">Base URL</span>
+            <input
+              class="kin-field mt-1 font-mono"
+              value={m.base_url}
+              oninput={(e) => set({ ...m, base_url: (e.currentTarget as HTMLInputElement).value })}
+              placeholder={slug === 'deep' ? '(empty = no deep model)' : ''}
+            />
+          </label>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block">
+            <span class="text-sm text-white/70">Model</span>
+            <div class="flex gap-2 mt-1">
+              {#if slug === 'fast' && models.length > 0}
+                <select
+                  class="kin-field font-mono flex-1"
+                  value={m.model}
+                  onchange={(e) => set({ ...m, model: (e.currentTarget as HTMLSelectElement).value })}
+                >
+                  {#each models as opt}
+                    <option value={opt}>{opt}</option>
+                  {/each}
+                  {#if m.model && !models.includes(m.model)}
+                    <option value={m.model}>{m.model} (custom)</option>
+                  {/if}
+                </select>
+              {:else}
+                <input
+                  class="kin-field font-mono flex-1"
+                  value={m.model}
+                  oninput={(e) => set({ ...m, model: (e.currentTarget as HTMLInputElement).value })}
+                  placeholder={slug === 'deep' ? 'e.g. qwen2.5:72b-instruct-q4_K_M' : 'llama3.1:8b'}
+                />
+              {/if}
+              {#if slug === 'fast'}
+                <button
+                  class="kin-btn !px-2"
+                  type="button"
+                  onclick={() => refreshModels()}
+                  disabled={refreshing}
+                  aria-label="Refresh model list"
+                  title="Refresh model list from server"
+                >
+                  {#if refreshing}
+                    <Loader2 size={14} class="animate-spin" />
+                  {:else}
+                    <RefreshCw size={14} />
+                  {/if}
+                </button>
+              {/if}
+            </div>
+            {#if slug === 'fast' && refreshMessage}
+              <p class="text-xs text-white/50 mt-1">{refreshMessage}</p>
+            {/if}
+          </label>
+          <label class="block">
+            <span class="text-sm text-white/70">Context window</span>
+            <input
+              type="number"
+              class="kin-field mt-1"
+              value={m.context_window}
+              oninput={(e) => set({ ...m, context_window: Number((e.currentTarget as HTMLInputElement).value) || 0 })}
+            />
+          </label>
+        </div>
+        <div class="grid grid-cols-2 gap-3">
+          <label class="block">
+            <span class="text-sm text-white/70">Temperature</span>
+            <input
+              type="number"
+              step="0.05"
+              min="0"
+              max="2"
+              class="kin-field mt-1"
+              value={m.temperature}
+              oninput={(e) => set({ ...m, temperature: Number((e.currentTarget as HTMLInputElement).value) || 0 })}
+            />
+          </label>
+          <label class="block">
+            <span class="text-sm text-white/70">Max reply tokens</span>
+            <input
+              type="number"
+              min="0"
+              class="kin-field mt-1"
+              value={m.max_tokens}
+              oninput={(e) => set({ ...m, max_tokens: Number((e.currentTarget as HTMLInputElement).value) || 0 })}
+            />
+            <p class="text-xs text-white/40 mt-1">
+              <code class="bg-black/40 px-1 rounded">0</code> = auto (use full remaining
+              context, recommended for reasoning models). Otherwise a hard cap.
+            </p>
+          </label>
+        </div>
         <label class="block">
-          <span class="text-sm text-white/70">Context window</span>
-          <input type="number" class="kin-field mt-1" bind:value={llm.context_window} />
-        </label>
-      </div>
-      <div class="grid grid-cols-2 gap-3">
-        <label class="block">
-          <span class="text-sm text-white/70">Temperature</span>
+          <span class="text-sm text-white/70">API key (optional)</span>
           <input
-            type="number"
-            step="0.05"
-            min="0"
-            max="2"
+            type="password"
             class="kin-field mt-1"
-            bind:value={llm.temperature}
+            value={m.api_key ?? ''}
+            oninput={(e) => set({ ...m, api_key: (e.currentTarget as HTMLInputElement).value || null })}
           />
         </label>
         <label class="block">
-          <span class="text-sm text-white/70">Max reply tokens</span>
-          <input type="number" min="0" class="kin-field mt-1" bind:value={llm.max_tokens} />
-          <p class="text-xs text-white/40 mt-1">
-            <code class="bg-black/40 px-1 rounded">0</code> = auto (use full remaining
-            context, recommended for reasoning models). Otherwise a hard cap.
-          </p>
+          <span class="text-sm text-white/70">System addendum</span>
+          <textarea
+            class="kin-field mt-1 font-mono text-sm"
+            rows="3"
+            value={m.system_addendum}
+            oninput={(e) => set({ ...m, system_addendum: (e.currentTarget as HTMLTextAreaElement).value })}
+          ></textarea>
         </label>
       </div>
-      <label class="block">
-        <span class="text-sm text-white/70">API key (optional)</span>
-        <input type="password" class="kin-field mt-1" bind:value={llm.api_key} />
-      </label>
-      <label class="block">
-        <span class="text-sm text-white/70">System addendum</span>
-        <textarea
-          class="kin-field mt-1 font-mono text-sm"
-          rows="3"
-          bind:value={llm.system_addendum}
-        ></textarea>
-      </label>
-    </div>
+    {/snippet}
+
+    {@render modelCard(
+      'Fast model',
+      'Your default model. Reachable as `/fast` in chat when the Deep model is also configured.',
+      'fast',
+      () => llm,
+      (v) => (llm = v)
+    )}
+
+    {@render modelCard(
+      'Deep model (optional)',
+      'A second, typically larger model. Reachable as `/deep` in chat. Leave Base URL empty to disable.',
+      'deep',
+      () => llmDeep,
+      (v) => (llmDeep = v)
+    )}
 
     <div class="kin-card space-y-4">
       <h2 class="font-semibold text-lg">Search engine</h2>
