@@ -5,6 +5,30 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.26] — 2026-05-20
+
+### Changed
+
+- **Change-backend screen now configures both LLM slots in one
+  step.** When you open *Change backend* (host owner only),
+  the configure step now shows two model cards side-by-side:
+  the existing **Fast model** plus the new **Deep model
+  (optional)**. Each card has the same fields (provider, base
+  URL, model, context window, test connection) plus its own
+  Active / Paused toggle. The detected-backend list at the top
+  has explicit **Fast** and **Deep** assign buttons per
+  backend, so a single discovered server can be assigned to
+  either slot — or to both for testing.
+- **No more auto-rescan when entering the screen.** Backend
+  discovery (Localhost + Network scan) now runs only on
+  explicit user action — the *Localhost* or *Network* buttons.
+  The screen used to auto-rescan whenever the cache was older
+  than 1 hour, which fired on most visits and felt noisy.
+  Cached results stay visible across visits; you can refresh
+  on demand. The one exception is a fresh KinAI install with
+  no scan history yet — that still runs one initial scan so
+  the new-user flow isn't an empty list.
+
 ## [0.2.25] — 2026-05-19
 
 ### Added

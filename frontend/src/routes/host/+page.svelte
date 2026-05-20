@@ -56,6 +56,25 @@
     system_addendum: '',
     enabled: true,
   });
+  // Secondary "deep" slot — same shape, but starts disabled + empty so
+  // hosts who only want one model keep their existing single-slot
+  // behaviour. The configure step now exposes BOTH slots so the user
+  // can pick a fast + deep backend in one screen.
+  let llmDeep = $state<LlmSettings>({
+    provider: 'ollama',
+    base_url: '',
+    model: '',
+    context_window: 8192,
+    api_key: null,
+    temperature: 0.7,
+    max_tokens: 0,
+    system_addendum: '',
+    enabled: false,
+  });
+  let pickedBackendDeep = $state<DetectedBackend | null>(null);
+  let availableModelsDeep = $state<string[]>([]);
+  let testingDeep = $state(false);
+  let testResultDeep = $state<TestConnectionResult | null>(null);
   let tools = $state<ToolSettings>({
     web_search: true,
     x_search: true,
@@ -147,6 +166,9 @@
     if (app.config) {
       host = { ...app.config.host };
       llm = { ...app.config.llm };
+      if (app.config.llm_deep) {
+        llmDeep = { ...app.config.llm_deep };
+      }
       tools = { ...app.config.tools };
       if (app.config.vision) {
         vision = {
@@ -159,28 +181,36 @@
     }
     api.localIp().then((info) => (localNet = info)).catch(() => {});
 
-    // Re-use any cached results that are still fresh (<1h). Only auto-scan
-    // when nothing is cached or it's stale.
-    const now = Date.now();
-    const detectFresh =
-      app.detectCache && now - app.detectCache.at < SCAN_CACHE_MAX_MS;
-    const scanFresh = app.scanCache && now - app.scanCache.at < SCAN_CACHE_MAX_MS;
-
-    if (detectFresh) {
-      mergeResults(app.detectCache!.results);
+    // Scan policy: backend discovery now runs ONLY on explicit user
+    // action — the Localhost / Network buttons. Re-entering this
+    // screen no longer triggers an automatic rescan, which had been
+    // firing every visit because the 1-hour TTL was tighter than how
+    // often users navigate here in practice. We still hydrate from
+    // the in-memory cache so the previously-discovered backends stay
+    // visible, but never refresh them implicitly.
+    //
+    // The single exception is the very first run on a fresh install:
+    // if the cache is empty (no prior scan in this app session AND no
+    // cached results), kick off ONE initial scan so the user sees
+    // something on the screen instead of an empty list with a
+    // possibly-confusing "scan" button. Reconfiguring hosts skip
+    // even that — they already have a backend configured and don't
+    // need to be auto-scanned at.
+    if (app.detectCache) {
+      mergeResults(app.detectCache.results);
       scanRanThisSession = true;
+      lastScanAt = app.detectCache.at;
     }
-    if (scanFresh) {
-      mergeResults(app.scanCache!.results);
+    if (app.scanCache) {
+      mergeResults(app.scanCache.results);
       scanRanThisSession = true;
+      lastScanAt = Math.max(lastScanAt ?? 0, app.scanCache.at);
     }
-    lastScanAt = Math.max(
-      detectFresh ? app.detectCache!.at : 0,
-      scanFresh ? app.scanCache!.at : 0,
-    ) || null;
-
-    if (!detectFresh) void detect();
-    if (!scanFresh) void scanNetwork();
+    const neverScanned = !app.detectCache && !app.scanCache;
+    if (neverScanned && !reconfiguring) {
+      void detect();
+      void scanNetwork();
+    }
 
     // Tick the "last scanned X ago" label every 30s.
     const tickId = setInterval(() => (nowTick = Date.now()), 30_000);
@@ -238,20 +268,40 @@
     if (b.models.length) llm.model = b.models[0];
     step = 'configure';
     testResult = null;
-    void autofillContextWindow();
+    void autofillContextWindow('fast');
   }
 
-  async function autofillContextWindow() {
-    if (!llm.model.trim() || !llm.base_url.trim()) return;
+  function pickForDeep(b: DetectedBackend) {
+    pickedBackendDeep = b;
+    llmDeep.provider = b.provider;
+    llmDeep.base_url = b.base_url;
+    availableModelsDeep = [...b.models];
+    if (b.models.length) llmDeep.model = b.models[0];
+    // Setting a backend for the deep slot enables it — paused slots
+    // were stripped from routing in v0.2.25; if the user wants to keep
+    // a configured slot dormant they can flip the toggle afterwards.
+    llmDeep.enabled = true;
+    step = 'configure';
+    testResultDeep = null;
+    void autofillContextWindow('deep');
+  }
+
+  async function autofillContextWindow(slot: 'fast' | 'deep' = 'fast') {
+    const target = slot === 'deep' ? llmDeep : llm;
+    if (!target.model.trim() || !target.base_url.trim()) return;
     try {
       const caps = await api.queryModelCaps({
-        provider: llm.provider,
-        base_url: llm.base_url,
-        api_key: llm.api_key,
-        model: llm.model,
+        provider: target.provider,
+        base_url: target.base_url,
+        api_key: target.api_key,
+        model: target.model,
       });
       if (caps.context_length && caps.context_length > 0) {
-        llm.context_window = caps.context_length;
+        if (slot === 'deep') {
+          llmDeep.context_window = caps.context_length;
+        } else {
+          llm.context_window = caps.context_length;
+        }
       }
     } catch (e) {
       // Best-effort — leave context_window at the user-set value.
@@ -266,6 +316,10 @@
 
   async function commit() {
     await api.setLlmSettings(llm);
+    // Push deep slot too. Empty base_url + enabled=false is a valid
+    // "disabled" state — the backend's `is_active()` decides whether
+    // the slot is a routing candidate.
+    await api.setLlmDeepSettings(llmDeep);
     await api.setMode({ mode: 'host', host, tools });
     await api.setVisionSettings(vision);
     if (reconfiguring) {
@@ -295,7 +349,7 @@
         if (!testResult.models.includes(llm.model)) {
           llm.model = testResult.models[0];
         }
-        void autofillContextWindow();
+        void autofillContextWindow('fast');
       }
     } catch (e) {
       testResult = {
@@ -306,6 +360,37 @@
       };
     } finally {
       testing = false;
+    }
+  }
+
+  /** Same test-connection flow as `testConnection`, just targeting
+   *  the deep slot. Kept separate so the two sections show
+   *  independent results / loading states. */
+  async function testConnectionDeep() {
+    testingDeep = true;
+    testResultDeep = null;
+    try {
+      testResultDeep = await api.testLlmConnection({
+        provider: llmDeep.provider,
+        base_url: llmDeep.base_url,
+        api_key: llmDeep.api_key,
+      });
+      if (testResultDeep.ok && testResultDeep.models.length) {
+        availableModelsDeep = [...testResultDeep.models];
+        if (!testResultDeep.models.includes(llmDeep.model)) {
+          llmDeep.model = testResultDeep.models[0];
+        }
+        void autofillContextWindow('deep');
+      }
+    } catch (e) {
+      testResultDeep = {
+        ok: false,
+        models: [],
+        error: String(e),
+        latency_ms: 0,
+      };
+    } finally {
+      testingDeep = false;
     }
   }
 
@@ -377,11 +462,7 @@
 
         <div class="space-y-2">
           {#each detected as b}
-            <button
-              type="button"
-              class="w-full text-left kin-card hover:bg-white/10 transition-colors"
-              onclick={() => pick(b)}
-            >
+            <div class="kin-card">
               <div class="flex items-center justify-between gap-3">
                 <div class="min-w-0">
                   <div class="font-semibold">{b.label}</div>
@@ -396,7 +477,25 @@
                   {b.models.slice(0, 4).join(' · ')}{b.models.length > 4 ? ' …' : ''}
                 </div>
               {/if}
-            </button>
+              <!--
+                A backend can be assigned to EITHER slot. The two
+                buttons let the user wire a discovered server to their
+                Fast (default) or Deep (`/deep`) slot independently;
+                clicking Fast jumps straight to the configure step.
+              -->
+              <div class="flex flex-wrap gap-2 mt-3">
+                <button
+                  class="kin-btn-primary !text-xs"
+                  type="button"
+                  onclick={() => pick(b)}
+                >Set as Fast →</button>
+                <button
+                  class="kin-btn !text-xs"
+                  type="button"
+                  onclick={() => pickForDeep(b)}
+                >Set as Deep</button>
+              </div>
+            </div>
           {/each}
 
           {#if !busy && detected.length === 0}
@@ -492,7 +591,7 @@
 
         <div class="kin-card space-y-4">
           <div class="flex items-center justify-between gap-2">
-            <h2 class="font-semibold text-lg">Model</h2>
+            <h2 class="font-semibold text-lg">Fast model</h2>
             <div class="flex gap-2">
               <button class="kin-btn" type="button" disabled={busy} onclick={detect}>
                 {#if detecting}
@@ -516,21 +615,40 @@
           {#if detected.length > 0}
             <div class="space-y-1.5 border border-white/5 rounded-lg p-2 bg-black/20">
               <div class="text-xs text-white/50 px-1">
-                {detected.length} backend{detected.length === 1 ? '' : 's'} found — click to fill the fields:
+                {detected.length} backend{detected.length === 1 ? '' : 's'} found — assign to a slot:
               </div>
               {#each detected as b}
-                <button
-                  type="button"
-                  class="w-full text-left rounded-md px-3 py-2 hover:bg-white/5 transition-colors flex items-center justify-between gap-2
-                         {pickedBackend?.base_url === b.base_url ? 'bg-teal-500/10 ring-1 ring-teal-400/40' : ''}"
-                  onclick={() => pick(b)}
+                {@const isFast = pickedBackend?.base_url === b.base_url}
+                {@const isDeep = pickedBackendDeep?.base_url === b.base_url}
+                <div
+                  class="rounded-md px-3 py-2 flex items-center justify-between gap-2
+                         {isFast || isDeep ? 'bg-teal-500/10 ring-1 ring-teal-400/40' : 'hover:bg-white/5 transition-colors'}"
                 >
                   <div class="min-w-0">
                     <div class="text-sm font-semibold">{b.label}</div>
                     <div class="text-xs text-white/50 font-mono truncate">{b.base_url}</div>
+                    {#if isFast || isDeep}
+                      <div class="text-[10px] uppercase tracking-wider text-teal-300 mt-0.5">
+                        {#if isFast && isDeep}Active for Fast + Deep
+                        {:else if isFast}Active for Fast
+                        {:else}Active for Deep{/if}
+                      </div>
+                    {/if}
                   </div>
-                  <span class="kin-badge flex-shrink-0">{b.models.length} model{b.models.length === 1 ? '' : 's'}</span>
-                </button>
+                  <div class="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      class="kin-btn !text-xs {isFast ? '!bg-teal-500/20' : ''}"
+                      type="button"
+                      onclick={() => pick(b)}
+                    >Fast</button>
+                    <button
+                      class="kin-btn !text-xs {isDeep ? '!bg-teal-500/20' : ''}"
+                      type="button"
+                      onclick={() => pickForDeep(b)}
+                    >Deep</button>
+                    <span class="kin-badge">{b.models.length}</span>
+                  </div>
+                </div>
               {/each}
             </div>
           {/if}
@@ -668,6 +786,137 @@
                   <div class="text-xs text-white/50">
                     Check IP and port, confirm the server is bound to <code>0.0.0.0</code>,
                     and that this Mac can reach it on your LAN.
+                  </div>
+                </div>
+              {/if}
+            {/if}
+          </div>
+        </div>
+
+        <!--
+          Deep model — optional second slot routed via `/deep`. Same
+          field layout as Fast above; collapsed by default with a
+          summary line when disabled, expands when the user clicks
+          "Add" or assigns a detected backend.
+        -->
+        <div class="kin-card space-y-4">
+          <div class="flex items-center justify-between gap-3">
+            <div>
+              <h2 class="font-semibold text-lg">Deep model (optional)</h2>
+              <p class="text-xs text-white/50 mt-0.5">
+                A second, typically larger / slower model. Reachable as
+                <code class="bg-black/40 px-1 rounded">/deep &lt;prompt&gt;</code>
+                in chat. Leave Base URL empty to skip.
+              </p>
+            </div>
+            <label class="flex items-center gap-2 text-sm text-white/70 cursor-pointer select-none flex-shrink-0">
+              <input type="checkbox" bind:checked={llmDeep.enabled} class="accent-teal-400" />
+              <span>{llmDeep.enabled ? 'Active' : 'Paused'}</span>
+            </label>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <label class="block">
+              <span class="text-sm text-white/70">Provider</span>
+              <select class="kin-field mt-1" bind:value={llmDeep.provider}>
+                <option value="ollama">Ollama</option>
+                <option value="lmstudio">LM Studio</option>
+                <option value="vllm">vLLM</option>
+                <option value="llamacpp">llama.cpp server</option>
+                <option value="openai-compat">OpenAI-compatible</option>
+              </select>
+            </label>
+            <label class="block">
+              <span class="text-sm text-white/70">Base URL</span>
+              <input
+                class="kin-field mt-1 font-mono"
+                bind:value={llmDeep.base_url}
+                placeholder="(empty = no deep model)"
+              />
+            </label>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3">
+            <label class="block">
+              <span class="text-sm text-white/70">Model</span>
+              {#if availableModelsDeep.length > 0}
+                <select
+                  class="kin-field mt-1 font-mono"
+                  bind:value={llmDeep.model}
+                  onchange={() => autofillContextWindow('deep')}
+                >
+                  {#each availableModelsDeep as m}
+                    <option value={m}>{m}</option>
+                  {/each}
+                  {#if llmDeep.model && !availableModelsDeep.includes(llmDeep.model)}
+                    <option value={llmDeep.model}>{llmDeep.model} (custom)</option>
+                  {/if}
+                </select>
+              {:else}
+                <input
+                  class="kin-field mt-1 font-mono"
+                  bind:value={llmDeep.model}
+                  placeholder="e.g. qwen2.5:72b-instruct-q4_K_M"
+                />
+              {/if}
+            </label>
+            <label class="block">
+              <span class="text-sm text-white/70">Context window (tokens)</span>
+              <input type="number" class="kin-field mt-1" bind:value={llmDeep.context_window} />
+            </label>
+          </div>
+
+          <label class="block">
+            <span class="text-sm text-white/70">System addendum (optional)</span>
+            <textarea
+              class="kin-field mt-1 font-mono text-sm leading-relaxed"
+              rows="2"
+              bind:value={llmDeep.system_addendum}
+              placeholder="Per-deep-slot system addition, if any."
+            ></textarea>
+          </label>
+
+          <div class="border-t border-white/5 pt-4 space-y-3">
+            <div class="flex items-center justify-between gap-3">
+              <div>
+                <div class="text-sm font-semibold">Test connection</div>
+                <div class="text-xs text-white/50">
+                  Verify the deep slot's URL is reachable.
+                </div>
+              </div>
+              <button
+                class="kin-btn"
+                type="button"
+                onclick={testConnectionDeep}
+                disabled={testingDeep || !llmDeep.base_url.trim()}
+              >
+                {#if testingDeep}
+                  <Loader2 size={14} class="animate-spin" /> Testing…
+                {:else}
+                  <Plug size={14} /> Test
+                {/if}
+              </button>
+            </div>
+
+            {#if testResultDeep}
+              {#if testResultDeep.ok}
+                <div class="rounded-lg border border-teal-500/30 bg-teal-500/5 p-3 text-sm space-y-2">
+                  <div class="flex items-center gap-2 text-teal-300">
+                    <Check size={14} />
+                    <span class="font-medium">Connected</span>
+                    <span class="text-white/40 text-xs">
+                      · {testResultDeep.latency_ms} ms · {testResultDeep.models.length} model{testResultDeep.models.length === 1 ? '' : 's'}
+                    </span>
+                  </div>
+                </div>
+              {:else}
+                <div class="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-sm space-y-1">
+                  <div class="flex items-center gap-2 text-red-300">
+                    <AlertCircle size={14} />
+                    <span class="font-medium">Could not reach the server</span>
+                  </div>
+                  <div class="text-xs text-white/70 font-mono break-all">
+                    {testResultDeep.error}
                   </div>
                 </div>
               {/if}
