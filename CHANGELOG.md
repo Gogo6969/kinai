@@ -24,6 +24,27 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   elsewhere) and the model's answers (so a useful reply is one
   click away from the document you actually need it in).
 
+### Fixed
+
+- **Context-window autofill now works for llama.cpp servers.**
+  Previously, picking a model on a llama.cpp backend silently
+  left `Context Window` at the 8192 default — the detector
+  only checked `/v1/models` for a `max_model_len` field, which
+  llama.cpp doesn't expose (it only returns `id`, `object`,
+  `created`, `owned_by` there). The actual runtime context
+  size lives in `/props.default_generation_settings.n_ctx`
+  (the value passed via the server's `-c` flag on startup), so
+  the detector now hits `/props` first for `provider =
+  "llamacpp"` and falls back to `/v1/models` only if that
+  doesn't work. Effect: a 35B Qwen3 deep model launched with
+  `-c 32768` now shows 32768 instead of the misleading 8192,
+  so the prompt builder uses the full window and stops
+  truncating multi-turn history for no reason. Existing setups
+  need to re-click "Refresh models" (or re-pick the model) in
+  Settings → LLM to trigger autofill against the new code; or
+  just type 32768 (or whatever your server is serving) into
+  the field manually.
+
 ## [0.2.31] — 2026-05-21
 
 ### Fixed

@@ -269,6 +269,7 @@ pub async fn query_model_caps(
         .unwrap_or_else(|_| reqwest::Client::new());
     match provider {
         "ollama" => caps_via_ollama(&client, base_url, model).await,
+        "llamacpp" => caps_via_llamacpp(&client, base_url, api_key, model).await,
         _ => caps_via_openai(&client, base_url, api_key, model).await,
     }
 }
@@ -325,6 +326,50 @@ async fn caps_via_ollama(
         })
         .map(|n| n as u32);
     Ok(ModelCaps { context_length: ctx })
+}
+
+/// Probe a llama.cpp `server` instance.
+///
+/// llama.cpp's `/v1/models` does NOT include `max_model_len` (it only
+/// returns `id`, `object`, `created`, `owned_by`). The actual runtime
+/// context window — what was passed via `-c` on startup — lives in
+/// `/props.default_generation_settings.n_ctx`. We hit that first.
+///
+/// Note: the model file's GGUF metadata can advertise a much larger
+/// architecturally-supported window (e.g. Qwen3 is trained to 128k),
+/// but the SERVER will only accept up to `n_ctx`. So `/props` is the
+/// authoritative number — it's the ceiling that won't cause truncation.
+///
+/// `/v1/models` is a fallback in case the user pointed a non-standard
+/// build (or a non-llama.cpp server they mislabeled) at this path —
+/// some forks expose `max_model_len` there.
+async fn caps_via_llamacpp(
+    client: &reqwest::Client,
+    base: &str,
+    api_key: Option<&str>,
+    model: &str,
+) -> Result<ModelCaps> {
+    let url = format!("{}/props", base.trim_end_matches('/'));
+    let mut req = client.get(&url);
+    if let Some(k) = api_key {
+        req = req.bearer_auth(k);
+    }
+    if let Ok(resp) = req.send().await {
+        if resp.status().is_success() {
+            if let Ok(value) = resp.json::<serde_json::Value>().await {
+                let ctx = value
+                    .get("default_generation_settings")
+                    .and_then(|s| s.get("n_ctx"))
+                    .and_then(|n| n.as_u64())
+                    .map(|n| n as u32);
+                if ctx.is_some() {
+                    return Ok(ModelCaps { context_length: ctx });
+                }
+            }
+        }
+    }
+    // /props didn't help — try the OpenAI-compat path as a last resort.
+    caps_via_openai(client, base, api_key, model).await
 }
 
 async fn list_via_ollama(client: &reqwest::Client, base: &str) -> Result<Vec<String>> {
