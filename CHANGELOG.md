@@ -5,6 +5,24 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.31] — 2026-05-21
+
+### Fixed
+
+- **Telegram "typing…" no longer lingers after fast-model
+  replies arrive.** v0.2.30's keep-alive task fired
+  `sendChatAction(typing)` immediately at the start of every
+  turn. For sub-2-second fast-model responses, the HTTP call
+  could reach Telegram AFTER our `sendMessage`, which the
+  server interprets as "bot started typing again" and leaves
+  the indicator hanging for ~5 seconds even though the reply
+  already arrived. The keep-alive now waits 1.5 seconds before
+  the first fire — fast turns skip the indicator entirely (no
+  race possible), slow turns get it as before. The 1.5s
+  threshold also doubles as a UX signal: showing "typing…"
+  for a sub-second reply was busywork; the user perceived the
+  reply as instant either way.
+
 ## [0.2.30] — 2026-05-21
 
 ### Fixed

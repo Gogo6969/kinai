@@ -239,13 +239,28 @@ async fn run_turn_for_peer<R: Runtime>(
     // LLM finishes. Without this the indicator drops after ~5s and the
     // phone user thinks the bot froze. Cancelled when the LLM run
     // completes (or errors).
+    //
+    // The 1.5-second initial delay matters more than it looks: fast-
+    // model turns often finish in well under 2s. If we fire
+    // sendChatAction immediately on those, the HTTP call can reach
+    // Telegram AFTER our sendMessage (network race), which Telegram
+    // interprets as "bot started typing AGAIN" and leaves the indicator
+    // hanging for ~5 seconds after the reply already arrived. By
+    // delaying the first fire past the typical fast-response window,
+    // we either avoid the indicator entirely (no race possible) or
+    // fire it well before the reply lands.
     let typing_cancel = CancellationToken::new();
     {
         let api_clone = api.clone();
         let cancel_clone = typing_cancel.clone();
         tokio::spawn(async move {
-            // Fire immediately, then every 4s. Telegram refreshes the
-            // indicator on each call.
+            // Initial delay: skip the indicator for sub-1.5s turns.
+            tokio::select! {
+                _ = cancel_clone.cancelled() => return,
+                _ = tokio::time::sleep(std::time::Duration::from_millis(1500)) => {}
+            }
+            // For longer turns, re-fire every 4s. Telegram's typing
+            // indicator auto-times-out at ~5s without a re-fire.
             loop {
                 let _ = api_clone.send_chat_action(chat_id, "typing").await;
                 tokio::select! {
