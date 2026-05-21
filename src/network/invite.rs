@@ -45,9 +45,18 @@ pub async fn create(pool: &SqlitePool, cfg: &AppConfig, label: &str, ttl_days: i
     let id = Uuid::new_v4().to_string();
     let short_code = random_short_code(6);
     let host_url = guess_host_url(cfg);
-    let jwt = auth::issue_token(&short_code, &host_url, label, ttl_days)?;
+    // `ttl_days <= 0` is the sentinel for "expires never" — we encode
+    // it as a ~100-year TTL so the JWT's `exp` claim stays valid for
+    // any realistic family-member lifetime, AND the DB row's
+    // `expires_at` column lands far enough in the future that the UI
+    // can recognise it as a never-expiring invite (renders as "Never"
+    // instead of a date). Picking 100 years (vs i64::MAX) keeps the
+    // JWT spec-conformant — `exp` is a Unix second count and some
+    // libraries reject extreme values.
+    let effective_ttl = if ttl_days <= 0 { 36500 } else { ttl_days };
+    let jwt = auth::issue_token(&short_code, &host_url, label, effective_ttl)?;
     let now = Utc::now();
-    let exp = now + Duration::days(ttl_days);
+    let exp = now + Duration::days(effective_ttl);
 
     let join_url = format!(
         "kinai://join?host={}&code={}&token={}",

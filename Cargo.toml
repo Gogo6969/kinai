@@ -1,7 +1,7 @@
 [package]
 name = "kinai"
-version = "0.2.28"
-description = "Share your private local AI with your family. One Mac runs the LLM; every family device — Mac or Windows — joins via invite. No cloud, no accounts."
+version = "0.2.29"
+description = "Family-sharing layer for the local LLM you already run. Host on a Mac, point it at any OpenAI-compatible backend (Ollama, vLLM, LM Studio, llama.cpp anywhere on your LAN). Mac + Windows clients. Phones via the family Telegram bot. No cloud, no accounts."
 authors = ["KinAI Contributors"]
 license = "MIT"
 repository = "https://github.com/Gogo6969/kinai"

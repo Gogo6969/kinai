@@ -6,9 +6,24 @@
   import { Copy, RefreshCw, Trash2 } from '@lucide/svelte';
 
   let label = $state('Family device');
-  let ttl = $state(30);
+  // TTL options. `0` is the "never expires" sentinel — the backend
+  // encodes it as a ~100-year JWT so any check in the host's
+  // validate_token still passes for the realistic lifetime of the
+  // recipient device. Render-time we detect the far-future date
+  // and show "Never" in the invite-list summary.
+  let ttl = $state<number>(30);
   let invites = $state<Invite[]>([]);
   let qrSvgs = $state<Record<string, string>>({});
+
+  /** Heuristic: an invite issued with the "never" sentinel comes back
+   *  with expires_at well past any human lifetime. If the year is
+   *  more than 50 years out from now, treat it as never-expiring for
+   *  display purposes. */
+  function isNeverExpiring(iso: string): boolean {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return false;
+    return d.getFullYear() - new Date().getFullYear() > 50;
+  }
 
   onMount(refresh);
 
@@ -58,16 +73,29 @@
 
     <div class="kin-card space-y-4">
       <h2 class="font-semibold">New invite</h2>
-      <div class="grid grid-cols-[1fr_140px_auto] gap-3">
+      <div class="grid grid-cols-[1fr_180px_auto] gap-3">
         <label class="block">
           <span class="text-sm text-white/70">Label</span>
           <input class="kin-field mt-1" bind:value={label} placeholder="e.g. Mom's iPad" />
         </label>
         <label class="block">
-          <span class="text-sm text-white/70">Expires in (days)</span>
-          <input type="number" class="kin-field mt-1" bind:value={ttl} min="1" max="365" />
+          <span class="text-sm text-white/70">Expires</span>
+          <select class="kin-field mt-1" bind:value={ttl}>
+            <option value={7}>7 days</option>
+            <option value={30}>30 days</option>
+            <option value={90}>90 days</option>
+            <option value={365}>1 year</option>
+            <option value={0}>Never</option>
+          </select>
+          <p class="text-xs text-white/40 mt-1">
+            {#if ttl === 0}
+              The invite never expires. You can always revoke it from this page.
+            {:else}
+              You can revoke it any time before then.
+            {/if}
+          </p>
         </label>
-        <button class="kin-btn-primary self-end" onclick={create}>Create invite</button>
+        <button class="kin-btn-primary self-start mt-6" onclick={create}>Create invite</button>
       </div>
     </div>
 
@@ -85,7 +113,11 @@
               <div>
                 <div class="font-semibold">{inv.label || 'Untitled'}</div>
                 <div class="text-xs text-white/50">
-                  Expires {new Date(inv.expires_at).toLocaleDateString()}
+                  {#if isNeverExpiring(inv.expires_at)}
+                    Never expires
+                  {:else}
+                    Expires {new Date(inv.expires_at).toLocaleDateString()}
+                  {/if}
                   {#if inv.revoked}<span class="text-red-400">· revoked</span>{/if}
                 </div>
               </div>

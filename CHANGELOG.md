@@ -5,6 +5,33 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.29] — 2026-05-21
+
+### Added
+
+- **Invite the family → Expires NEVER option.** The invite-
+  generation form now has an *Expires* dropdown with `7 days`,
+  `30 days`, `90 days`, `1 year`, and `Never`. Picking *Never*
+  encodes a ~100-year TTL on the JWT (kept under any practical
+  upper bound) and the invite list renders these rows as
+  "Never expires" instead of a date. Existing time-bounded
+  invites still expire as before; the option is just additive.
+  You can always revoke a never-expiring invite from the same
+  page.
+
+### Changed
+
+- **Repo description / README pitch corrected.** Previous copy
+  implied "one Mac runs the LLM" — that's wrong. KinAI hosts on
+  a Mac, but the actual LLM can live anywhere on your LAN:
+  Ollama on a Linux box, vLLM on a workstation, LM Studio on
+  Windows, llama.cpp on a Mac mini, an Olares — the host just
+  bridges to whatever OpenAI-compatible endpoint you point at.
+  README intro + Cargo.toml description + repo description all
+  rewritten to reflect the bridge model accurately, and now
+  explicitly note that phones / tablets reach KinAI through
+  the family's Telegram bot (no native iOS / Android app yet).
+
 ## [0.2.28] — 2026-05-21
 
 ### Changed

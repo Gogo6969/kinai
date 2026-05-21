@@ -6,7 +6,7 @@
 
 **Share your private local AI with your family**
 
-*KinAI isn't an AI — it's the family-sharing layer for the local LLM you already run. One Mac hosts your Ollama / LM Studio / vLLM / llama.cpp backend; every other family device joins via a 6-character invite. No cloud, no accounts, each member's chat private to them.*
+*KinAI isn't an AI — it's the **family-sharing layer** for the local LLM you already run. The LLM can live anywhere — Ollama on a Linux box, vLLM on a workstation, LM Studio on Windows, llama.cpp on a Mac mini, an Olares on your LAN. A Mac hosts KinAI and bridges to it. Mac + Windows clients today; phones reach it via the family's Telegram bot. No cloud, no accounts, each member's chat private to them.*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-00D4C8.svg)](LICENSE)
 [![Tauri 2](https://img.shields.io/badge/Tauri-2-1E3A8A.svg)](https://tauri.app/)
@@ -20,13 +20,13 @@
 </div>
 
 > [!NOTE]
-> macOS (host + client) and Windows (client) are both available. Linux is coming.
+> macOS (host + client) and Windows (client) are both available. Linux host support is coming. Phones / tablets connect through the family's Telegram bot — no native iOS / Android app yet.
 
 ---
 
 ## ⚡ Five-second pitch
 
-You already run a local LLM on one of your machines — Ollama, LM Studio, vLLM, llama.cpp, whatever. KinAI is the **family-sharing layer** on top of it. Install KinAI on that same Mac in **Host Mode** to expose your model to the family. Install it on every other device — Mac or Windows — in **Client Mode** (lightweight, no models downloaded) and join with a 6-character invite. Press **`Cmd+Space`** (macOS) / **`Ctrl+Space`** (Windows) from any app, ask anything, get an answer.
+You already run a local LLM somewhere — Ollama on a Linux box, LM Studio on Windows, vLLM on a workstation, llama.cpp on a Mac mini, an Olares on your LAN, doesn't matter. KinAI is the **family-sharing layer** on top of it. Install KinAI on a Mac in **Host Mode**, point it at your existing LLM endpoint (`http://192.168.1.42:11434` or wherever). Install it on every other Mac or Windows device in **Client Mode** and join with a 6-character invite. Press **`Cmd+Space`** (macOS) / **`Ctrl+Space`** (Windows) from any app, ask anything, get an answer. Phones reach it through the family's shared Telegram bot — same model, same memory, same threads, no app store needed.
 
 100% local. 100% private. 100% free. MIT licensed forever.
 
