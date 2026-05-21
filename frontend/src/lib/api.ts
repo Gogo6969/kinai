@@ -231,6 +231,12 @@ export interface TurnMetrics {
   total_ms: number;
   output_tokens: number;
   tps: number;
+  /** Full LLM model id (e.g. "olares/gpt-oss-20b"). Empty for slash
+   *  commands. The UI abbreviates this for display. */
+  model?: string;
+  /** "fast", "deep", or "" — used to render a small slot badge
+   *  alongside the model name. */
+  slot?: string;
 }
 
 export interface AssistantDone {

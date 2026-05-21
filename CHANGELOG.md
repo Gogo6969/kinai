@@ -5,6 +5,23 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.27] — 2026-05-20
+
+### Added
+
+- **Per-reply model badge.** Each assistant message's metrics row
+  now ends with the model that produced it, abbreviated to fit:
+  e.g. `· ⚡ gpt-oss-20b` for the fast slot, `· 🧠 qwen2.5:72b`
+  for the deep slot, or just the model name when only one slot is
+  configured. The full model id is in the hover tooltip. The
+  badge is hidden for slash-command turns (no LLM involved). Same
+  rendering on macOS and Windows — it's in the shared Svelte
+  `MessageBubble` component, and the model name flows through the
+  per-turn metrics that both chat paths (host's
+  `commands::send_message` and client peers' WS `run_chat_turn`)
+  already populate, so the badge shows up regardless of which
+  device sent the message.
+
 ## [0.2.26] — 2026-05-20
 
 ### Changed

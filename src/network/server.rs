@@ -569,11 +569,15 @@ async fn run_chat_turn(
             .append_message(thread_id, "assistant", "KinAI", &reply, &[])
             .await?;
         let total_ms = started_at.elapsed().as_millis() as u64;
+        // Slash commands skip the LLM — leave model/slot empty so the
+        // UI's model badge stays hidden for these turns.
         let metrics = crate::network::protocol::TurnMetricsWire {
             first_token_ms: 0,
             total_ms,
             output_tokens: 0,
             tps: 0.0,
+            model: String::new(),
+            slot: String::new(),
         };
         let metrics_json = serde_json::to_value(&metrics).unwrap_or(serde_json::Value::Null);
         let _ = s.app.db.set_message_metrics(&assistant_msg.id, &metrics_json).await;
@@ -710,6 +714,8 @@ async fn run_chat_turn(
         total_ms,
         output_tokens,
         tps,
+        model: active_llm_settings.model.clone(),
+        slot: route_pick.slot_label.to_string(),
     };
     let metrics_json = serde_json::to_value(&metrics).unwrap_or(serde_json::Value::Null);
     let _ = s.app.db.set_message_metrics(&assistant_msg.id, &metrics_json).await;

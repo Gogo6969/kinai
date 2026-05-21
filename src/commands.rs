@@ -1047,6 +1047,14 @@ pub struct TurnMetrics {
     pub total_ms: u64,
     pub output_tokens: u64,
     pub tps: f64,
+    /// LLM model id that produced this reply. Empty for slash commands
+    /// (no model involved). See `TurnMetricsWire` for the WS twin.
+    #[serde(default)]
+    pub model: String,
+    /// "fast", "deep", or "" — kept separate so the UI can render a
+    /// small slot indicator alongside the (long-ish) model name.
+    #[serde(default)]
+    pub slot: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1133,6 +1141,8 @@ pub async fn send_message(
                 total_ms: 0,
                 output_tokens: 0,
                 tps: 0.0,
+                model: String::new(),
+                slot: String::new(),
             },
         });
     }
@@ -1182,11 +1192,16 @@ pub async fn send_message(
             .await
             .map_err(err)?;
         let total_ms = started_at.elapsed().as_millis() as u64;
+        // Slash commands don't go through the LLM — leave model/slot
+        // empty so the UI just hides the model badge instead of
+        // pretending some model produced the reply.
         let metrics = TurnMetrics {
             first_token_ms: 0,
             total_ms,
             output_tokens: 0,
             tps: 0.0,
+            model: String::new(),
+            slot: String::new(),
         };
         let metrics_json = serde_json::to_value(&metrics).unwrap_or(serde_json::Value::Null);
         let _ = state
@@ -1327,6 +1342,8 @@ pub async fn send_message(
         total_ms,
         output_tokens,
         tps,
+        model: active_llm_settings.model.clone(),
+        slot: route_pick.slot_label.to_string(),
     };
 
     let mut assistant_msg = state

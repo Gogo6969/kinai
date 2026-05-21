@@ -11,6 +11,16 @@ pub struct TurnMetricsWire {
     pub total_ms: u64,
     pub output_tokens: u64,
     pub tps: f64,
+    /// LLM model id that produced this reply (e.g. "olares/gpt-oss-20b").
+    /// Empty when the turn was a slash command (no model involved).
+    /// Surfaced in the per-message metrics row so users can tell at a
+    /// glance which model answered — especially relevant with the
+    /// fast/deep dual-slot routing introduced in v0.2.25.
+    #[serde(default)]
+    pub model: String,
+    /// Slot label: "fast", "deep", or "" when not applicable.
+    #[serde(default)]
+    pub slot: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -21,6 +21,49 @@
   // and any turn the host couldn't serialize. The 🔍 button only
   // shows when this is non-empty.
   const promptSnapshot = $derived(message.id ? app.promptDebug[message.id] : undefined);
+
+  /**
+   * Abbreviate a long model id for the per-message badge so it fits
+   * the existing metrics row. Most providers prefix with an org
+   * ("olares/gpt-oss-20b", "openai/gpt-4o-mini"); we drop that. Ollama
+   * tags append a `:q4_K_M`-style suffix that's mostly noise for the
+   * "which model answered me" question, so we trim the tag too unless
+   * the resulting name would be too short (e.g. "llama3.1" alone
+   * could mean any size — keep ":8b" or ":70b").
+   *
+   * Then cap at 24 chars with an ellipsis. Result is something like
+   * `gpt-oss-20b`, `qwen2.5:72b`, `claude-haiku-4-5`, `gemini-2.5-flash`.
+   */
+  function abbreviateModel(full: string): string {
+    if (!full) return '';
+    let s = full.trim();
+    const slash = s.lastIndexOf('/');
+    if (slash >= 0 && slash < s.length - 1) {
+      s = s.slice(slash + 1);
+    }
+    // Drop quantisation/format suffix after the size tag — keep the
+    // first :size segment if it conveys parameter count, drop the rest.
+    const colon = s.indexOf(':');
+    if (colon >= 0) {
+      const tag = s.slice(colon + 1);
+      const sizeMatch = tag.match(/^([0-9]+\.?[0-9]*[bBmM])/);
+      if (sizeMatch) {
+        s = `${s.slice(0, colon)}:${sizeMatch[1].toLowerCase()}`;
+      }
+    }
+    if (s.length > 24) s = s.slice(0, 23) + '…';
+    return s;
+  }
+  const modelAbbrev = $derived(metrics?.model ? abbreviateModel(metrics.model) : '');
+  /** Glyph + tooltip text for the slot — keeps the badge compact:
+   *  fast = ⚡, deep = 🧠. Empty slot label = no glyph (single-model
+   *  setups don't need the visual cue). */
+  function slotGlyph(slot: string | undefined): string {
+    if (slot === 'fast') return '⚡';
+    if (slot === 'deep') return '🧠';
+    return '';
+  }
+  const slotIcon = $derived(slotGlyph(metrics?.slot));
   let opening = $state(false);
   // Open the prompt JSON in the user's default editor — way safer than
   // trying to render 50-100KB inside an in-app <details><pre>, which
@@ -130,6 +173,13 @@
           · {formatDuration(metrics.total_ms)}
           · {metrics.output_tokens.toLocaleString()} tok
         </span>
+      {/if}
+      {#if modelAbbrev}
+        <span>·</span>
+        <span
+          class="font-mono text-teal-300/70"
+          title="LLM model that produced this reply{metrics?.slot ? ` (${metrics.slot} slot)` : ''} — full id: {metrics?.model}"
+        >{slotIcon ? slotIcon + ' ' : ''}{modelAbbrev}</span>
       {/if}
       {#if promptSnapshot}
         <button
