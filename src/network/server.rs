@@ -552,8 +552,11 @@ async fn run_chat_turn(
     // both the in-message slash handler (/pic, /help) AND the LLM
     // context builder use the stripped content from here on out so
     // the routing token doesn't leak into the model's prompt or the
-    // image-gen parser.
-    let route_pick = crate::slash::route_for(&cfg, content);
+    // image-gen parser. `route_for` is now async + thread-aware so
+    // the slot choice can stick across subsequent plain-text turns
+    // until the user switches with /fast or /deep again.
+    let route_pick =
+        crate::slash::route_for(&s.app.db, &cfg, context_peer, thread_id, content).await;
     let llm_route_content = route_pick.stripped_content.clone();
 
     // Slash commands are intercepted BEFORE the LLM pipeline. The user

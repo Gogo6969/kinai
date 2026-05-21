@@ -132,6 +132,16 @@ const STATEMENTS: &[&str] = &[
         created_at   TEXT NOT NULL
     )
     "#,
+
+    // Per-thread sticky LLM-slot selection. When the user types
+    // `/fast` or `/deep` in a thread, we remember that choice here so
+    // subsequent plain messages (no slash prefix) keep routing to the
+    // same slot — they don't snap back to the global default every
+    // turn. NULL = "use the global default", "fast" or "deep" = lock
+    // this thread to that slot until the user switches again.
+    r#"
+    ALTER TABLE threads ADD COLUMN active_slot TEXT
+    "#,
 ];
 
 pub async fn run(pool: &SqlitePool) -> Result<()> {

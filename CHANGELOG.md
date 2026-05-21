@@ -5,6 +5,21 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.28] — 2026-05-21
+
+### Changed
+
+- **`/fast` and `/deep` are now sticky per thread.** Previously
+  the slash prefix only routed a single turn — the next plain
+  message snapped back to the global default (fast), which felt
+  surprising. Now typing `/deep <prompt>` switches the active
+  slot for the current thread, and subsequent plain-text
+  messages keep going to deep until you type `/fast` to switch
+  back. The per-message model badge from v0.2.27 (⚡ / 🧠 next
+  to the metrics) shows which slot answered each turn, so you
+  always see the current state. The slot choice is persisted
+  on the thread row, so it survives KinAI restarts.
+
 ## [0.2.27] — 2026-05-20
 
 ### Added

@@ -1177,8 +1177,12 @@ pub async fn send_message(
     // keeps the original text (so the slash shows in chat history);
     // everything from here on uses the stripped content so neither
     // the in-message slash handler (/pic, /help) nor the LLM context
-    // builder sees the routing token.
-    let route_pick = crate::slash::route_for(&cfg, &args.content);
+    // builder sees the routing token. `route_for` is now async +
+    // thread-aware so /deep sticks across follow-up turns until the
+    // user switches back with /fast.
+    let route_pick =
+        crate::slash::route_for(&state.db, &cfg, db::HOST_PEER, &args.thread_id, &args.content)
+            .await;
     let llm_route_content = route_pick.stripped_content.clone();
 
     // Slash commands (/pic, /picHQ, /help, ?) are intercepted BEFORE the

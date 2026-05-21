@@ -60,6 +60,23 @@ impl Db {
     pub async fn delete_thread(&self, peer_id: &str, id: &str) -> Result<()> {
         messages::delete_thread(&self.pool, peer_id, id).await
     }
+    /// Per-thread sticky LLM-slot ("fast" / "deep" / None for default).
+    /// See `slash::route_for` for how this gets applied per turn.
+    pub async fn thread_active_slot(
+        &self,
+        peer_id: &str,
+        id: &str,
+    ) -> Result<Option<String>> {
+        messages::thread_active_slot(&self.pool, peer_id, id).await
+    }
+    pub async fn set_thread_active_slot(
+        &self,
+        peer_id: &str,
+        id: &str,
+        slot: Option<&str>,
+    ) -> Result<()> {
+        messages::set_thread_active_slot(&self.pool, peer_id, id, slot).await
+    }
 
     // Messages
     pub async fn load_messages(

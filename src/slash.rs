@@ -27,18 +27,33 @@ pub struct ResolvedRoute<'cfg> {
 
 /// Pick the LlmSettings that should serve `content`:
 ///   * Explicit `/fast …` or `/deep …` prefix → route to that slot
-///     when active (paused / unconfigured slots fall back).
-///   * No prefix → fast slot first (it's the existing default),
-///     deep slot otherwise.
+///     AND persist the choice as the thread's sticky slot so
+///     subsequent plain-text messages keep routing there.
+///   * No prefix → use the thread's sticky slot (set by a prior
+///     `/fast` or `/deep`), else the global default (fast first,
+///     deep when fast isn't active).
 ///   * Neither active → still return the fast slot (the LLM call
 ///     will fail loudly downstream, which is the right UX — it
 ///     surfaces a config problem instead of silently picking a
 ///     paused model).
 ///
+/// The "sticky" piece is what makes `/deep …` actually feel like a
+/// mode switch instead of a one-shot — users were typing `/deep
+/// question` and then expecting the next turn to also go deep, but
+/// pre-v0.2.28 it snapped back to fast on every plain-text message.
+/// Now `/deep` stays in effect for the thread until `/fast` (or a
+/// new thread) flips it back.
+///
 /// The stripped content has the prefix removed AND its single
 /// trailing/leading space trimmed once; everything else (newlines,
 /// formatting) is preserved verbatim.
-pub fn route_for<'cfg>(cfg: &'cfg AppConfig, content: &str) -> ResolvedRoute<'cfg> {
+pub async fn route_for<'cfg>(
+    db: &crate::db::Db,
+    cfg: &'cfg AppConfig,
+    peer_id: &str,
+    thread_id: &str,
+    content: &str,
+) -> ResolvedRoute<'cfg> {
     let lower = content.trim_start().to_ascii_lowercase();
     if lower.starts_with("/deep ") || lower.starts_with("/deep\n") || lower == "/deep" {
         let stripped = strip_prefix(content, "/deep");
@@ -49,6 +64,9 @@ pub fn route_for<'cfg>(cfg: &'cfg AppConfig, content: &str) -> ResolvedRoute<'cf
         } else {
             &cfg.llm_deep
         };
+        // Persist the switch on the thread row. Best-effort: a DB
+        // failure shouldn't block the user's question.
+        let _ = db.set_thread_active_slot(peer_id, thread_id, Some("deep")).await;
         return ResolvedRoute { settings, stripped_content: stripped, slot_label: "deep" };
     }
     if lower.starts_with("/fast ") || lower.starts_with("/fast\n") || lower == "/fast" {
@@ -60,12 +78,38 @@ pub fn route_for<'cfg>(cfg: &'cfg AppConfig, content: &str) -> ResolvedRoute<'cf
         } else {
             &cfg.llm
         };
+        let _ = db.set_thread_active_slot(peer_id, thread_id, Some("fast")).await;
         return ResolvedRoute { settings, stripped_content: stripped, slot_label: "fast" };
     }
-    // No prefix — prefer the fast slot; fall back to deep if fast is
-    // paused or empty. (Mirrors `cfg.llm` being the long-standing
-    // default; users who only configure the deep slot still get
-    // routed there for plain-text messages.)
+    // No prefix — consult the thread's sticky slot first. If the
+    // user previously typed `/deep` in this thread, keep routing
+    // there. Bad/unknown values fall through to the global default.
+    let sticky = db
+        .thread_active_slot(peer_id, thread_id)
+        .await
+        .ok()
+        .flatten();
+    match sticky.as_deref() {
+        Some("deep") if cfg.llm_deep.is_active() => {
+            return ResolvedRoute {
+                settings: &cfg.llm_deep,
+                stripped_content: content.to_string(),
+                slot_label: "deep",
+            };
+        }
+        Some("fast") if cfg.llm.is_active() => {
+            return ResolvedRoute {
+                settings: &cfg.llm,
+                stripped_content: content.to_string(),
+                slot_label: "fast",
+            };
+        }
+        _ => {}
+    }
+    // Global default — prefer the fast slot; fall back to deep if
+    // fast is paused or empty. (Mirrors `cfg.llm` being the
+    // long-standing default; users who only configure the deep slot
+    // still get routed there for plain-text messages.)
     let settings = if cfg.llm.is_active() {
         &cfg.llm
     } else if cfg.llm_deep.is_active() {

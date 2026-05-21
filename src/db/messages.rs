@@ -146,6 +146,40 @@ pub async fn delete_thread(pool: &SqlitePool, peer_id: &str, id: &str) -> Result
     Ok(())
 }
 
+/// Read the per-thread sticky LLM-slot ("fast" / "deep" / None).
+/// None = use the global default. Cheap one-column lookup; called
+/// once per chat turn so the user doesn't have to repeat /fast or
+/// /deep on every message after they switch.
+pub async fn thread_active_slot(
+    pool: &SqlitePool,
+    peer_id: &str,
+    id: &str,
+) -> Result<Option<String>> {
+    let row = sqlx::query("SELECT active_slot FROM threads WHERE id = ?1 AND peer_id = ?2")
+        .bind(id)
+        .bind(peer_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.and_then(|r| r.try_get::<Option<String>, _>("active_slot").ok().flatten()))
+}
+
+/// Set (or clear with `None`) the sticky LLM-slot for `id`. Idempotent;
+/// no-op when the row doesn't exist or belongs to a different peer.
+pub async fn set_thread_active_slot(
+    pool: &SqlitePool,
+    peer_id: &str,
+    id: &str,
+    slot: Option<&str>,
+) -> Result<()> {
+    sqlx::query("UPDATE threads SET active_slot = ?1 WHERE id = ?2 AND peer_id = ?3")
+        .bind(slot)
+        .bind(id)
+        .bind(peer_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub async fn load(
     pool: &SqlitePool,
     peer_id: &str,
