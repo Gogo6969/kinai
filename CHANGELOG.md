@@ -5,6 +5,25 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.32] — 2026-05-21
+
+### Added
+
+- **Copy buttons on every message — both your prompts and the
+  assistant's replies.** A small "copy" affordance appears
+  below each bubble (right side of your own messages, in the
+  metrics row of replies). Tap it once and the message lands on
+  your clipboard in TWO formats simultaneously: rich HTML
+  (headings, code blocks, lists, bold and italic survive paste
+  into Notes, Pages, Word, Slack, Notion) AND plain markdown
+  (terminals, code editors, anywhere HTML would render as tag
+  garbage). The paste target picks whichever it understands —
+  no need to think about it. Confirmation flips the icon to a
+  checkmark for 1.5 seconds, then resets. Works for both your
+  questions (so you can re-grab a prompt you typed and reuse it
+  elsewhere) and the model's answers (so a useful reply is one
+  click away from the document you actually need it in).
+
 ## [0.2.31] — 2026-05-21
 
 ### Fixed

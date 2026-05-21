@@ -3,7 +3,7 @@
   import { renderMarkdown } from '$lib/markdown';
   import { app } from '$lib/stores/app.svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { FileText, Search } from '@lucide/svelte';
+  import { Check, Copy, FileText, Search } from '@lucide/svelte';
 
   let {
     message,
@@ -65,6 +65,42 @@
   }
   const slotIcon = $derived(slotGlyph(metrics?.slot));
   let opening = $state(false);
+
+  // Copy-to-clipboard state. We push BOTH plain text (raw markdown) and
+  // rich HTML so paste-targets pick the best representation:
+  //   * Notes / Word / Pages → HTML (headings, code blocks, bold survive)
+  //   * Terminal / code editors → plain (no garbage tags)
+  // Falls back to writeText() on browsers without ClipboardItem (none of
+  // our WKWebView/WebView2 targets, but defensive).
+  let copyState = $state<'idle' | 'copied' | 'failed'>('idle');
+  let copyTimer: ReturnType<typeof setTimeout> | undefined;
+  async function copyMessage() {
+    try {
+      const plain = message.content;
+      const rich = html;
+      if (
+        typeof navigator !== 'undefined' &&
+        navigator.clipboard?.write &&
+        typeof ClipboardItem !== 'undefined'
+      ) {
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            'text/plain': new Blob([plain], { type: 'text/plain' }),
+            'text/html': new Blob([rich], { type: 'text/html' }),
+          }),
+        ]);
+      } else {
+        await navigator.clipboard.writeText(plain);
+      }
+      copyState = 'copied';
+    } catch {
+      copyState = 'failed';
+    }
+    if (copyTimer) clearTimeout(copyTimer);
+    copyTimer = setTimeout(() => {
+      copyState = 'idle';
+    }, 1500);
+  }
   // Open the prompt JSON in the user's default editor — way safer than
   // trying to render 50-100KB inside an in-app <details><pre>, which
   // can freeze the WebView on macOS. Writes to
@@ -152,7 +188,30 @@
   {#if isUser}
     <!-- User bubbles: the right-aligned teal bubble already says "you" by
          position + color, so the name/timestamp row is suppressed to reduce
-         visual noise. -->
+         visual noise. The copy button is the only affordance we keep here
+         so users can re-grab their own prompt for editing/sharing. -->
+    <div class="flex gap-2 text-xs text-white/30 px-1.5 items-center">
+      <button
+        type="button"
+        class="inline-flex items-center gap-1 hover:text-teal-300 transition-colors cursor-pointer"
+        onclick={copyMessage}
+        title={copyState === 'failed'
+          ? 'Copy failed — try again'
+          : 'Copy message (with formatting) to clipboard'}
+        aria-label="Copy message"
+      >
+        {#if copyState === 'copied'}
+          <Check size={11} />
+          <span>copied</span>
+        {:else if copyState === 'failed'}
+          <Copy size={11} />
+          <span>failed</span>
+        {:else}
+          <Copy size={11} />
+          <span>copy</span>
+        {/if}
+      </button>
+    </div>
   {:else}
     <div class="flex gap-2 text-xs text-white/40 px-1.5 items-center flex-wrap">
       <span>{message.sender}</span>
@@ -193,6 +252,26 @@
           <span>{opening ? 'opening…' : 'prompt'}</span>
         </button>
       {/if}
+      <button
+        type="button"
+        class="ml-auto inline-flex items-center gap-1 text-white/40 hover:text-teal-300 transition-colors cursor-pointer"
+        onclick={copyMessage}
+        title={copyState === 'failed'
+          ? 'Copy failed — try again'
+          : 'Copy reply (with formatting) to clipboard'}
+        aria-label="Copy reply"
+      >
+        {#if copyState === 'copied'}
+          <Check size={11} />
+          <span>copied</span>
+        {:else if copyState === 'failed'}
+          <Copy size={11} />
+          <span>failed</span>
+        {:else}
+          <Copy size={11} />
+          <span>copy</span>
+        {/if}
+      </button>
     </div>
   {/if}
 </div>
