@@ -90,12 +90,23 @@ fn supervisor(state: &SharedState) -> Arc<TelegramSupervisor> {
 }
 
 /// Slash commands surfaced in Telegram's command-menu UI. Mirrors what
-/// the chat autocomplete shows.
+/// the chat autocomplete shows. `/fast` and `/deep` are model-routing
+/// switches — typing one alone (no body) flips the active slot for
+/// the thread, typing one with a question routes that single turn AND
+/// makes the slot sticky for follow-ups.
 fn default_command_menu() -> Vec<api::BotCommand> {
     vec![
         api::BotCommand {
             command: "help".into(),
             description: "List available slash commands".into(),
+        },
+        api::BotCommand {
+            command: "fast".into(),
+            description: "Switch this chat to the fast model (default)".into(),
+        },
+        api::BotCommand {
+            command: "deep".into(),
+            description: "Switch this chat to the deep model (slower, smarter)".into(),
         },
         api::BotCommand {
             command: "pic".into(),

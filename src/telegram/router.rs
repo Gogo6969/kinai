@@ -152,6 +152,36 @@ async fn run_turn_for_peer<R: Runtime>(
         .await
         .ok();
 
+    let cfg = state.config.read().clone();
+
+    // Bare `/fast` or `/deep` (no body) = mode switch, not a question.
+    // Persist the choice on the thread, confirm via Telegram, return.
+    let trimmed_lc = content.trim().to_ascii_lowercase();
+    if trimmed_lc == "/fast" || trimmed_lc == "/deep" {
+        let slot = if trimmed_lc == "/deep" { "deep" } else { "fast" };
+        // Ensure the thread row exists before we try to write the slot.
+        let thread_id_local = telegram_thread_id_for_peer(peer_id);
+        let _ = state.db.upsert_thread(peer_id, &thread_id_local, "Telegram").await;
+        let _ = state.db.set_thread_active_slot(peer_id, &thread_id_local, Some(slot)).await;
+        let active_model = if slot == "deep" {
+            &cfg.llm_deep.model
+        } else {
+            &cfg.llm.model
+        };
+        let icon = if slot == "deep" { "🧠" } else { "⚡" };
+        let label = if slot == "deep" { "deep" } else { "fast" };
+        let body = if active_model.trim().is_empty() {
+            format!("{icon} Switched to **{label}** model — but no model is configured for this slot. Open KinAI → Settings → {} model to add one.", if slot == "deep" { "Deep" } else { "Fast" })
+        } else {
+            format!(
+                "{icon} Switched to **{label}** model (`{active_model}`).\nAll follow-up questions in this chat go here until you type `/{}` to switch back.",
+                if slot == "deep" { "fast" } else { "deep" }
+            )
+        };
+        api.send_message(chat_id, &body).await?;
+        return Ok(());
+    }
+
     // Persist user message.
     let sender = "Telegram".to_string();
     let user_msg = state
@@ -162,11 +192,30 @@ async fn run_turn_for_peer<R: Runtime>(
     // chat shows up live instead of only on the next thread reload.
     fan_out_message(state, app, peer_id, &user_msg).await;
 
-    let cfg = state.config.read().clone();
+    // Resolve the routing slot. Same `route_for` the in-app chat paths
+    // use, so `/fast`/`/deep` prefix handling AND the per-thread sticky
+    // memory both work for Telegram-originated turns. Without this, the
+    // Telegram path was always pinned to `cfg.llm` and the user-typed
+    // routing prefix leaked into the model's prompt.
+    let route_pick =
+        crate::slash::route_for(&state.db, &cfg, peer_id, &thread_id, content).await;
+    let llm_route_content = route_pick.stripped_content.clone();
 
-    // Slash commands intercept BEFORE the LLM.
-    if let Some(reply) = crate::slash::handle(&cfg, content).await {
-        send_assistant_reply(api, state, app, peer_id, &thread_id, chat_id, &reply).await?;
+    // Slash commands intercept BEFORE the LLM — using the stripped
+    // content so e.g. "/deep /pic …" routes through the deep slot and
+    // also triggers /pic.
+    if let Some(reply) = crate::slash::handle(&cfg, &llm_route_content).await {
+        send_assistant_reply(
+            api,
+            state,
+            app,
+            peer_id,
+            &thread_id,
+            chat_id,
+            &reply,
+            None, // slash replies don't have LLM metrics
+        )
+        .await?;
         return Ok(());
     }
 
@@ -185,29 +234,74 @@ async fn run_turn_for_peer<R: Runtime>(
     use crate::tools::loop_pipeline::PipelineHandlers;
     use crate::tools::registry;
 
+    // Spawn a keep-alive task that re-sends `sendChatAction(typing)`
+    // every 4s so Telegram keeps showing "KinAI is typing…" until the
+    // LLM finishes. Without this the indicator drops after ~5s and the
+    // phone user thinks the bot froze. Cancelled when the LLM run
+    // completes (or errors).
+    let typing_cancel = CancellationToken::new();
+    {
+        let api_clone = api.clone();
+        let cancel_clone = typing_cancel.clone();
+        tokio::spawn(async move {
+            // Fire immediately, then every 4s. Telegram refreshes the
+            // indicator on each call.
+            loop {
+                let _ = api_clone.send_chat_action(chat_id, "typing").await;
+                tokio::select! {
+                    _ = cancel_clone.cancelled() => break,
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(4)) => {}
+                }
+            }
+        });
+    }
+
+    // Build context with the slash-stripped content so the model
+    // doesn't see "/deep" in its prompt.
+    let user_msg_for_llm = crate::db::Message {
+        content: llm_route_content.clone(),
+        ..user_msg.clone()
+    };
     let messages = crate::context::builder::build_context(
         &state.db,
         &cfg,
         peer_id,
         &thread_id,
-        &crate::db::Message {
-            id: user_msg.id.clone(),
-            thread_id: thread_id.clone(),
-            role: "user".into(),
-            sender: sender.clone(),
-            content: content.to_string(),
-            attachments: vec![],
-            created_at: user_msg.created_at.clone(),
-            summarized_into: None,
-            metrics: None,
-        },
+        &user_msg_for_llm,
     )
     .await?;
 
+    // Diagnostic: log how many turns made it into the LLM prompt so the
+    // "I'm not sure what 'they' refers to" context-loss bug is
+    // debuggable without me trial-running each scenario by hand.
+    tracing::info!(
+        "telegram turn: peer={} thread={} slot={} model={} ctx_messages={} new_msg_chars={}",
+        peer_id,
+        thread_id,
+        route_pick.slot_label,
+        route_pick.settings.model,
+        messages.len(),
+        llm_route_content.len(),
+    );
+
+    // Snapshot the prompt for the per-message 🔍 panel in KinAI's UI —
+    // same shape as the in-app chat path so Telegram-originated turns
+    // get the same "see exactly what the model saw" debug surface.
+    let prompt_debug = serde_json::to_string_pretty(
+        &messages
+            .iter()
+            .map(|m| m.redacted_for_debug())
+            .collect::<Vec<_>>(),
+    )
+    .ok();
+
     let tools = registry::enabled(&cfg.tools);
     let tool_runtime = registry::ToolRuntime::from_tool_settings(&cfg.tools);
-    let max_tokens = compute_max_tokens(&cfg, &messages);
-    let llm = state.llm.lock().await.clone();
+    let active_llm_settings = route_pick.settings.clone();
+    let max_tokens = compute_max_tokens(&active_llm_settings, &messages);
+    // Build the LLM client from the routed slot's settings, not the
+    // cached state.llm which is always the fast slot.
+    let llm = crate::llm::LlmClient::new(active_llm_settings.clone());
     let cancel = CancellationToken::new();
     // No-op handlers — we discard streaming events. Final content is
     // captured from run_with_route's return value.
@@ -216,11 +310,12 @@ async fn run_turn_for_peer<R: Runtime>(
         on_reasoning: Arc::new(|_| {}),
         on_tool: Arc::new(|_| {}),
     };
-    let route = crate::vision::decide(&cfg.llm.model, &[], &cfg.vision)?;
+    let route = crate::vision::decide(&active_llm_settings.model, &[], &cfg.vision)?;
+    let started = std::time::Instant::now();
     let result = crate::vision::run_with_route(
         route,
         llm,
-        &cfg.llm,
+        &active_llm_settings,
         messages,
         tools,
         tool_runtime,
@@ -228,10 +323,41 @@ async fn run_turn_for_peer<R: Runtime>(
         handlers,
         cancel,
     )
-    .await?;
+    .await;
+    // Cancel typing keep-alive whether LLM succeeded or failed.
+    typing_cancel.cancel();
+    let result = result?;
+    let total_ms = started.elapsed().as_millis() as u64;
+    let output_tokens =
+        crate::context::token_guard::count_tokens(&result.final_content) as u64;
+    // tts metric in Telegram is end-to-end (no per-token first-token
+    // hook here since we discard the stream); set ttft = total_ms and
+    // tps as a coarse average to keep the schema consistent.
+    let tps = if total_ms < 200 || output_tokens == 0 {
+        0.0
+    } else {
+        (output_tokens as f64) * 1000.0 / (total_ms as f64)
+    };
+    let metrics = crate::network::protocol::TurnMetricsWire {
+        first_token_ms: total_ms,
+        total_ms,
+        output_tokens,
+        tps,
+        model: active_llm_settings.model.clone(),
+        slot: route_pick.slot_label.to_string(),
+    };
 
-    send_assistant_reply(api, state, app, peer_id, &thread_id, chat_id, &result.final_content)
-        .await?;
+    send_assistant_reply(
+        api,
+        state,
+        app,
+        peer_id,
+        &thread_id,
+        chat_id,
+        &result.final_content,
+        Some((metrics, prompt_debug)),
+    )
+    .await?;
 
     if let Err(e) =
         crate::context::memory::maybe_summarize(&state.db, peer_id, &thread_id).await
@@ -241,26 +367,33 @@ async fn run_turn_for_peer<R: Runtime>(
     Ok(())
 }
 
-/// Same budget calc as network::server::compute_max_tokens — copied
-/// here to avoid a cross-module visibility change for what's a 4-line
-/// helper. If the LLM config has a non-zero max_tokens, honor that as
-/// the cap; otherwise feed the model the full remaining context.
+/// Per-slot budget calculator. Takes the routed slot's settings
+/// directly (rather than always `cfg.llm`) so /deep turns honour the
+/// deep slot's context_window + max_tokens instead of inheriting the
+/// fast slot's caps.
 fn compute_max_tokens(
-    cfg: &crate::config::AppConfig,
+    llm: &crate::config::LlmSettings,
     messages: &[crate::context::ChatMessage],
 ) -> Option<usize> {
-    if cfg.llm.max_tokens == 0 {
+    if llm.max_tokens == 0 {
         return None;
     }
     let used = crate::context::token_guard::estimate_messages(messages);
-    let remaining = cfg.llm.context_window.saturating_sub(used);
-    Some(cfg.llm.max_tokens.min(remaining))
+    let remaining = llm.context_window.saturating_sub(used);
+    Some(llm.max_tokens.min(remaining))
 }
 
 /// Send the assistant reply back to Telegram. For slash-command
 /// replies that contain a `![alt](url)` image reference, we ALSO
 /// upload the underlying file as a Telegram photo so users see the
 /// image inline in their chat rather than just a clickable link.
+///
+/// `metrics_with_debug`: when the reply came from a full LLM turn,
+/// passes (metrics, optional prompt-debug JSON) so the persisted
+/// assistant message gets the same metadata in-app chats have —
+/// without it the KinAI UI rendered Telegram replies with just
+/// "KinAI · time" and no model badge / latency / 🔍 prompt button.
+/// Slash-command replies (no LLM involved) pass None.
 async fn send_assistant_reply<R: Runtime>(
     api: &BotApi,
     state: &SharedState,
@@ -269,6 +402,7 @@ async fn send_assistant_reply<R: Runtime>(
     thread_id: &str,
     chat_id: i64,
     reply: &str,
+    metrics_with_debug: Option<(crate::network::protocol::TurnMetricsWire, Option<String>)>,
 ) -> Result<()> {
     // Persist the assistant message so it shows up in KinAI clients
     // viewing this peer's Telegram thread.
@@ -277,8 +411,31 @@ async fn send_assistant_reply<R: Runtime>(
         .append_message(thread_id, "assistant", "KinAI", reply, &[])
         .await
         .ok();
-    if let Some(msg) = persisted.as_ref() {
-        fan_out_message(state, app, peer_id, msg).await;
+    if let Some(mut msg) = persisted.clone() {
+        // Attach metrics + emit prompt_debug so the KinAI UI surfaces
+        // the same model badge / latency / 🔍 panel it does for in-app
+        // turns. The DB row is updated separately; the fan-out copy
+        // carries the metrics inline so listeners don't have to re-read
+        // the row before rendering.
+        if let Some((metrics, prompt)) = metrics_with_debug.as_ref() {
+            let metrics_json =
+                serde_json::to_value(metrics).unwrap_or(serde_json::Value::Null);
+            let _ = state
+                .db
+                .set_message_metrics(&msg.id, &metrics_json)
+                .await;
+            msg.metrics = Some(metrics_json);
+            if let Some(p) = prompt {
+                let _ = app.emit(
+                    "kinai://prompt-debug",
+                    serde_json::json!({
+                        "assistant_msg_id": msg.id,
+                        "prompt": p,
+                    }),
+                );
+            }
+        }
+        fan_out_message(state, app, peer_id, &msg).await;
     }
 
     // Detect a `![alt](http://host/v1/pic/<uuid>.png)` from ComfyUI

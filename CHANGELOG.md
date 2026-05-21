@@ -5,6 +5,69 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.30] — 2026-05-21
+
+### Fixed
+
+- **Telegram now routes `/fast` and `/deep` properly.** The
+  Telegram router was the one chat path that never wired up
+  `route_for`, so users typing `/fast` or `/deep` in Telegram
+  got the routing prefix shoved into the LLM prompt verbatim
+  (and the slot never actually switched — the cached fast
+  client was used either way). The router now uses the same
+  slash resolver as the in-app paths: prefix is stripped,
+  routed to the right slot, persisted as the thread's sticky
+  choice. Telegram and KinAI share that state, so `/deep` in
+  Telegram switches deep mode in KinAI's UI of the same
+  thread too.
+- **Bare `/fast` or `/deep` (no body) confirms the switch.**
+  Previously these went to the LLM, which hallucinated a
+  reply about "deep mode" being a thing. Now they short-
+  circuit before the model: persist the slot choice, send a
+  short confirmation message back to Telegram ("🧠 Switched
+  to **deep** model (`<model-name>`). Follow-ups go here
+  until you type `/fast` to switch back.") — no LLM call,
+  no token spend, no hallucinated semantics.
+- **Telegram "typing…" indicator stays on for the whole
+  turn.** It used to drop after ~5s because
+  `sendChatAction(typing)` is single-shot. Now a keep-alive
+  task re-fires it every 4s until the LLM completes, so
+  the phone user sees a continuous "KinAI is typing…" while
+  the deep model thinks for 30+ seconds instead of staring
+  at a frozen screen.
+- **Telegram-originated assistant messages show the full
+  metrics row in KinAI's UI.** Previously they rendered with
+  just `KinAI · 06:40 AM` because the router persisted the
+  message without `metrics` and didn't emit a
+  `kinai://prompt-debug` event. Now they carry the same
+  ttft / tps / tokens / model-badge metadata as in-app
+  turns, plus the 🔍 prompt button (so the user can finally
+  inspect exactly what the model saw on a Telegram turn —
+  which is the diagnostic surface needed to debug the
+  context-loss case in this release).
+- **Per-slot context window honoured in Telegram.** The
+  Telegram path was hard-coded to `cfg.llm.context_window`
+  (the fast slot's value). `/deep` turns now use the deep
+  slot's window + max_tokens, so a 128k-context deep model
+  isn't artificially trimmed to the fast model's smaller
+  window.
+
+### Added
+
+- **`/fast` and `/deep` in Telegram's slash-command menu.**
+  The bot's `setMyCommands` registration now includes both,
+  so phone users see them in the keyboard hint when they
+  type `/`.
+- **Diagnostic logging for Telegram context builds.** Each
+  turn logs the routed slot, the model id, the number of
+  recent messages pulled into the prompt, and the new
+  message's character count. Surface: `tracing::info!` so
+  it shows up in `~/Library/Logs/KinAI/` (or stderr when
+  run from a terminal). Use this to pin down context-loss
+  reports — if `ctx_messages` is low, the issue is in
+  storage / thread routing; if it's high but the model
+  still seems blind, it's an LLM-quality issue.
+
 ## [0.2.29] — 2026-05-21
 
 ### Added
