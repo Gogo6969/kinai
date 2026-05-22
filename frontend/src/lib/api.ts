@@ -126,6 +126,22 @@ export interface ThreadMeta {
   peer_id?: string;
 }
 
+/** One row in the user_facts table — the persistent per-peer memory
+ *  layer the LLM can read on every turn and add to via the `remember`
+ *  tool. `source` is "tool" (LLM remembered it during a chat),
+ *  "extractor" (passive background extraction), or "manual" (user
+ *  typed it into Settings → Memory). */
+export interface UserFact {
+  id: string;
+  peer_id: string;
+  key: string;
+  value: string;
+  source: 'tool' | 'extractor' | 'manual';
+  source_msg_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Attachment {
   kind: 'image' | 'file';
   mime: string | null;
@@ -317,6 +333,16 @@ export const api = {
   renameThread: (threadId: string, title: string) =>
     invoke<void>('rename_thread', { threadId, title }),
 
+  // Persistent per-user memory — Settings → Memory page reads via
+  // listUserFacts, mutates via save/delete/clear. Keys are short
+  // lowercase identifiers, values are short free-form strings. Saving
+  // an existing key overwrites; saving a fresh key adds a row.
+  listUserFacts: () => invoke<UserFact[]>('list_user_facts'),
+  saveUserFact: (args: { key: string; value: string }) =>
+    invoke<UserFact>('save_user_fact', { args }),
+  deleteUserFact: (id: string) => invoke<void>('delete_user_fact', { id }),
+  clearUserFacts: () => invoke<number>('clear_user_facts'),
+
   sendMessage: (args: {
     thread_id: string;
     content: string;
@@ -420,4 +446,10 @@ export const events = {
     listen('kinai://update-available', (e) => cb(e.payload as any)),
   onUpdateProgress: (cb: (p: { progress: number }) => void): Promise<UnlistenFn> =>
     listen('kinai://update-progress', (e) => cb(e.payload as any)),
+  /** Fired after the passive fact-extractor stores one or more new
+   *  rows. Used by Settings → Memory to refresh its list without a
+   *  manual reload. Payload is intentionally empty — the page just
+   *  re-fetches the full list. */
+  onUserFactsUpdated: (cb: () => void): Promise<UnlistenFn> =>
+    listen('kinai://user-facts-updated', () => cb()),
 };

@@ -551,6 +551,21 @@
           {/if}
         </p>
       </label>
+      <div class="pt-2 border-t border-white/5">
+        <button
+          type="button"
+          class="kin-btn w-full justify-between text-left"
+          onclick={() => goto('/settings/memory')}
+        >
+          <span class="flex flex-col gap-0.5 min-w-0 items-start">
+            <span class="text-sm">Memory</span>
+            <span class="text-xs text-white/50">
+              Review and edit what KinAI remembers about you across sessions
+            </span>
+          </span>
+          <span class="text-white/40 text-sm">›</span>
+        </button>
+      </div>
     </div>
 
     {#if isClient}

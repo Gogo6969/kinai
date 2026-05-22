@@ -57,22 +57,29 @@ pub async fn save(
 pub async fn search(
     pool: &SqlitePool,
     peer_id: &str,
-    thread_id: &str,
+    _thread_id: &str,
     query: &str,
     limit: i64,
 ) -> Result<Vec<MemoryNote>> {
+    // Search is now scoped to peer (not peer + thread) so a summary
+    // created in one conversation can surface in another. The thread_id
+    // parameter is kept in the signature for source-traceability — the
+    // ranked rows still expose `thread_id` so callers (and the
+    // Settings → Memory UI in the future) can show "from chat X" —
+    // we just don't filter on it. This is the user-facing "persistent
+    // memory across sessions" win from path A; pairs with the explicit
+    // user_facts table for hard facts the LLM is told to retain.
     let fts_query = sanitize_fts(query);
     if !fts_query.is_empty() {
         let rows = sqlx::query(
             "SELECT m.id, m.thread_id, m.summary, m.keywords, m.created_at, m.peer_id
              FROM memory_fts
              JOIN memory_notes m ON m.rowid = memory_fts.rowid
-             WHERE memory_fts MATCH ?1 AND m.thread_id = ?2 AND m.peer_id = ?3
+             WHERE memory_fts MATCH ?1 AND m.peer_id = ?2
              ORDER BY bm25(memory_fts) ASC
-             LIMIT ?4",
+             LIMIT ?3",
         )
         .bind(&fts_query)
-        .bind(thread_id)
         .bind(peer_id)
         .bind(limit)
         .fetch_all(pool)
@@ -85,10 +92,9 @@ pub async fn search(
 
     let rows = sqlx::query(
         "SELECT id, thread_id, summary, keywords, created_at, peer_id
-         FROM memory_notes WHERE thread_id = ?1 AND peer_id = ?2
-         ORDER BY created_at DESC LIMIT ?3",
+         FROM memory_notes WHERE peer_id = ?1
+         ORDER BY created_at DESC LIMIT ?2",
     )
-    .bind(thread_id)
     .bind(peer_id)
     .bind(limit)
     .fetch_all(pool)

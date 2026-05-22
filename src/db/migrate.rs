@@ -142,6 +142,44 @@ const STATEMENTS: &[&str] = &[
     r#"
     ALTER TABLE threads ADD COLUMN active_slot TEXT
     "#,
+
+    // Persistent per-user facts — the long-term memory layer. Distinct
+    // from `memory_notes` (which are extractive thread summaries) in
+    // two ways:
+    //   1. Scope is peer-wide, not thread-wide — a fact stated in one
+    //      conversation surfaces in every conversation that peer has,
+    //      because "I live in Berlin" is true regardless of which
+    //      chat it came up in.
+    //   2. Population is deliberate, not automatic — populated by the
+    //      `remember` tool (the LLM calls it when the user states a
+    //      persistent fact) and by passive background extraction.
+    //
+    // (peer_id, key) is unique so calling remember twice on the same
+    // key overwrites instead of duplicating — "city: Berlin" → "city:
+    // Munich" is a single row, not a history of moves. Update timestamp
+    // lets the user see when a fact was last touched in the Settings
+    // → Memory page.
+    //
+    // `source` is one of "tool" (LLM called remember()), "extractor"
+    // (passive background pass), or "manual" (user added it via the
+    // Settings UI). Drives a small chip in the UI so the user can tell
+    // facts they explicitly stated apart from ones the model inferred.
+    r#"
+    CREATE TABLE IF NOT EXISTS user_facts (
+        id            TEXT PRIMARY KEY,
+        peer_id       TEXT NOT NULL,
+        key           TEXT NOT NULL,
+        value         TEXT NOT NULL,
+        source        TEXT NOT NULL DEFAULT 'tool',
+        source_msg_id TEXT,
+        created_at    TEXT NOT NULL,
+        updated_at    TEXT NOT NULL,
+        UNIQUE(peer_id, key)
+    )
+    "#,
+    r#"
+    CREATE INDEX IF NOT EXISTS idx_user_facts_peer ON user_facts(peer_id)
+    "#,
 ];
 
 pub async fn run(pool: &SqlitePool) -> Result<()> {

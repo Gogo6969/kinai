@@ -7,6 +7,55 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [0.2.32] — 2026-05-21
 
+### Added (big new feature — persistent memory across sessions)
+
+- **KinAI now remembers facts about you across every conversation,
+  every device, every session.** The previous behaviour was "each
+  chat starts fresh" — if you told it you live in Berlin on Monday,
+  a new chat on Tuesday had to be told again. That ended. Three
+  cooperating systems handle this:
+
+  - **The `remember` tool.** A new tool the model calls whenever you
+    state a stable fact about yourself ("I live in Berlin", "my wife
+    is named Anna", "I'm vegetarian", "I prefer metric units"). The
+    fact gets written to a new `user_facts` table keyed by
+    (peer_id, key) — calling remember twice with the same key
+    overwrites, which is how you update a fact when your life
+    changes ("I moved to Munich"). The model acknowledges what it
+    stored in plain prose so you always know what it picked up.
+    Mirror tool `forget(key)` deletes a fact when you ask it to.
+
+  - **A passive background extractor.** After every reply, a tiny
+    side LLM call scans the user message ("Does this contain a
+    persistent fact?") and stores anything new it finds. Runs only
+    on messages that look fact-shaped (first-person pronoun, length
+    above a small threshold), so "thanks" and "?" don't burn a
+    round-trip. Conservative: only ADDS facts whose key doesn't
+    already exist, never overwrites what you stated explicitly via
+    the tool. Marks facts with `source = "extractor"` so the UI
+    distinguishes inferred from stated.
+
+  - **Cross-thread memory notes.** The existing thread summarization
+    (auto-folds the oldest messages of long chats into searchable
+    summaries) used to only surface notes within the thread that
+    produced them. Now scoped to peer instead, so a summary from
+    last Tuesday's chat can answer "what was that project deadline
+    we discussed" today.
+
+- **Settings → Memory** is a new page that lists every stored fact
+  with chips marking the source ("you typed" / "said in chat" /
+  "inferred"), inline edit, single-fact delete, and a "Forget
+  everything" button. You always have full control — nothing is
+  hidden, nothing is locked. The model reads from this same store
+  on every turn, so an edit takes effect immediately on the next
+  message.
+
+- **Privacy boundary preserved.** All three paths scope by
+  `peer_id`, so one family member's memory never bleeds into
+  another's prompt. Same invariant the rest of the DB layer
+  follows; FTS5 BM25 queries on `memory_notes` and direct lookups
+  on `user_facts` both filter on it.
+
 ### Fixed (the other big one — read this if you've ever had to force-quit)
 
 - **The Stop button actually stops now.** The little square that

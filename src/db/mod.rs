@@ -4,6 +4,7 @@ mod memory;
 pub mod messages;
 mod migrate;
 pub mod telegram;
+pub mod user_facts;
 
 use std::path::Path;
 
@@ -12,6 +13,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 
 pub use memory::MemoryNote;
 pub use messages::{Attachment, Message, ThreadMeta, HOST_PEER};
+pub use user_facts::UserFact;
 
 #[derive(Clone)]
 pub struct Db {
@@ -140,5 +142,45 @@ impl Db {
         limit: i64,
     ) -> Result<Vec<MemoryNote>> {
         memory::search(&self.pool, peer_id, thread_id, query, limit).await
+    }
+
+    // ---- User facts (persistent per-peer memory) ----
+
+    /// Insert-or-update a fact. `source` is one of "tool" / "extractor"
+    /// / "manual" — the UI uses it to mark how each fact was learned.
+    pub async fn save_user_fact(
+        &self,
+        peer_id: &str,
+        key: &str,
+        value: &str,
+        source: &str,
+        source_msg_id: Option<&str>,
+    ) -> Result<UserFact> {
+        user_facts::upsert(&self.pool, peer_id, key, value, source, source_msg_id).await
+    }
+
+    /// All facts for a peer, newest-first. Used by the Settings page
+    /// and by `for_prompt` for context-injection.
+    pub async fn list_user_facts(&self, peer_id: &str) -> Result<Vec<UserFact>> {
+        user_facts::list(&self.pool, peer_id).await
+    }
+
+    /// Facts to inject into the system prompt. Currently identical to
+    /// list_user_facts; broken out so we can add caching / limits later
+    /// without touching the Settings UI's "show me everything" call.
+    pub async fn user_facts_for_prompt(&self, peer_id: &str) -> Result<Vec<UserFact>> {
+        user_facts::for_prompt(&self.pool, peer_id).await
+    }
+
+    pub async fn delete_user_fact(&self, peer_id: &str, id: &str) -> Result<()> {
+        user_facts::delete(&self.pool, peer_id, id).await
+    }
+
+    pub async fn delete_user_fact_by_key(&self, peer_id: &str, key: &str) -> Result<u64> {
+        user_facts::delete_by_key(&self.pool, peer_id, key).await
+    }
+
+    pub async fn clear_user_facts(&self, peer_id: &str) -> Result<u64> {
+        user_facts::clear_all(&self.pool, peer_id).await
     }
 }

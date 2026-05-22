@@ -5,13 +5,26 @@ use anyhow::{anyhow, Result};
 use serde_json::json;
 
 use crate::config::{SearchEngine, ToolSettings};
+use crate::db::Db;
 
 /// Runtime context the tool layer needs that isn't in the static schema —
-/// API keys, search-engine selection, etc.
-#[derive(Debug, Clone, Default)]
+/// API keys, search-engine selection, plus the DB handle + peer scope for
+/// memory tools that need to persist facts.
+#[derive(Clone, Default)]
 pub struct ToolRuntime {
     pub search_engine: SearchEngine,
     pub search_api_key: Option<String>,
+    /// DB handle for memory tools (remember, forget). Set only when the
+    /// caller wants those tools to actually persist — search-tool-only
+    /// callsites (e.g. an isolated extractor pass) can leave it None.
+    pub db: Option<Db>,
+    /// Peer scope for memory writes. Required when `db` is set; ignored
+    /// otherwise. Always `HOST_PEER` for in-app turns; for Telegram-
+    /// originated turns it's the connected peer's id.
+    pub peer_id: Option<String>,
+    /// Source message id for traceability. When a fact is written via
+    /// remember(), this is the user message that triggered the call.
+    pub source_msg_id: Option<String>,
 }
 
 impl ToolRuntime {
@@ -19,7 +32,23 @@ impl ToolRuntime {
         Self {
             search_engine: s.search_engine,
             search_api_key: s.search_api_key.clone(),
+            db: None,
+            peer_id: None,
+            source_msg_id: None,
         }
+    }
+
+    /// Attach the DB + peer scope so memory tools can persist. Chainable:
+    /// `ToolRuntime::from_tool_settings(&cfg.tools).with_memory(db, peer)`.
+    pub fn with_memory(mut self, db: Db, peer_id: impl Into<String>) -> Self {
+        self.db = Some(db);
+        self.peer_id = Some(peer_id.into());
+        self
+    }
+
+    pub fn with_source_msg(mut self, source_msg_id: impl Into<String>) -> Self {
+        self.source_msg_id = Some(source_msg_id.into());
+        self
     }
 }
 
@@ -47,6 +76,13 @@ pub fn enabled(settings: &ToolSettings) -> Vec<ToolDef> {
     if settings.image_search {
         out.push(image_search_def());
     }
+    // Memory tools are always-on for now. The user can still purge any
+    // fact via Settings → Memory; gating the tool itself would only
+    // prevent the model from REMEMBERING new things, which isn't a
+    // privacy property anyone actually wants — they want CONTROL over
+    // what's stored, which the Settings UI provides.
+    out.push(remember_def());
+    out.push(forget_def());
     out
 }
 
@@ -97,6 +133,51 @@ pub async fn execute(name: &str, args_json: &str, runtime: &ToolRuntime) -> Resu
             Ok(format!("{} = {}", expr, value))
         }
         "datetime" => Ok(super::datetime::now_pretty()),
+        "remember" => {
+            let key = args
+                .get("key")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("missing key"))?;
+            let value = args
+                .get("value")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("missing value"))?;
+            let db = runtime
+                .db
+                .as_ref()
+                .ok_or_else(|| anyhow!("memory tools require a DB; tool runtime has none"))?;
+            let peer = runtime
+                .peer_id
+                .as_deref()
+                .ok_or_else(|| anyhow!("memory tools require peer_id"))?;
+            let fact = db
+                .save_user_fact(peer, key, value, "tool", runtime.source_msg_id.as_deref())
+                .await?;
+            Ok(format!(
+                "OK — I'll remember that {} is {}.",
+                fact.key, fact.value
+            ))
+        }
+        "forget" => {
+            let key = args
+                .get("key")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("missing key"))?;
+            let db = runtime
+                .db
+                .as_ref()
+                .ok_or_else(|| anyhow!("memory tools require a DB; tool runtime has none"))?;
+            let peer = runtime
+                .peer_id
+                .as_deref()
+                .ok_or_else(|| anyhow!("memory tools require peer_id"))?;
+            let deleted = db.delete_user_fact_by_key(peer, key).await?;
+            if deleted == 0 {
+                Ok(format!("I had nothing stored under '{}'.", key))
+            } else {
+                Ok(format!("Forgotten: {}.", key))
+            }
+        }
         "image_search" => {
             let query = args
                 .get("query")
@@ -186,6 +267,63 @@ fn datetime_def() -> ToolDef {
                 "name": "datetime",
                 "description": "Get the current local date and time (host machine's timezone).",
                 "parameters": { "type": "object", "properties": {} }
+            }
+        }),
+    }
+}
+
+fn remember_def() -> ToolDef {
+    ToolDef {
+        name: "remember".into(),
+        description: "Save a fact about the user for future conversations.".into(),
+        schema: json!({
+            "type": "function",
+            "function": {
+                "name": "remember",
+                "description": "Save a persistent fact about the user that should survive across chats and sessions. \
+                                Use this WHENEVER the user states a stable piece of information about themselves, their life, \
+                                their preferences, or their context — e.g. \"I live in Berlin\", \"my wife's name is Anna\", \
+                                \"I prefer metric units\", \"I'm allergic to peanuts\", \"my work uses TypeScript\". \
+                                Do NOT use for ephemeral things (\"I'm feeling tired today\") or content of the current message. \
+                                Pick a short, lowercase, semantic `key` (e.g. \"city\", \"wife_name\", \"diet\", \"work_stack\") \
+                                and a concise `value`. Calling remember twice with the same key OVERWRITES — that's how a user \
+                                tells the model 'I moved' (just state the new value). The user can review and edit anything \
+                                stored via Settings → Memory.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "key": {
+                            "type": "string",
+                            "description": "Short, lowercase, semantic identifier. snake_case preferred. Examples: \"city\", \"wife_name\", \"diet\", \"work_stack\", \"timezone\"."
+                        },
+                        "value": {
+                            "type": "string",
+                            "description": "The fact itself. One sentence or less. Examples: \"Berlin, Germany\", \"Anna\", \"vegetarian\", \"TypeScript and Rust\", \"Europe/Berlin\"."
+                        }
+                    },
+                    "required": ["key", "value"]
+                }
+            }
+        }),
+    }
+}
+
+fn forget_def() -> ToolDef {
+    ToolDef {
+        name: "forget".into(),
+        description: "Delete a previously-stored fact about the user.".into(),
+        schema: json!({
+            "type": "function",
+            "function": {
+                "name": "forget",
+                "description": "Delete a previously-saved fact identified by its `key`. Use when the user explicitly asks you to forget something they told you before. If you're unsure which key to forget, ask the user — listing keys you can see in your system context is fine.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "key": { "type": "string", "description": "The exact key the fact was saved under." }
+                    },
+                    "required": ["key"]
+                }
             }
         }),
     }

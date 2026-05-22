@@ -21,11 +21,22 @@ pub async fn build_context(
     let memories = db
         .relevant_memories(peer_id, thread_id, &new_message.content, TOP_MEMORIES)
         .await?;
+    // User facts — the persistent per-peer memory layer. Always pulled
+    // in full (the table is small, the values are short); the prompt
+    // formatter caps the total so a runaway "remember everything"
+    // pattern can't blow the system-prompt budget.
+    let user_facts = db.user_facts_for_prompt(peer_id).await.unwrap_or_default();
 
     let mut messages: Vec<ChatMessage> =
-        Vec::with_capacity(2 + memories.len() + recent.len() + 1);
+        Vec::with_capacity(3 + memories.len() + recent.len() + 1);
 
     messages.push(system_prompt(&cfg.host.family_name, &cfg.llm.system_addendum));
+
+    if !user_facts.is_empty() {
+        messages.push(ChatMessage::System {
+            content: memory::format_user_facts(&user_facts),
+        });
+    }
 
     if !memories.is_empty() {
         messages.push(ChatMessage::System {

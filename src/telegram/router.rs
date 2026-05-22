@@ -311,7 +311,9 @@ async fn run_turn_for_peer<R: Runtime>(
     .ok();
 
     let tools = registry::enabled(&cfg.tools);
-    let tool_runtime = registry::ToolRuntime::from_tool_settings(&cfg.tools);
+    let tool_runtime = registry::ToolRuntime::from_tool_settings(&cfg.tools)
+        .with_memory(state.db.clone(), peer_id)
+        .with_source_msg(user_msg.id.clone());
     let active_llm_settings = route_pick.settings.clone();
     let max_tokens = compute_max_tokens(&active_llm_settings, &messages);
     // Build the LLM client from the routed slot's settings, not the

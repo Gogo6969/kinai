@@ -629,7 +629,9 @@ async fn run_chat_turn(
     )
     .ok();
     let tools = registry::enabled(&cfg.tools);
-    let tool_runtime = registry::ToolRuntime::from_tool_settings(&cfg.tools);
+    let tool_runtime = registry::ToolRuntime::from_tool_settings(&cfg.tools)
+        .with_memory(s.app.db.clone(), context_peer)
+        .with_source_msg(client_msg_id.to_string());
     let max_tokens = compute_max_tokens(&cfg, &messages);
     // Construct the LLM client from the active route's settings (fast
     // or deep), NOT the cached `state.llm` — that one always holds

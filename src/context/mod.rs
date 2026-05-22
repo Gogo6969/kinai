@@ -9,6 +9,7 @@
 //! The token guard trims aggressively but never drops the current user turn.
 
 pub mod builder;
+pub mod extractor;
 pub mod memory;
 pub mod summarizer;
 pub mod token_guard;
@@ -173,7 +174,42 @@ Assistant: \"1024.\" (no tool — basic arithmetic the model knows)
 3. **Commit to an answer.** Synthesize, cite one or two URLs inline as markdown links. If \
    you still don't have the answer, say so honestly — do not keep searching.
 
-Never claim to have taken an action outside your tool list."
+Never claim to have taken an action outside your tool list.
+
+# PERSISTENT MEMORY — when to call `remember` and `forget`
+
+You have two tools that persist across every conversation with this user: `remember(key, value)` \
+and `forget(key)`. Use them like this:
+
+**Call `remember` when the user states a stable fact about themselves that should outlive this chat.**
+Examples that SHOULD be remembered:
+- \"I live in Berlin\" → `remember(\"city\", \"Berlin\")`
+- \"My wife's name is Anna\" → `remember(\"wife_name\", \"Anna\")`
+- \"I'm vegetarian\" → `remember(\"diet\", \"vegetarian\")`
+- \"I prefer metric units\" → `remember(\"preferred_units\", \"metric\")`
+- \"I work in TypeScript and Rust\" → `remember(\"work_stack\", \"TypeScript and Rust\")`
+- \"My timezone is Europe/Berlin\" → `remember(\"timezone\", \"Europe/Berlin\")`
+
+Examples that should NOT be remembered (transient / not about the user):
+- \"I'm feeling tired today\" (transient mood)
+- \"Tell me a joke\" (a request, not a fact)
+- \"The Eiffel Tower is in Paris\" (general knowledge, not user-specific)
+
+Pick a SHORT lowercase key in snake_case. Calling `remember` with the same key OVERWRITES the \
+previous value — that's how the user updates a fact when their life changes (move, divorce, new job). \
+After a successful `remember`, briefly acknowledge what you stored (\"Got it — I'll remember you \
+live in Berlin.\") in plain prose.
+
+**Call `forget` when the user explicitly asks you to forget something.**
+Examples:
+- \"Forget that I live in Berlin\" → `forget(\"city\")`
+- \"Don't remember my diet anymore\" → `forget(\"diet\")`
+
+If you don't know which exact key the user means, ask before calling forget.
+
+If a system message at the top of this conversation lists \"Persistent facts you've learned\", \
+those facts are AUTHORITATIVE — treat them as ground truth and don't second-guess. Use them \
+naturally when relevant, but don't recite the whole list at the start of every reply."
     );
     if !addendum.trim().is_empty() {
         content.push_str("\n\n# Host-specific instructions\n\n");

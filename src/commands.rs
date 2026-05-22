@@ -1025,6 +1025,64 @@ pub async fn rename_thread(
         .map_err(err)
 }
 
+// ---- Persistent memory (user facts) ----
+//
+// User-facing surface for the long-term per-peer memory layer. The
+// Settings → Memory page reads via list_user_facts, mutates via
+// save/delete/clear. All scoped to HOST_PEER for the in-app user;
+// peer-scoped writes from connected clients go through a separate
+// network envelope (not yet wired — clients see only their own
+// host's facts surfaced via the system prompt, can't currently
+// edit them remotely).
+
+#[tauri::command]
+pub async fn list_user_facts(
+    state: tauri::State<'_, SharedState>,
+) -> Result<Vec<db::UserFact>> {
+    state
+        .db
+        .list_user_facts(db::HOST_PEER)
+        .await
+        .map_err(err)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SaveUserFactArgs {
+    pub key: String,
+    pub value: String,
+}
+
+#[tauri::command]
+pub async fn save_user_fact(
+    state: tauri::State<'_, SharedState>,
+    args: SaveUserFactArgs,
+) -> Result<db::UserFact> {
+    state
+        .db
+        .save_user_fact(db::HOST_PEER, &args.key, &args.value, "manual", None)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn delete_user_fact(
+    state: tauri::State<'_, SharedState>,
+    id: String,
+) -> Result<()> {
+    state
+        .db
+        .delete_user_fact(db::HOST_PEER, &id)
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
+pub async fn clear_user_facts(
+    state: tauri::State<'_, SharedState>,
+) -> Result<u64> {
+    state.db.clear_user_facts(db::HOST_PEER).await.map_err(err)
+}
+
 // ---- Chat ----
 
 #[derive(Debug, Deserialize)]
@@ -1266,7 +1324,9 @@ pub async fn send_message(
     )
     .ok();
     let tool_defs = registry::enabled(&cfg.tools);
-    let tool_runtime = registry::ToolRuntime::from_tool_settings(&cfg.tools);
+    let tool_runtime = registry::ToolRuntime::from_tool_settings(&cfg.tools)
+        .with_memory(state.db.clone(), db::HOST_PEER)
+        .with_source_msg(args.client_msg_id.clone());
 
     let max_tokens = compute_max_tokens(&cfg, &messages);
 
@@ -1408,6 +1468,37 @@ pub async fn send_message(
     {
         tracing::warn!("summarizer: {e:?}");
     }
+
+    // Passive fact extraction — fire-and-forget so a slow extractor
+    // call can never delay the user's reply (which has already been
+    // emitted at this point). Runs the fast slot regardless of which
+    // slot served this turn; the extractor's job is cheap structured
+    // output and the fast model is reliably good at JSON.
+    let extractor_db = state.db.clone();
+    let extractor_settings = cfg.llm.clone();
+    let extractor_msg_id = user_msg.id.clone();
+    let extractor_content = args.content.clone();
+    let extractor_app = app.clone();
+    tokio::spawn(async move {
+        match context::extractor::extract_and_save(
+            &extractor_db,
+            &extractor_settings,
+            db::HOST_PEER,
+            &extractor_msg_id,
+            &extractor_content,
+        )
+        .await
+        {
+            Ok(n) if n > 0 => {
+                tracing::info!("extractor stored {n} new fact(s)");
+                // Nudge the Settings page so the new chips appear without
+                // a manual refresh.
+                let _ = extractor_app.emit("kinai://user-facts-updated", serde_json::json!({}));
+            }
+            Ok(_) => { /* nothing fact-shaped; quiet */ }
+            Err(e) => tracing::warn!("extractor: {e:?}"),
+        }
+    });
 
     let _ = app.emit(
         "kinai://assistant-done",
