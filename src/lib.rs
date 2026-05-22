@@ -133,6 +133,18 @@ pub fn run() {
             }
         }))
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        // Launch-at-login. The LaunchAgent strategy on macOS uses a
+        // per-user ~/Library/LaunchAgents/<bundle-id>.plist — no admin,
+        // no signed-helper bundle required. On Windows the plugin writes
+        // HKCU\Software\Microsoft\Windows\CurrentVersion\Run\KinAI. We
+        // pass `--autostart` so future builds can detect "we were
+        // launched at boot" vs. "user double-clicked the app" and
+        // potentially skip the dock-bounce / first-run dialog. Not used
+        // yet, harmless to pass today.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--autostart"]),
+        ))
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())

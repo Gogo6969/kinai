@@ -16,6 +16,11 @@
   import { goto } from '$app/navigation';
   import QRCode from 'qrcode';
   import { Loader2, RefreshCw } from '@lucide/svelte';
+  import {
+    enable as enableAutostart,
+    disable as disableAutostart,
+    isEnabled as isAutostartEnabled,
+  } from '@tauri-apps/plugin-autostart';
 
   const isClient = $derived(app.config?.mode === 'client');
   const isHost = $derived(app.config?.mode === 'host');
@@ -244,6 +249,12 @@
   let models = $state<string[]>([]);
   let saving = $state(false);
   let refreshing = $state(false);
+  // Autostart toggle state. `null` while we hydrate from the OS; the
+  // toggle is rendered disabled until we know the truth (avoids the
+  // user toggling-twice race during the first paint).
+  let autostartOn = $state<boolean | null>(null);
+  let autostartBusy = $state(false);
+  let autostartError = $state<string>('');
   /** UI feedback after a successful save: "saved" → fades to "" after 2.5s.
    *  Empty string for the initial state and after the fade. */
   let saveStatus = $state<'' | 'saved' | 'error'>('');
@@ -288,7 +299,54 @@
       void refreshModels({ silent: true });
     }
     api.kinaiVersion().then((v) => (versionInfo = v)).catch(() => {});
+    // Hydrate the autostart toggle from the OS. The plugin reads the
+    // ~/Library/LaunchAgents plist (macOS) or HKCU\...\Run key
+    // (Windows) so the rendered switch always reflects ground truth,
+    // not a cached guess in our config. If the query fails (rare —
+    // shouldn't fail in dev/release builds; can fail in `tauri dev`
+    // before the plugin is set up), default to OFF and surface the
+    // error to the user instead of pretending it's working.
+    isAutostartEnabled()
+      .then((on) => {
+        autostartOn = on;
+      })
+      .catch((e) => {
+        autostartOn = false;
+        autostartError = String(e).replace(/^Error:\s*/, '');
+      });
   });
+
+  /**
+   * Flip the autostart state on the OS. The toggle is bound to
+   * `autostartOn`; this handler runs on `onchange` and reconciles.
+   * Disable inputs during the IPC so a fast double-click can't issue
+   * enable + disable racing.
+   */
+  async function toggleAutostart(next: boolean) {
+    if (autostartBusy) return;
+    autostartBusy = true;
+    autostartError = '';
+    try {
+      if (next) {
+        await enableAutostart();
+      } else {
+        await disableAutostart();
+      }
+      // Re-read from OS so we never display a stale optimistic state
+      // — the user wants to trust this toggle.
+      autostartOn = await isAutostartEnabled();
+    } catch (e) {
+      autostartError = String(e).replace(/^Error:\s*/, '');
+      // Revert the visible toggle to whatever the OS actually says.
+      try {
+        autostartOn = await isAutostartEnabled();
+      } catch {
+        /* swallow — we already have an error to show */
+      }
+    } finally {
+      autostartBusy = false;
+    }
+  }
 
   function copyVersion() {
     if (!versionInfo) return;
@@ -565,6 +623,34 @@
           </span>
           <span class="text-white/40 text-sm">›</span>
         </button>
+      </div>
+      <div class="pt-2 border-t border-white/5">
+        <label class="flex items-start gap-3 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            class="mt-0.5"
+            checked={autostartOn === true}
+            disabled={autostartOn === null || autostartBusy}
+            onchange={(e) => void toggleAutostart(e.currentTarget.checked)}
+          />
+          <span class="flex-1">
+            <span class="font-medium text-white/90">Launch KinAI at login</span>
+            <span class="block text-xs text-white/50 mt-0.5">
+              KinAI starts in the background every time you sign in to this
+              computer. The window stays hidden; click the tray icon to open
+              it. Per-machine setting — toggling here only affects this
+              {#if app.config?.mode === 'host'}host{:else}client{/if}.
+            </span>
+            {#if autostartOn === null && !autostartError}
+              <span class="block text-xs text-white/40 mt-1">Checking…</span>
+            {/if}
+            {#if autostartError}
+              <span class="block text-xs text-red-300/80 mt-1">
+                Couldn't read autostart state: {autostartError}
+              </span>
+            {/if}
+          </span>
+        </label>
       </div>
     </div>
 

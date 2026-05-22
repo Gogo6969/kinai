@@ -40,6 +40,9 @@
     "notification:default",
     "shell:allow-open",
     "store:default",
-    "updater:default"
+    "updater:default",
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    "autostart:allow-is-enabled"
   ]
 }

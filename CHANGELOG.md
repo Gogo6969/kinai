@@ -5,6 +5,23 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.33] — 2026-05-22
+
+### Added
+
+- **Launch KinAI at login.** New toggle in *Settings → You*. When on,
+  KinAI starts in the background every time you sign in to this
+  computer — the window stays hidden, the tray icon appears, click
+  it to open the chat. Works on both macOS (writes a per-user
+  LaunchAgent plist to `~/Library/LaunchAgents/` — no admin
+  password required) and Windows (writes a value under
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`). The toggle
+  is per-machine: enabling it on your laptop doesn't affect your
+  desktop or your kid's MacBook. Toggle state always reflects the
+  OS ground truth (we re-read the LaunchAgent / registry on every
+  flip rather than trusting a cached value), so what you see in
+  Settings is always what will actually happen at boot.
+
 ## [0.2.32] — 2026-05-21
 
 ### Added (big new feature — persistent memory across sessions)
