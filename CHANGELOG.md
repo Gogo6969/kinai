@@ -5,6 +5,25 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.35] — 2026-05-22
+
+### Changed
+
+- **Tray icon is now the actual KinAI logo, not a featureless square.**
+  The old `public/icons/tray.png` was a 32×32 copy of the full-color
+  app icon WITH the dark navy background — but `iconAsTemplate: true`
+  in `tauri.conf.json` told macOS to render it as a pure-alpha
+  silhouette, which collapsed the entire icon (including the dark
+  background filling the rounded square) into a solid white block in
+  the menu bar. Replaced with a transparent-background 88×88 PNG
+  showing just the teal house outline + neural-network nodes from
+  the app icon's foreground artwork, and switched
+  `iconAsTemplate` to `false` so the teal renders as actual color
+  rather than getting flattened to a silhouette. Reads cleanly at
+  menu-bar size (44×44 effective) in both light and dark menu bars,
+  and is immediately recognizable as the same icon you see in the
+  dock.
+
 ## [0.2.34] — 2026-05-22
 
 ### Added
