@@ -5,6 +5,27 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.34] — 2026-05-22
+
+### Added
+
+- **Choose what an auto-launch looks like.** A radio pair appears
+  underneath the *Launch at login* toggle (from v0.2.33), visible
+  only when that toggle is on:
+  - **Minimize to tray** (default) — window stays hidden, only the
+    tray icon appears. The classic background-daemon UX most users
+    want from a chat app pinned to boot.
+  - **Show the chat window** — window comes up immediately, just
+    like a manual double-click would. Useful if you want KinAI
+    front-and-center the moment you sign in.
+
+  Mechanism: the LaunchAgent / Run entry passes `--autostart` in
+  argv. On startup we check both that flag AND
+  `cfg.startup.autostart_minimized` — only the intersection (OS
+  auto-launched AND user opted into minimized) keeps the window
+  hidden. Manual launches always show the window regardless,
+  because they don't carry the `--autostart` flag.
+
 ## [0.2.33] — 2026-05-22
 
 ### Added
@@ -20,21 +41,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   LaunchAgent / registry on every flip rather than trusting a
   cached value), so what you see in Settings is always what will
   actually happen at boot.
-
-- **Choose what an auto-launch looks like.** A radio pair appears
-  underneath the toggle once "Launch at login" is enabled:
-  - **Minimize to tray** (default) — window stays hidden, only the
-    tray icon appears. The classic background-daemon UX most users
-    want from a chat app pinned to boot.
-  - **Show the chat window** — window comes up immediately, just
-    like a manual double-click would. Useful if you want KinAI
-    front-and-center the moment you sign in.
-
-  Mechanism: the LaunchAgent / Run entry passes `--autostart` in
-  argv. On startup we check both that flag AND
-  `cfg.startup.autostart_minimized` — only the intersection (OS
-  auto-launch AND user opted into minimized) keeps the window
-  hidden. Manual launches always show the window regardless.
 
 ## [0.2.32] — 2026-05-21
 
