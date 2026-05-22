@@ -96,6 +96,17 @@ export interface TelegramLinkStatus {
   paired_at: string | null;
 }
 
+/** Per-machine startup behavior. Only relevant when "Launch at login"
+ *  is enabled — the OS launches KinAI with `--autostart` in argv, and
+ *  the binary consults this struct to decide whether to surface the
+ *  window or stay hidden in the tray. Manual launches ignore it. */
+export interface StartupSettings {
+  /** True (default): autostart launches keep the window hidden,
+   *  tray icon only. False: window comes up immediately, just like a
+   *  manual launch would. */
+  autostart_minimized: boolean;
+}
+
 export interface AppConfig {
   mode: Mode;
   theme: Theme;
@@ -114,6 +125,7 @@ export interface AppConfig {
   vision: VisionSettings;
   comfyui: ComfyConfig;
   telegram: TelegramConfig;
+  startup: StartupSettings;
 }
 
 export interface ThreadMeta {
@@ -278,6 +290,8 @@ export const api = {
   setOverlaySettings: (overlay: OverlaySettings) =>
     invoke<AppConfig>('set_overlay_settings', { overlay }),
   setTheme: (theme: Theme) => invoke<AppConfig>('set_theme', { theme }),
+  setStartupSettings: (startup: StartupSettings) =>
+    invoke<AppConfig>('set_startup_settings', { startup }),
   setVisionSettings: (vision: VisionSettings) =>
     invoke<AppConfig>('set_vision_settings', { vision }),
   testVisionEndpoint: (args: { base_url: string; model: string; api_key?: string | null }) =>

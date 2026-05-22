@@ -255,6 +255,11 @@
   let autostartOn = $state<boolean | null>(null);
   let autostartBusy = $state(false);
   let autostartError = $state<string>('');
+  /** Sub-preference: when launched via autostart, should the window
+   *  show or stay hidden in the tray? Hydrated from config; persisted
+   *  via setStartupSettings. Only visible in the UI when the parent
+   *  autostart toggle is on (it's irrelevant otherwise). */
+  let autostartMinimized = $state<boolean>(true);
   /** UI feedback after a successful save: "saved" → fades to "" after 2.5s.
    *  Empty string for the initial state and after the fade. */
   let saveStatus = $state<'' | 'saved' | 'error'>('');
@@ -270,6 +275,10 @@
 
   onMount(() => {
     if (app.config) {
+      // Hydrate the autostart sub-preference (window vs tray). Default
+      // matches the Rust struct's Default::default — `true` (minimized
+      // to tray) when the section is absent in older configs.
+      autostartMinimized = app.config.startup?.autostart_minimized ?? true;
       llm = { ...app.config.llm };
       if (app.config.llm_deep) {
         llmDeep = { ...app.config.llm_deep };
@@ -322,6 +331,27 @@
    * Disable inputs during the IPC so a fast double-click can't issue
    * enable + disable racing.
    */
+  /**
+   * Persist the "show window vs minimize to tray" choice. Updates
+   * local state optimistically (the radio reflects the click
+   * immediately) and pushes the config to the host. On error we
+   * revert to whatever the config still says, so a failed write
+   * doesn't strand the UI in a wrong state.
+   */
+  async function setAutostartMinimized(next: boolean) {
+    const previous = autostartMinimized;
+    autostartMinimized = next;
+    try {
+      const updated = await api.setStartupSettings({
+        autostart_minimized: next,
+      });
+      app.config = updated;
+    } catch (e) {
+      autostartMinimized = previous;
+      autostartError = String(e).replace(/^Error:\s*/, '');
+    }
+  }
+
   async function toggleAutostart(next: boolean) {
     if (autostartBusy) return;
     autostartBusy = true;
@@ -636,9 +666,8 @@
           <span class="flex-1">
             <span class="font-medium text-white/90">Launch KinAI at login</span>
             <span class="block text-xs text-white/50 mt-0.5">
-              KinAI starts in the background every time you sign in to this
-              computer. The window stays hidden; click the tray icon to open
-              it. Per-machine setting — toggling here only affects this
+              KinAI starts every time you sign in to this computer.
+              Per-machine setting — toggling here only affects this
               {#if app.config?.mode === 'host'}host{:else}client{/if}.
             </span>
             {#if autostartOn === null && !autostartError}
@@ -651,6 +680,45 @@
             {/if}
           </span>
         </label>
+
+        {#if autostartOn === true}
+          <fieldset class="mt-3 ml-7 pl-3 border-l border-white/10 space-y-2">
+            <legend class="text-xs text-white/50 uppercase tracking-wider">
+              When KinAI auto-launches
+            </legend>
+            <label class="flex items-start gap-2 text-sm cursor-pointer">
+              <input
+                type="radio"
+                name="autostart-mode"
+                class="mt-0.5"
+                checked={autostartMinimized === true}
+                onchange={() => void setAutostartMinimized(true)}
+              />
+              <span>
+                <span class="text-white/90">Minimize to tray</span>
+                <span class="block text-xs text-white/50">
+                  Window stays hidden; click the tray icon to open it.
+                  Typical "background daemon" behaviour.
+                </span>
+              </span>
+            </label>
+            <label class="flex items-start gap-2 text-sm cursor-pointer">
+              <input
+                type="radio"
+                name="autostart-mode"
+                class="mt-0.5"
+                checked={autostartMinimized === false}
+                onchange={() => void setAutostartMinimized(false)}
+              />
+              <span>
+                <span class="text-white/90">Show the chat window</span>
+                <span class="block text-xs text-white/50">
+                  Window comes up immediately, just like a manual launch.
+                </span>
+              </span>
+            </label>
+          </fieldset>
+        {/if}
       </div>
     </div>
 

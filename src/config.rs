@@ -303,6 +303,29 @@ pub struct ComfyConfig {
     pub default_model: String,
 }
 
+/// Per-machine startup preferences. Only consulted when the OS
+/// auto-launches KinAI at login (the binary sees `--autostart` in its
+/// argv — see `tauri-plugin-autostart` init in lib.rs). Manual
+/// launches (double-clicking the app, opening from the dock) ignore
+/// these entirely and always show the window.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StartupSettings {
+    /// When true (default), an autostart launch keeps the main window
+    /// hidden — only the tray icon appears. Matches the typical
+    /// "background daemon" UX users expect from a chat app pinned to
+    /// boot. Toggle to false to have the window come up immediately.
+    #[serde(default = "default_true")]
+    pub autostart_minimized: bool,
+}
+
+impl Default for StartupSettings {
+    fn default() -> Self {
+        Self {
+            autostart_minimized: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
     pub mode: Mode,
@@ -331,6 +354,11 @@ pub struct AppConfig {
     pub comfyui: ComfyConfig,
     #[serde(default)]
     pub telegram: TelegramConfig,
+    /// Per-machine startup behaviour. Empty by default so existing
+    /// configs don't change; only takes effect when "Launch at login"
+    /// is enabled in Settings.
+    #[serde(default)]
+    pub startup: StartupSettings,
     /// Version string the user last acknowledged in the changelog
     /// modal. The modal opens automatically when this is empty
     /// (first launch) or doesn't match the binary's

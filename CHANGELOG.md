@@ -10,17 +10,31 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Added
 
 - **Launch KinAI at login.** New toggle in *Settings → You*. When on,
-  KinAI starts in the background every time you sign in to this
-  computer — the window stays hidden, the tray icon appears, click
-  it to open the chat. Works on both macOS (writes a per-user
-  LaunchAgent plist to `~/Library/LaunchAgents/` — no admin
-  password required) and Windows (writes a value under
-  `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`). The toggle
-  is per-machine: enabling it on your laptop doesn't affect your
-  desktop or your kid's MacBook. Toggle state always reflects the
-  OS ground truth (we re-read the LaunchAgent / registry on every
-  flip rather than trusting a cached value), so what you see in
-  Settings is always what will actually happen at boot.
+  KinAI starts every time you sign in to this computer. Works on
+  both macOS (writes a per-user LaunchAgent plist to
+  `~/Library/LaunchAgents/` — no admin password required) and
+  Windows (writes a value under `HKCU\Software\Microsoft\Windows\
+  CurrentVersion\Run`). The toggle is per-machine: enabling it on
+  your laptop doesn't affect your desktop or your kid's MacBook.
+  Toggle state always reflects the OS ground truth (we re-read the
+  LaunchAgent / registry on every flip rather than trusting a
+  cached value), so what you see in Settings is always what will
+  actually happen at boot.
+
+- **Choose what an auto-launch looks like.** A radio pair appears
+  underneath the toggle once "Launch at login" is enabled:
+  - **Minimize to tray** (default) — window stays hidden, only the
+    tray icon appears. The classic background-daemon UX most users
+    want from a chat app pinned to boot.
+  - **Show the chat window** — window comes up immediately, just
+    like a manual double-click would. Useful if you want KinAI
+    front-and-center the moment you sign in.
+
+  Mechanism: the LaunchAgent / Run entry passes `--autostart` in
+  argv. On startup we check both that flag AND
+  `cfg.startup.autostart_minimized` — only the intersection (OS
+  auto-launch AND user opted into minimized) keeps the window
+  hidden. Manual launches always show the window regardless.
 
 ## [0.2.32] — 2026-05-21
 

@@ -159,6 +159,24 @@ pub async fn set_theme(
     Ok(new_cfg)
 }
 
+/// Persist the "when autostarted, should the window open or stay
+/// hidden" preference. Only consulted on launches that arrive with
+/// `--autostart` in argv (i.e. the OS auto-launched us); manual
+/// double-clicks always show the window regardless.
+#[tauri::command]
+pub async fn set_startup_settings(
+    state: tauri::State<'_, SharedState>,
+    startup: crate::config::StartupSettings,
+) -> Result<AppConfig> {
+    let new_cfg = {
+        let mut cfg = state.config.write();
+        cfg.startup = startup;
+        cfg.save().map_err(err)?;
+        cfg.clone()
+    };
+    Ok(new_cfg)
+}
+
 #[tauri::command]
 pub async fn set_vision_settings(
     state: tauri::State<'_, SharedState>,

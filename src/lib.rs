@@ -160,6 +160,7 @@ pub fn run() {
             commands::set_llm_deep_settings,
             commands::set_overlay_settings,
             commands::set_theme,
+            commands::set_startup_settings,
             commands::set_vision_settings,
             commands::test_vision_endpoint,
             commands::set_comfy_config,
@@ -239,11 +240,29 @@ pub fn run() {
                     }
                 });
 
-                // Always surface the main window when the app starts. Tray +
-                // hotkey are extras, not the only entry point.
+                // Window-on-launch policy:
+                //   * Manual launch (user double-clicked, dock click, etc.) →
+                //     always show the window. Tray + hotkey are extras, not
+                //     the only entry point.
+                //   * OS-driven autostart launch (detected via the
+                //     `--autostart` arg the LaunchAgent/Run-key entry passes
+                //     in argv — see tauri_plugin_autostart::init in this
+                //     file) → consult cfg.startup.autostart_minimized:
+                //       - true (default)  → leave hidden; user opens via
+                //         tray icon when they're ready.
+                //       - false           → show normally, same as manual.
+                let is_autostart_launch =
+                    std::env::args().any(|a| a == "--autostart");
+                let autostart_minimized =
+                    st.config.read().startup.autostart_minimized;
+                let show_at_startup =
+                    !(is_autostart_launch && autostart_minimized);
+
                 if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
+                    if show_at_startup {
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                    }
 
                     // Intercept the close button (X) so the window hides
                     // instead of being destroyed. Without this, on Windows
