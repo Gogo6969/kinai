@@ -191,20 +191,32 @@ pub async fn load(
     // somehow learned another peer's thread_id (UUID guessing aside, it
     // could leak through a forwarded link, an old backup, etc.) could
     // request their messages over the WebSocket.
+    //
+    // Pagination semantic — read carefully: we want the MOST RECENT `limit`
+    // messages, returned in chronological (oldest-first) order. The old
+    // SQL was `ORDER BY created_at ASC LIMIT N` which silently gave the
+    // OLDEST N once the thread exceeded N messages — meaning the LLM
+    // context-builder (which calls this with limit=50) saw the very first
+    // 50 turns of the thread forever, and never the recent ones. That's
+    // what was causing "model thinks I asked for a joke five months ago"
+    // and the matching Telegram context-loss bug. Switch to DESC + reverse
+    // so we always return the tail in ASC order.
     let rows = sqlx::query(
         "SELECT m.id, m.thread_id, m.role, m.sender, m.content, m.attachments,
                 m.created_at, m.summarized_into, m.metrics
          FROM messages m
          JOIN threads t ON t.id = m.thread_id
          WHERE m.thread_id = ?1 AND t.peer_id = ?2
-         ORDER BY m.created_at ASC LIMIT ?3",
+         ORDER BY m.created_at DESC LIMIT ?3",
     )
     .bind(thread_id)
     .bind(peer_id)
     .bind(limit)
     .fetch_all(pool)
     .await?;
-    Ok(rows.into_iter().map(row_to_message).collect())
+    let mut messages: Vec<Message> = rows.into_iter().map(row_to_message).collect();
+    messages.reverse();
+    Ok(messages)
 }
 
 pub async fn append(

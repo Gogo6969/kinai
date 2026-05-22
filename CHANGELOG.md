@@ -7,6 +7,27 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [0.2.32] — 2026-05-21
 
+### Fixed (critical — read this first)
+
+- **The prompt context-builder was loading the OLDEST 50 messages of
+  each thread, not the most recent 50.** This is the root cause of
+  every "model lost the context" complaint — both in the KinAI
+  desktop app (the "What's going on in the world? / continue →
+  random joke" story) AND on Telegram ("loses context after one
+  question, also not after ten"). The SQL query in
+  `db::messages::load` ordered by `created_at ASC LIMIT 50`, which
+  for a thread with 200+ turns silently returned messages 1–50 —
+  meaning the LLM saw your very first conversations from weeks ago,
+  never the turn that just finished. "Continue" then continued
+  whatever pattern matched the last ancient message in the window
+  (often a joke from early testing, hence the bizarre joke-after-
+  news behavior). Changed to `ORDER BY created_at DESC LIMIT 50`
+  with a Rust `reverse()` so chronological order is preserved in
+  the prompt. Effect: every multi-turn chat (desktop + Telegram +
+  overlay) now actually has continuity, regardless of how long the
+  thread is. No data migration needed — your messages were always
+  in the DB, the bug was just which slice we asked for.
+
 ### Added
 
 - **Copy buttons on every message — both your prompts and the
