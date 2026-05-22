@@ -334,7 +334,19 @@ pub async fn open(
     request: reqwest::RequestBuilder,
     cancel: CancellationToken,
 ) -> Result<StreamHandle> {
-    let resp = request.send().await?;
+    // Honor cancellation while the initial HTTP send is in flight.
+    // Without this select, a stalled LLM (TCP connect succeeded but
+    // headers never arrive) leaves `request.send().await` blocked
+    // forever — the Stop button's `cancel.cancel()` would fire,
+    // pump() would never get to see it, and the user is stuck with
+    // the "typing…" indicator until they kill the process. The
+    // select races the request against the token; first wins.
+    let resp = tokio::select! {
+        _ = cancel.cancelled() => {
+            return Err(anyhow!("cancelled before LLM responded"));
+        }
+        result = request.send() => result?,
+    };
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();

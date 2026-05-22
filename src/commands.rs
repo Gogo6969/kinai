@@ -1275,6 +1275,30 @@ pub async fn send_message(
     let active_llm_settings = route_pick.settings.clone();
     let llm = crate::llm::LlmClient::new(active_llm_settings.clone());
     let cancel = CancellationToken::new();
+    // Register the token under the frontend-supplied client_msg_id so
+    // stop_generation can cancel THIS turn specifically (not whatever
+    // happens to be running). Deregistered in the guard below regardless
+    // of how the turn ends — success, error, or panic.
+    state
+        .pending_turns
+        .lock()
+        .insert(args.client_msg_id.clone(), cancel.clone());
+    // Drop-guard removes the token when this function returns, so a
+    // panic mid-pipeline doesn't leak entries that would later get
+    // cancelled by accident on a future turn with the same id.
+    struct TurnGuard {
+        id: String,
+        pending: Arc<parking_lot::Mutex<std::collections::HashMap<String, CancellationToken>>>,
+    }
+    impl Drop for TurnGuard {
+        fn drop(&mut self) {
+            self.pending.lock().remove(&self.id);
+        }
+    }
+    let _turn_guard = TurnGuard {
+        id: args.client_msg_id.clone(),
+        pending: state.pending_turns.clone(),
+    };
 
     let app_for_token = app.clone();
     let client_id_token = args.client_msg_id.clone();
@@ -1415,11 +1439,41 @@ pub async fn send_message(
     })
 }
 
+#[derive(Debug, Deserialize)]
+pub struct StopGenerationArgs {
+    /// The client-supplied id the frontend used when calling send_message.
+    /// When set, only that turn is cancelled; this is the normal case
+    /// (the Stop button knows which turn it's looking at). When None,
+    /// every in-flight turn is cancelled — useful as a "panic button"
+    /// from a context where the id is unavailable.
+    #[serde(default)]
+    pub client_msg_id: Option<String>,
+}
+
+/// Cancel an in-flight chat turn. The token's `.cancel()` propagates
+/// through `crate::llm::stream::pump` (which awaits `cancel.cancelled()`
+/// in `tokio::select!`) and through `crate::tools::loop_pipeline`
+/// (which checks `cancel.is_cancelled()` between iterations), so the
+/// LLM HTTP body stops being read and the next tool iteration is
+/// skipped. The pending-turns guard in `send_message` removes the
+/// entry on completion regardless of how the turn ends, so we
+/// silently no-op when the id isn't found (turn already finished).
 #[tauri::command]
-pub async fn stop_generation(_state: tauri::State<'_, SharedState>) -> Result<()> {
-    // For MVP: simplified — cancellation tokens belong to in-flight tasks
-    // and the host UI just stops listening. v1.0 ties this into peer-tagged
-    // cancellation.
+pub async fn stop_generation(
+    state: tauri::State<'_, SharedState>,
+    args: Option<StopGenerationArgs>,
+) -> Result<()> {
+    let target = args.and_then(|a| a.client_msg_id);
+    let tokens: Vec<CancellationToken> = {
+        let mut map = state.pending_turns.lock();
+        match target {
+            Some(ref id) => map.remove(id).into_iter().collect(),
+            None => map.drain().map(|(_, t)| t).collect(),
+        }
+    };
+    for t in tokens {
+        t.cancel();
+    }
     Ok(())
 }
 

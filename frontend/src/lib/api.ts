@@ -327,7 +327,16 @@ export const api = {
     'send_message',
     { args }
   ),
-  stopGeneration: () => invoke<void>('stop_generation'),
+  /**
+   * Cancel an in-flight chat turn. Pass the client_msg_id used by the
+   * original sendMessage call to cancel that specific turn; omit the
+   * argument to cancel every in-flight turn (the "panic button" path).
+   * Safe to call when nothing is running — silently no-ops on the host.
+   */
+  stopGeneration: (clientMsgId?: string) =>
+    invoke<void>('stop_generation', {
+      args: clientMsgId ? { client_msg_id: clientMsgId } : null,
+    }),
 
   startHost: () => invoke<void>('start_host'),
   stopHost: () => invoke<void>('stop_host'),

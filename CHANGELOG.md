@@ -7,6 +7,42 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [0.2.32] — 2026-05-21
 
+### Fixed (the other big one — read this if you've ever had to force-quit)
+
+- **The Stop button actually stops now.** The little square that
+  appeared during a turn was a placeholder — clicking it called
+  `app.send('')` (i.e. tried to send an empty message), which the
+  send-guard immediately rejected, so the button did nothing. The
+  matching backend command (`stop_generation`) was a stub that
+  returned Ok with a `// MVP: simplified` comment. End result: when
+  KinAI hung mid-turn — three dots pulsing, no answer, no tokens
+  ever — the only recovery was Force Quit. This release wires the
+  whole path end-to-end:
+  - Every send_message registers its `CancellationToken` in a
+    per-app `pending_turns` map keyed by the client-supplied
+    message id. A Drop-guard removes the entry on completion (or
+    panic, so a crashed turn can't leak a stale entry).
+  - The Stop button calls a new `stopGeneration(client_msg_id)`
+    IPC which looks up the token and fires `.cancel()`. The
+    cancellation propagates through `loop_pipeline` (which
+    checks `cancel.is_cancelled()` between each delta and between
+    tool rounds) and through `stream::pump` (which selects
+    between `cancel.cancelled()` and the SSE stream).
+  - The really subtle bit: the HTTP `request.send().await` that
+    OPENS the LLM stream wasn't itself selectable on the cancel
+    token. So when the model was hung BEFORE producing any
+    bytes (TCP connected, headers never arrive — common with
+    overloaded Ollama / vLLM servers), the entire stack was
+    blocked on a single uncancellable await and no amount of
+    token-firing helped. Wrapped that await in a `tokio::select!`
+    against the cancel token, which is the actual mechanical fix
+    for the hung-turn case the user hit.
+  - The frontend also clears its local placeholders + `busy`
+    flag immediately on click, with a 2s ceiling on waiting for
+    the IPC. If the host is so wedged that even the cancel IPC
+    hangs, the UI still becomes responsive — you can send the
+    next message instead of restarting KinAI.
+
 ### Added
 
 - **Conversations now name themselves.** The first user message

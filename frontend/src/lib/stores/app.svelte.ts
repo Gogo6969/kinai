@@ -22,6 +22,11 @@ class AppStore {
   metricsByMsgId = $state<Record<string, TurnMetrics>>({});
   stats = $state<RuntimeStats | null>(null);
   busy = $state(false);
+  /** client_msg_id of the turn currently in flight. Set the moment we
+   *  call api.sendMessage, cleared on AssistantDone / disconnect /
+   *  cancel. The Stop button uses this to address its cancel call at
+   *  the correct turn rather than a global "cancel everything." */
+  activeTurnId = $state<string | null>(null);
   /** Live status of the client → host WebSocket. `null` until the first
    *  status event arrives so the UI can avoid flashing "Disconnected"
    *  during the dial. */
@@ -214,6 +219,7 @@ class AppStore {
     }
     const clientMsgId = crypto.randomUUID();
     this.busy = true;
+    this.activeTurnId = clientMsgId;
     // Pre-seed the placeholders so the thinking-dots bubble renders
     // immediately, even before the first reasoning/tool/token event
     // arrives. We deliberately DO NOT delete them in `finally` — in
@@ -241,7 +247,45 @@ class AppStore {
       delete this.reasoning[clientMsgId];
       delete this.toolActivity[clientMsgId];
       this.busy = false;
+      this.activeTurnId = null;
     }
+  }
+
+  /**
+   * Abort the current chat turn. Sends a stop_generation IPC at the
+   * Rust side (cancels the LLM stream + any pending tool iteration via
+   * the CancellationToken plumbing), then unconditionally clears the
+   * local placeholders so the UI is responsive even if the backend
+   * takes a moment to wind down a stuck HTTP read. Safe to call when
+   * nothing is in flight — no-ops cleanly.
+   */
+  async cancelCurrentTurn() {
+    const id = this.activeTurnId;
+    // Tell the backend to abort first (cheapest path: cancel the
+    // token, the in-flight request unwinds). Don't await indefinitely
+    // — if the host is wedged the IPC could hang, and the user is
+    // already frustrated. Promise.race with a 2s ceiling.
+    try {
+      await Promise.race([
+        api.stopGeneration(id ?? undefined),
+        new Promise<void>((resolve) => setTimeout(resolve, 2000)),
+      ]);
+    } catch (e) {
+      console.warn('stopGeneration IPC failed', e);
+    }
+    // Locally clear regardless: if the host honored cancel we'll get
+    // an AssistantDone (which is a no-op against an already-cleared
+    // turn); if it didn't, the user at least gets their UI back.
+    if (id) {
+      delete this.streaming[id];
+      delete this.reasoning[id];
+      delete this.toolActivity[id];
+      this.streaming = { ...this.streaming };
+      this.reasoning = { ...this.reasoning };
+      this.toolActivity = { ...this.toolActivity };
+    }
+    this.busy = false;
+    this.activeTurnId = null;
   }
 
   pushMessage(m: Message) {
@@ -332,6 +376,7 @@ class AppStore {
           this.toolActivity = { ...this.toolActivity };
         }
         this.busy = false;
+        this.activeTurnId = null;
       })
     );
     this.cleanups.push(await events.onStats((s) => (this.stats = s)));
@@ -341,7 +386,10 @@ class AppStore {
         // If the WebSocket drops mid-turn we'll never see an
         // AssistantDone — release the Send button so the user can retry
         // instead of being stuck on the Stop icon forever.
-        if (!s.connected) this.busy = false;
+        if (!s.connected) {
+          this.busy = false;
+          this.activeTurnId = null;
+        }
       })
     );
     this.cleanups.push(

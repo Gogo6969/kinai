@@ -466,8 +466,9 @@
         <button
           type="button"
           class="kin-btn"
-          onclick={() => app.send('').catch(() => {})}
-          aria-label="Stop"
+          onclick={() => app.cancelCurrentTurn().catch(() => {})}
+          aria-label="Stop generating"
+          title="Stop this turn"
         >
           <Square size={14} />
         </button>

@@ -23,9 +23,12 @@ pub mod vision;
 
 use std::sync::Arc;
 
+use std::collections::HashMap;
+
 use parking_lot::RwLock;
 use tauri::{AppHandle, Manager, RunEvent};
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 use crate::config::{AppConfig, Mode};
 use crate::db::Db;
@@ -40,6 +43,12 @@ pub struct AppState {
     /// Telegram supervisor handle — lets the runtime stop and restart
     /// the long-poll loop when the bot token changes in Settings.
     pub telegram: Arc<telegram::TelegramSupervisor>,
+    /// In-flight LLM turns keyed by the client_msg_id the frontend used
+    /// when calling send_message. The CancellationToken propagates into
+    /// stream::open and loop_pipeline so the Stop button can actually
+    /// abort a hung turn instead of leaving the user with a perpetual
+    /// "typing…" indicator. Cleaned up in send_message's finish path.
+    pub pending_turns: Arc<parking_lot::Mutex<HashMap<String, CancellationToken>>>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -108,6 +117,7 @@ pub fn run() {
         net: net.clone(),
         stats: RwLock::new(RuntimeStats::default()),
         telegram: Arc::new(telegram::TelegramSupervisor::default()),
+        pending_turns: Arc::new(parking_lot::Mutex::new(HashMap::new())),
     });
 
     tauri::Builder::default()
