@@ -116,6 +116,52 @@ class AppStore {
     this.messages[t.id] = [];
   }
 
+  /**
+   * Rename a thread. Persists via Rust command, then patches the local
+   * store so the sidebar updates without a full reload. Idempotent; safe
+   * to call with the same title twice.
+   */
+  async renameThread(id: string, title: string) {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    await api.renameThread(id, trimmed);
+    const idx = this.threads.findIndex((t) => t.id === id);
+    if (idx >= 0) {
+      this.threads[idx] = { ...this.threads[idx], title: trimmed };
+    }
+  }
+
+  /**
+   * Derive a short, human-readable title from the first message a user
+   * sends in a thread. Used to replace the placeholder "New conversation"
+   * / "Welcome" / "Quick chat" titles the moment a real topic appears, so
+   * the sidebar stops looking like a list of identical bookmarks.
+   *
+   * Rules:
+   *   - Collapse whitespace.
+   *   - Prefer to break at the first sentence-ending punctuation that
+   *     falls between 10 and 60 chars in (keeps "Why is the sky blue?"
+   *     intact instead of cutting it).
+   *   - Otherwise cap at 50 chars with an ellipsis.
+   *   - Strip trailing punctuation (".", "!", "?", ",", ";", ":") — they
+   *     look noisy in a one-line list.
+   *   - Empty input falls back to the original "New conversation" so we
+   *     never end up with a blank title row.
+   */
+  private deriveThreadTitle(text: string): string {
+    const flat = text.replace(/\s+/g, ' ').trim();
+    if (!flat) return 'New conversation';
+    let title = flat;
+    const sentenceMatch = flat.match(/^(.{10,60}?[.!?])(\s|$)/);
+    if (sentenceMatch) {
+      title = sentenceMatch[1];
+    } else if (flat.length > 50) {
+      title = flat.slice(0, 47).trimEnd() + '…';
+    }
+    title = title.replace(/[.!?,;:]+$/, '').trim();
+    return title || 'New conversation';
+  }
+
   async deleteThread(id: string) {
     await api.deleteThread(id);
     this.threads = this.threads.filter((t) => t.id !== id);
@@ -135,6 +181,36 @@ class AppStore {
       this.threads = [t, ...this.threads];
       this.activeThreadId = t.id;
       this.messages[t.id] = [];
+    }
+    // Auto-name the thread from this first user message if the title is
+    // still one of the system-assigned placeholders. We deliberately do
+    // NOT rename "Telegram" threads (those carry a meaningful label that
+    // tells the user which thread is bound to the bot) or any title the
+    // user has already customised. Fires before sendMessage so the
+    // sidebar updates in the same tick the message goes out — no flash
+    // of "New conversation" → real title.
+    const PLACEHOLDER_TITLES = new Set([
+      'New conversation',
+      'Welcome',
+      'Quick chat',
+    ]);
+    const activeThread = this.threads.find((t) => t.id === this.activeThreadId);
+    const hasNoPriorMessages = !this.messages[this.activeThreadId]?.length;
+    if (
+      activeThread &&
+      hasNoPriorMessages &&
+      PLACEHOLDER_TITLES.has(activeThread.title) &&
+      content.trim()
+    ) {
+      const newTitle = this.deriveThreadTitle(content);
+      if (newTitle !== activeThread.title) {
+        // Fire-and-forget — we don't want a slow renameThread IPC to
+        // block sending the actual message. If it fails the user can
+        // still rename manually via the sidebar edit affordance.
+        void this.renameThread(this.activeThreadId, newTitle).catch((e) =>
+          console.warn('auto-rename failed', e)
+        );
+      }
     }
     const clientMsgId = crypto.randomUUID();
     this.busy = true;

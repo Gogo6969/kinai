@@ -3,7 +3,8 @@
   import { api } from '$lib/api';
   import { goto } from '$app/navigation';
   import Logo from './Logo.svelte';
-  import { Plus, Settings as Cog, Users, Trash2, Cpu, RefreshCw } from '@lucide/svelte';
+  import { Plus, Settings as Cog, Users, Trash2, Cpu, RefreshCw, Pencil } from '@lucide/svelte';
+  import { tick } from 'svelte';
 
   async function newChat() {
     const previousId = app.activeThreadId;
@@ -36,6 +37,57 @@
   async function remove(id: string, e: Event) {
     e.stopPropagation();
     if (confirm('Delete this conversation?')) await app.deleteThread(id);
+  }
+
+  // ---- Inline rename ----
+  // One thread at a time is editable; clicking the pencil swaps the
+  // title span for an <input>. Enter / blur commits, Escape cancels.
+  // Empty input is treated as "no change" so a fumbled edit can't
+  // result in an unlabeled row.
+  let editingId = $state<string | null>(null);
+  let editValue = $state('');
+
+  async function startRename(id: string, currentTitle: string, e: Event) {
+    e.stopPropagation();
+    editingId = id;
+    editValue = currentTitle;
+    await tick();
+    const input = document.getElementById(`thread-rename-${id}`) as HTMLInputElement | null;
+    input?.focus();
+    input?.select();
+  }
+
+  async function commitRename(id: string) {
+    const next = editValue.trim();
+    const current = app.threads.find((t) => t.id === id)?.title ?? '';
+    if (next && next !== current) {
+      try {
+        await app.renameThread(id, next);
+      } catch (e) {
+        window.dispatchEvent(
+          new CustomEvent('kin-toast', {
+            detail: { msg: `✗ Couldn't rename: ${String(e).replace(/^Error:\s*/, '')}`, ms: 4000 },
+          })
+        );
+      }
+    }
+    editingId = null;
+    editValue = '';
+  }
+
+  function cancelRename() {
+    editingId = null;
+    editValue = '';
+  }
+
+  function onRenameKey(id: string, e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      void commitRename(id);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancelRename();
+    }
   }
 
   let reconnecting = $state(false);
@@ -124,26 +176,54 @@
 
   <nav class="flex-1 overflow-y-auto px-2 py-2 space-y-0.5">
     {#each app.threads as t (t.id)}
-      <button
-        type="button"
-        class="group w-full text-left rounded-md px-3 py-2 text-sm truncate flex items-center justify-between gap-2 transition-colors
+      <div
+        role="button"
+        tabindex="0"
+        class="group w-full text-left rounded-md px-3 py-2 text-sm flex items-center justify-between gap-2 transition-colors cursor-pointer
                {app.activeThreadId === t.id
                  ? 'bg-white/10 text-white'
                  : 'text-white/70 hover:bg-white/5'}"
-        onclick={() => select(t.id)}
+        onclick={() => { if (editingId !== t.id) select(t.id); }}
+        onkeydown={(e) => { if (editingId !== t.id && e.key === 'Enter') select(t.id); }}
       >
-        <span class="truncate">{t.title || 'Untitled'}</span>
-        <span
-          role="button"
-          tabindex="0"
-          class="opacity-0 group-hover:opacity-100 text-white/60 hover:text-red-300 transition-opacity"
-          onclick={(e) => remove(t.id, e)}
-          onkeydown={(e) => { if (e.key === 'Enter') remove(t.id, e); }}
-          aria-label="Delete conversation"
-        >
-          <Trash2 size={13} />
-        </span>
-      </button>
+        {#if editingId === t.id}
+          <input
+            id="thread-rename-{t.id}"
+            type="text"
+            class="flex-1 min-w-0 bg-white/10 text-white rounded px-2 py-0.5 text-sm outline-none ring-1 ring-teal-400/60 focus:ring-teal-300"
+            bind:value={editValue}
+            onclick={(e) => e.stopPropagation()}
+            onkeydown={(e) => onRenameKey(t.id, e)}
+            onblur={() => commitRename(t.id)}
+            maxlength="80"
+          />
+        {:else}
+          <span class="truncate flex-1 min-w-0">{t.title || 'Untitled'}</span>
+          <span class="shrink-0 flex items-center gap-1.5">
+            <span
+              role="button"
+              tabindex="0"
+              class="opacity-0 group-hover:opacity-100 text-white/60 hover:text-teal-300 transition-opacity"
+              onclick={(e) => startRename(t.id, t.title || '', e)}
+              onkeydown={(e) => { if (e.key === 'Enter') startRename(t.id, t.title || '', e); }}
+              aria-label="Rename conversation"
+              title="Rename"
+            >
+              <Pencil size={13} />
+            </span>
+            <span
+              role="button"
+              tabindex="0"
+              class="opacity-0 group-hover:opacity-100 text-white/60 hover:text-red-300 transition-opacity"
+              onclick={(e) => remove(t.id, e)}
+              onkeydown={(e) => { if (e.key === 'Enter') remove(t.id, e); }}
+              aria-label="Delete conversation"
+            >
+              <Trash2 size={13} />
+            </span>
+          </span>
+        {/if}
+      </div>
     {/each}
     {#if app.threads.length === 0}
       <div class="text-xs text-white/40 px-3 py-2">No conversations yet.</div>

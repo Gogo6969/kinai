@@ -7,6 +7,29 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [0.2.32] — 2026-05-21
 
+### Added
+
+- **Conversations now name themselves.** The first user message
+  you send in a thread becomes the thread title automatically,
+  replacing the generic "New conversation" / "Welcome" / "Quick
+  chat" placeholder. So a chat that starts with "What is going
+  on in the world today?" lands in the sidebar as "What is going
+  on in the world today" instead of yet another "New conversation"
+  row. Title-derivation rules: collapse whitespace, prefer a clean
+  break at the first sentence-ending punctuation between 10–60
+  chars in, otherwise cap at 50 chars with an ellipsis, strip
+  trailing punctuation. Telegram-paired threads stay labeled
+  "Telegram" (they're meant to be visually distinct), and any
+  title you've already customised is left alone.
+
+- **Rename any conversation in place.** A small pencil icon
+  appears next to the trash icon on hover in the sidebar. Click
+  it to inline-edit the title — Enter saves, Escape cancels,
+  clicking elsewhere also saves. Useful for tidying up
+  auto-generated titles, grouping related chats with shared
+  prefixes ("Code · …", "Recipes · …"), or fixing a title after
+  the conversation drifted to a different topic.
+
 ### Fixed (critical — read this first)
 
 - **The prompt context-builder was loading the OLDEST 50 messages of
