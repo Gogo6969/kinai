@@ -5,6 +5,25 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.37] — 2026-05-23
+
+### Fixed
+
+- **`/pic` / `/picHQ` no longer dumps an HTML error page into your
+  chat when ComfyUI is unavailable.** When the upstream ComfyUI host
+  returned a 503 with an HTML "service unavailable" page (Olares does
+  this when the user's ComfyUI instance has been spun down), KinAI's
+  error handler concatenated the entire 3 KB of inline `<style>` +
+  `<script>` + `<div>` into the failure message — which then got
+  rendered verbatim in the chat bubble. Ugly to read and a privacy
+  leak (the Olares page embeds the user's admin subdomain URLs).
+  Now wrapped through a `summarize_comfy_error` helper that:
+  detects HTML by sniffing the body, tries to extract the `<h1>` or
+  `<title>` so the user still sees a meaningful label ("ComfyUI
+  Unavailable"), falls back to a canned message keyed off the HTTP
+  status code (503 / 502 / 504), and caps any plain-text body at
+  300 characters. Five unit tests cover the cases.
+
 ## [0.2.36] — 2026-05-23
 
 ### Fixed (critical for Windows users)

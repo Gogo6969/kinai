@@ -139,7 +139,7 @@ pub async fn generate(
     if !submit_resp.status().is_success() {
         let status = submit_resp.status();
         let body = submit_resp.text().await.unwrap_or_default();
-        bail!("ComfyUI rejected submission ({status}): {body}");
+        bail!("{}", summarize_comfy_error(status, &body));
     }
 
     let submit: Value = submit_resp.json().await.context("parse submit response")?;
@@ -258,6 +258,147 @@ pub async fn generate(
         bytes: bytes.len(),
         elapsed_secs: t_start.elapsed().as_secs_f64(),
     })
+}
+
+/// Render a human-readable error from a non-success ComfyUI HTTP
+/// response WITHOUT dumping a multi-kilobyte HTML page into the chat
+/// bubble. Olares' "ComfyUI Unavailable" 503 page is ~3 KB of inline
+/// `<style>` + `<script>`; before this helper, that whole blob ended
+/// up rendered verbatim under "/picHQ failed after 0.0s: …" — which
+/// was both unreadable and a privacy leak (the page embeds the
+/// host's admin subdomains).
+///
+/// Strategy:
+///   1. If the body looks like HTML, try to extract an `<h1>` or
+///      `<title>` so the user sees the actual error label
+///      ("ComfyUI Unavailable" etc.).
+///   2. Otherwise fall back to a canned message keyed off the HTTP
+///      status (503 / 502 / 504 / generic).
+///   3. Plain-text and JSON bodies pass through but are capped at
+///      300 chars so a future verbose backend can't blow up the
+///      bubble.
+fn summarize_comfy_error(status: reqwest::StatusCode, body: &str) -> String {
+    let trimmed = body.trim();
+    let lower = trimmed.to_lowercase();
+    let looks_html = trimmed.starts_with('<')
+        || lower.contains("<!doctype")
+        || lower.contains("<html")
+        || lower.contains("<body");
+
+    if looks_html {
+        if let Some(headline) = extract_tag_text(trimmed, &lower, "<h1>", "</h1>")
+            .or_else(|| extract_tag_text(trimmed, &lower, "<title>", "</title>"))
+        {
+            return format!(
+                "ComfyUI is unavailable: {headline} (HTTP {})",
+                status.as_u16()
+            );
+        }
+        return match status.as_u16() {
+            503 => "ComfyUI is unavailable (HTTP 503). The image-generation service \
+                    isn't running or isn't reachable from KinAI. Check the ComfyUI \
+                    host or try again in a moment."
+                .into(),
+            502 => "ComfyUI returned HTTP 502 Bad Gateway. The upstream image \
+                    service is misconfigured or down."
+                .into(),
+            504 => "ComfyUI returned HTTP 504 Gateway Timeout. The upstream image \
+                    service didn't respond in time."
+                .into(),
+            _ => format!(
+                "ComfyUI returned HTTP {} with an HTML error page (no usable detail).",
+                status.as_u16()
+            ),
+        };
+    }
+
+    if trimmed.is_empty() {
+        return format!("ComfyUI returned HTTP {} with no body.", status.as_u16());
+    }
+    let snippet = if trimmed.chars().count() > 300 {
+        let cut: String = trimmed.chars().take(300).collect();
+        format!("{cut}…")
+    } else {
+        trimmed.to_string()
+    };
+    format!("ComfyUI rejected submission (HTTP {}): {snippet}", status)
+}
+
+/// Pull the visible text out of the first `<open>...</close>` pair,
+/// stripping any nested tags. Case-insensitive match on the tag
+/// names (lookups use the caller-supplied lowercase copy of `orig`),
+/// content is sliced from the original-case string so the user sees
+/// "ComfyUI Unavailable", not "comfyui unavailable".
+fn extract_tag_text(orig: &str, lower: &str, open: &str, close: &str) -> Option<String> {
+    let start = lower.find(open)?;
+    let body_start = start + open.len();
+    let body_lower = lower.get(body_start..)?;
+    let end_rel = body_lower.find(close)?;
+    let text = orig.get(body_start..body_start + end_rel)?;
+    let mut out = String::new();
+    let mut depth: u32 = 0;
+    for c in text.chars() {
+        if c == '<' {
+            depth += 1;
+        } else if c == '>' {
+            depth = depth.saturating_sub(1);
+        } else if depth == 0 {
+            out.push(c);
+        }
+    }
+    let cleaned = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    if cleaned.is_empty() || cleaned.chars().count() > 200 {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
+#[cfg(test)]
+mod summarize_tests {
+    use super::*;
+
+    #[test]
+    fn html_503_extracts_h1() {
+        let body = "<html><body><h1>ComfyUI Unavailable</h1><p>down</p></body></html>";
+        let s = summarize_comfy_error(reqwest::StatusCode::SERVICE_UNAVAILABLE, body);
+        assert!(s.contains("ComfyUI Unavailable"), "got: {s}");
+        assert!(s.contains("503"), "got: {s}");
+        assert!(!s.contains("<"), "shouldn't leak HTML: {s}");
+    }
+
+    #[test]
+    fn html_503_no_h1_falls_back_to_canned() {
+        let body = "<html><body><div>oops</div></body></html>";
+        let s = summarize_comfy_error(reqwest::StatusCode::SERVICE_UNAVAILABLE, body);
+        assert!(s.contains("503"), "got: {s}");
+        assert!(!s.contains("<"), "shouldn't leak HTML: {s}");
+    }
+
+    #[test]
+    fn plain_text_passes_through_capped() {
+        let s = summarize_comfy_error(
+            reqwest::StatusCode::BAD_REQUEST,
+            "node 12 missing input",
+        );
+        assert!(s.contains("node 12 missing input"), "got: {s}");
+        assert!(s.contains("400"), "got: {s}");
+    }
+
+    #[test]
+    fn long_text_is_truncated() {
+        let body = "x".repeat(2000);
+        let s = summarize_comfy_error(reqwest::StatusCode::BAD_REQUEST, &body);
+        assert!(s.chars().count() < 500, "should be capped: len={}", s.chars().count());
+        assert!(s.ends_with('…'), "should end with ellipsis: {s}");
+    }
+
+    #[test]
+    fn empty_body_named() {
+        let s = summarize_comfy_error(reqwest::StatusCode::BAD_GATEWAY, "");
+        assert!(s.contains("502"), "got: {s}");
+        assert!(s.contains("no body"), "got: {s}");
+    }
 }
 
 /// Parse a `/pic …` or `/picHQ …` chat message.
