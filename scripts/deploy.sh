@@ -151,40 +151,51 @@ stage_windows_update() {
     fi
   fi
 
-  # Tauri-bundler produces one of two updater bundle types on Windows:
-  # .msi.zip (when bundles=msi,updater) or .nsis.zip (when bundles=
-  # nsis,updater). Either works for auto-update; the file extension
-  # tells the client how to unpack. Prefer MSI (closer to enterprise
-  # norms); fall back to NSIS.
-  local SRC_ZIP SRC_SIG DEST_NAME
-  SRC_ZIP=$(find "$TMP" -name '*.msi.zip' -type f 2>/dev/null | head -1)
-  SRC_SIG=$(find "$TMP" -name '*.msi.zip.sig' -type f 2>/dev/null | head -1)
-  DEST_NAME="KinAI.msi.zip"
-  if [[ -z "$SRC_ZIP" || -z "$SRC_SIG" ]]; then
-    SRC_ZIP=$(find "$TMP" -name '*.nsis.zip' -type f 2>/dev/null | head -1)
-    SRC_SIG=$(find "$TMP" -name '*.nsis.zip.sig' -type f 2>/dev/null | head -1)
-    DEST_NAME="KinAI.nsis.zip"
+  # Tauri-bundler produces these Windows artifacts:
+  #   *.msi        + *.msi.sig          (raw MSI + signature)
+  #   *.msi.zip    + *.msi.zip.sig      (zipped wrapper + signature)
+  #   *.exe        + *.exe.sig          (NSIS installer + signature)
+  #   *.nsis.zip   + *.nsis.zip.sig     (zipped NSIS + signature)
+  #
+  # We used to stage the .msi.zip wrapper because the Tauri 1.x updater
+  # required it. The Tauri 2.x updater (tauri-plugin-updater 2.10.x)
+  # accepts the raw .msi directly via its extract_exe → infer::is_msi
+  # path — and crucially, its zip-extraction path CANNOT decompress
+  # DEFLATE because the plugin declares `zip = { default-features =
+  # false }` with no compression backends enabled. Every Windows client
+  # trying to install a .msi.zip update tripped "Unsupported Zip
+  # Archive: Compression method not supported".
+  #
+  # So we stage the raw .msi now. Smaller change footprint, no zip
+  # crate involved, works on every Tauri 2.x version regardless of
+  # plugin internals.
+  local SRC_MSI SRC_MSI_SIG DEST_NAME
+  SRC_MSI=$(find "$TMP" -name '*.msi' -type f -not -name '*.zip' 2>/dev/null | head -1)
+  SRC_MSI_SIG=$(find "$TMP" -name '*.msi.sig' -type f -not -name '*.zip.sig' 2>/dev/null | head -1)
+  DEST_NAME="KinAI.msi"
+  if [[ -z "$SRC_MSI" || -z "$SRC_MSI_SIG" ]]; then
+    # Fallback to NSIS .exe if MSI isn't available (older artifact
+    # builds, or a future workflow that only emits NSIS).
+    SRC_MSI=$(find "$TMP" -name '*.exe' -type f 2>/dev/null | head -1)
+    SRC_MSI_SIG=$(find "$TMP" -name '*.exe.sig' -type f 2>/dev/null | head -1)
+    DEST_NAME="KinAI.exe"
   fi
-  if [[ -z "$SRC_ZIP" || -z "$SRC_SIG" ]]; then
-    echo "  ⚠ Windows artifacts don't contain a .msi.zip / .nsis.zip + .sig pair. Skipping."
+  if [[ -z "$SRC_MSI" || -z "$SRC_MSI_SIG" ]]; then
+    echo "  ⚠ Windows artifacts don't contain a .msi/.exe + .sig pair. Skipping."
     rm -rf "$TMP"
     return
   fi
-  # Override the canonical destination filename when NSIS — the host's
-  # /v1/update/manifest endpoint serves whatever filename matches the
-  # target. We pass DEST_NAME through to the rest of the function via
-  # the (now-redefined) DEST/SIG_DEST below.
   DEST="$STAGE_DIR/$DEST_NAME"
   SIG_DEST="$DEST.sig"
 
   mkdir -p "$STAGE_DIR"
-  cp "$SRC_ZIP" "$DEST"
-  cp "$SRC_SIG" "$SIG_DEST"
+  cp "$SRC_MSI" "$DEST"
+  cp "$SRC_MSI_SIG" "$SIG_DEST"
   ln -sfn "${NEW_VERSION}" "$HOME/.kinai/updates/latest-${TARGET}"
   rm -rf "$TMP"
 
   echo "  ✓ staged Windows update at $STAGE_DIR"
-  echo "    ($(ls -lh "$DEST" | awk '{print $5}') zip + signature)"
+  echo "    ($(ls -lh "$DEST" | awk '{print $5}') raw $DEST_NAME + signature)"
 }
 
 install_linux() {

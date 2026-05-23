@@ -5,6 +5,38 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.36] — 2026-05-23
+
+### Fixed (critical for Windows users)
+
+- **Windows auto-update was completely broken since v0.2.13** with
+  the error *"Unsupported Zip Archive: Compression method not
+  supported"*. The Tauri 2.x updater plugin (`tauri-plugin-updater
+  2.10.x`) declares its `zip` crate dependency with
+  `default-features = false` and adds no compression backends, so
+  the bundled zip crate could not decompress DEFLATE — the
+  compression method every `.msi.zip` uses. Every Windows client
+  trying to install a KinAI update saw the banner, clicked it, and
+  got the error with no path forward.
+
+  Fix: stop wrapping the MSI in a zip at all. The Tauri 2.x updater
+  accepts raw `.msi` files directly (its `extract_exe` →
+  `infer::archive::is_msi` path detects them by magic bytes and
+  invokes `msiexec` straight on the download). We now:
+  - Stage the raw `.msi` (and `.msi.sig`) in the host's update
+    directory instead of the zipped wrapper — see `scripts/deploy.sh`.
+  - Resolve `KinAI.msi` first (then `KinAI.exe`, then legacy
+    `KinAI.msi.zip`) in `src/network/updates.rs::bundle_filenames`.
+  - Point GitHub's `latest.json[windows-x86_64].url` at the raw
+    `.msi` with the `.msi.sig` signature, so clients hitting the
+    GitHub fallback skip the broken zip path too.
+
+  Hot-patched v0.2.35 already: anyone stuck on the "Unsupported
+  Zip Archive" error gets unstuck the next time their updater
+  polls (within ~1 hour, or immediately when they click the
+  banner again). Newer versions are durable — no more zip
+  wrapping anywhere in the Windows pipeline.
+
 ## [0.2.35] — 2026-05-22
 
 ### Changed

@@ -42,14 +42,25 @@ use tokio::io::AsyncReadExt;
 use super::server::AxumState;
 
 /// Candidate bundle filenames per target. The manifest endpoint serves
-/// whichever one is actually on disk (Tauri produces .msi.zip on Windows
-/// when `--bundles msi,updater`, or .nsis.zip when `--bundles nsis,updater`;
-/// either works for auto-update — Tauri's updater dispatches off the
-/// extension).
+/// whichever one is actually on disk.
+///
+/// Windows: we stage the raw `.msi` (and fall back to `.exe` NSIS),
+/// NOT the `.msi.zip` wrapper. The Tauri 2.x updater's zip-extraction
+/// path declares `zip = { default-features = false }` with no
+/// compression backends, so it can't decompress DEFLATE-compressed
+/// zips — every `.msi.zip` we used to ship tripped "Unsupported Zip
+/// Archive: Compression method not supported". Serving the raw .msi
+/// avoids the zip path entirely; `extract_exe` → `infer::is_msi`
+/// detects it as MSI and installs directly.
+///
+/// `.msi.zip` is kept as a fallback for legacy hosts that still stage
+/// the wrapper format. It won't work on Tauri 2.10.x clients but
+/// won't break anything either; deploy.sh now writes the raw .msi
+/// so new hosts auto-fix on first redeploy.
 fn bundle_filenames(target: &str) -> &'static [&'static str] {
     match target {
         "darwin-aarch64" | "darwin-x86_64" => &["KinAI.app.tar.gz"],
-        "windows-x86_64" => &["KinAI.msi.zip", "KinAI.nsis.zip"],
+        "windows-x86_64" => &["KinAI.msi", "KinAI.exe", "KinAI.msi.zip", "KinAI.nsis.zip"],
         // Future: linux-x86_64 → &["KinAI.AppImage.tar.gz"]
         _ => &[],
     }
@@ -252,6 +263,10 @@ async fn serve_target(target: &str, want_signature: bool) -> Result<Response, (S
         (sig_path, "text/plain; charset=utf-8")
     } else if fname.ends_with(".zip") {
         (bundle_path, "application/zip")
+    } else if fname.ends_with(".msi") {
+        (bundle_path, "application/x-msi")
+    } else if fname.ends_with(".exe") {
+        (bundle_path, "application/vnd.microsoft.portable-executable")
     } else {
         (bundle_path, "application/gzip")
     };
