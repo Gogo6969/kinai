@@ -71,7 +71,7 @@ toml = "0.8"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "macros", "migrate", "chrono", "uuid"] }
 
 # --- Auth (JWT RS256) ---
-jsonwebtoken = "9"
+jsonwebtoken = "10"
 rsa = { version = "0.9", features = ["pem"] }
 pkcs8 = { version = "0.10", features = ["pem"] }
 rand = "0.8"
