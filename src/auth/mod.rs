@@ -65,17 +65,18 @@ pub fn validate_token(token: &str, expected_host_url: &str) -> Result<Claims> {
 /// the host's public key yet — that comes later, on the WebSocket connect,
 /// where the host itself verifies its own signature.
 ///
-/// Previously this used `ensure_keys()` and validated with the LOCAL public
-/// key, which always failed cross-machine ("Invalid signature") and broke
-/// the URL-paste pairing flow for any device joining a different host.
+/// Uses jsonwebtoken v10's `dangerous::insecure_decode` (the v9
+/// `Validation::insecure_disable_signature_validation()` flow is
+/// deprecated). The new API skips ALL validations (issuer, aud,
+/// signature, exp) — we re-check the issuer manually here so a bogus
+/// token at URL-paste time fails fast with a clear message rather than
+/// getting deferred to the WS-connect step. Signature is still
+/// re-verified there with the host's real public key.
 pub fn peek_token(token: &str) -> Result<Claims> {
-    let mut v = Validation::new(Algorithm::RS256);
-    v.set_issuer(&["kinai"]);
-    v.validate_aud = false;
-    v.insecure_disable_signature_validation();
-    // DecodingKey contents are ignored when signature validation is off,
-    // but the API still requires a key — use an empty one.
-    let key = DecodingKey::from_secret(&[]);
-    let data = decode::<Claims>(token, &key, &v).map_err(|e| anyhow!("jwt: {e}"))?;
+    let data = jsonwebtoken::dangerous::insecure_decode::<Claims>(token)
+        .map_err(|e| anyhow!("jwt: {e}"))?;
+    if data.claims.iss != "kinai" {
+        anyhow::bail!("jwt: unexpected issuer '{}'", data.claims.iss);
+    }
     Ok(data.claims)
 }
