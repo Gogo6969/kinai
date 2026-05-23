@@ -98,21 +98,46 @@ jobs:
       #   <name>.msi.zip.sig   — minisign signature of the .msi.zip
       # Same shape for .nsis.zip + .nsis.zip.sig wrapping the .exe.
       #
-      # We build them by hand here: Compress-Archive to produce the
-      # ZIP, then `pnpm tauri signer sign` (already a transitive dep)
-      # to produce the .sig with the same updater key that's baked
-      # into every install via tauri.conf.json's `pubkey`.
+      # IMPORTANT: do NOT use PowerShell's `Compress-Archive` here.
+      # It produces ZIPs with NTFS-timestamp extra fields and a
+      # version-needed-to-extract of 4.5+, which Tauri's Rust `zip`
+      # crate rejects at unpack time with "Unsupported Zip archive"
+      # — every Windows v0.2.35 client trying to auto-update from
+      # v0.2.34 hit exactly that error. Switching to 7-Zip (which
+      # is preinstalled on the windows-latest GitHub runner image
+      # at C:\Program Files\7-Zip\7z.exe) produces a conservative,
+      # spec-clean ZIP that the updater accepts.
+      #
+      # `-tzip -mx9` = ZIP container, max DEFLATE compression. The
+      # archive contains a single file at root: the .msi (or .exe).
+      # No extra fields, no ZIP64 unless the file genuinely exceeds
+      # 4 GB (our installers are ~12 MB, so this never trips).
+      #
+      # After zipping we run `pnpm tauri signer sign` to produce
+      # the .sig with the same updater key baked into every install
+      # via tauri.conf.json's `pubkey`.
       - name: Build updater zip + signature (.msi.zip / .nsis.zip)
         shell: pwsh
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
+          $sevenZip = "C:\Program Files\7-Zip\7z.exe"
+          if (-not (Test-Path $sevenZip)) {
+            Write-Host "::error::7-Zip not found at $sevenZip"
+            exit 1
+          }
+
           $msi = Get-ChildItem -Path target\x86_64-pc-windows-msvc\release\bundle\msi\ -Filter *.msi | Select-Object -First 1
           if ($msi) {
             $zipPath = "$($msi.FullName).zip"
-            Write-Host "Wrapping $($msi.FullName) → $zipPath"
-            Compress-Archive -Force -Path $msi.FullName -DestinationPath $zipPath
+            Write-Host "Wrapping $($msi.FullName) → $zipPath (via 7-Zip)"
+            # Push to the .msi's directory so the archive entry is just
+            # the basename — no leading path component the updater would
+            # have to strip.
+            Push-Location $msi.DirectoryName
+            & $sevenZip a -tzip -mx9 $zipPath $msi.Name
+            Pop-Location
             Write-Host "Signing $zipPath"
             pnpm tauri signer sign --private-key="$env:TAURI_SIGNING_PRIVATE_KEY" --password="$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "$zipPath"
           } else {
@@ -122,8 +147,10 @@ jobs:
           $exe = Get-ChildItem -Path target\x86_64-pc-windows-msvc\release\bundle\nsis\ -Filter *.exe | Select-Object -First 1
           if ($exe) {
             $zipPath = "$($exe.DirectoryName)\$([System.IO.Path]::GetFileNameWithoutExtension($exe.Name)).nsis.zip"
-            Write-Host "Wrapping $($exe.FullName) → $zipPath"
-            Compress-Archive -Force -Path $exe.FullName -DestinationPath $zipPath
+            Write-Host "Wrapping $($exe.FullName) → $zipPath (via 7-Zip)"
+            Push-Location $exe.DirectoryName
+            & $sevenZip a -tzip -mx9 $zipPath $exe.Name
+            Pop-Location
             Write-Host "Signing $zipPath"
             pnpm tauri signer sign --private-key="$env:TAURI_SIGNING_PRIVATE_KEY" --password="$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD" "$zipPath"
           } else {
