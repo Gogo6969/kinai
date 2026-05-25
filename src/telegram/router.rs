@@ -204,6 +204,34 @@ async fn run_turn_for_peer<R: Runtime>(
     // Slash commands intercept BEFORE the LLM — using the stripped
     // content so e.g. "/deep /pic …" routes through the deep slot and
     // also triggers /pic.
+    //
+    // Telegram-specific bypass for /help: the regular slash::handle
+    // returns Markdown-flavored text, which Telegram's default
+    // `sendMessage` (no parse_mode) renders as LITERAL `**asterisks**`
+    // and backticks — bad UX, makes the bot look amateur. We grab the
+    // HTML variant and send via `send_message_html` so section headers
+    // and command names render properly. The Markdown version still
+    // gets persisted to the DB so the desktop UI sees the same
+    // transcript the user sent on Telegram.
+    let trimmed = llm_route_content.trim();
+    if trimmed.eq_ignore_ascii_case("/help") || trimmed == "?" {
+        let html = crate::slash::help_html(&cfg);
+        let md = crate::slash::help_markdown(&cfg);
+        // Persist the markdown form so the desktop chat / fan-out shows
+        // it nicely too. send_message_html below pushes the HTML form
+        // to Telegram only.
+        let persisted = state
+            .db
+            .append_message(&thread_id, "assistant", "KinAI", &md, &[])
+            .await
+            .ok();
+        if let Some(msg) = persisted {
+            fan_out_message(state, app, peer_id, &msg).await;
+        }
+        api.send_message_html(chat_id, &html).await?;
+        return Ok(());
+    }
+
     if let Some(reply) = crate::slash::handle(&cfg, &llm_route_content).await {
         send_assistant_reply(
             api,

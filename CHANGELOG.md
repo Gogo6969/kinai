@@ -5,6 +5,24 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.38] — 2026-05-23
+
+### Fixed
+
+- **Telegram `/help` is properly formatted.** Was rendering as a flat
+  list of bullets with literal `**asterisks**` and `` `backticks` ``
+  in the bubble — the markdown was being sent through Telegram's
+  plain-text path, which doesn't interpret either syntax. Replaced
+  with a Telegram-HTML version (sent via `parse_mode=HTML`) that:
+  - groups commands into bold section headers (Models / Image
+    generation / Info),
+  - renders command names as inline `<code>` blocks,
+  - uses one short line per command (no wraparound).
+
+  The desktop chat still receives the original markdown form (and
+  persists it to the DB) so its `marked`-rendered bubbles look the
+  same as before. Only the Telegram presentation changed.
+
 ## [0.2.37] — 2026-05-23
 
 ### Fixed

@@ -142,35 +142,7 @@ pub async fn handle(cfg: &AppConfig, content: &str) -> Option<String> {
 
     // /help and ? — always available.
     if trimmed.eq_ignore_ascii_case("/help") || trimmed == "?" {
-        let comfy_on = crate::comfyui::is_configured(&cfg.comfyui.base_url);
-        let fast_on = cfg.llm.is_active();
-        let deep_on = cfg.llm_deep.is_active();
-        let mut lines: Vec<String> = vec![
-            "**Available slash commands**".into(),
-            "".into(),
-        ];
-        // Model-selector slashes show up only when there's an actual
-        // choice to make — a single-model setup hides them so the
-        // /help output isn't cluttered with redundant routing.
-        if fast_on && deep_on {
-            lines.push(format!(
-                "- `/fast <prompt>` — route this turn to the **fast** model (`{}`).",
-                cfg.llm.model
-            ));
-            lines.push(format!(
-                "- `/deep <prompt>` — route this turn to the **deep** model (`{}`). Slower but typically higher quality.",
-                cfg.llm_deep.model
-            ));
-        }
-        if comfy_on {
-            lines.push("- `/pic <prompt>` — generate an image (fast, ~5s, default 1280×720)".into());
-            lines.push("- `/picHQ <prompt>` — higher-quality image (slower, ~30s, default 1024×1024)".into());
-            lines.push("- Add an optional `WxH` prefix to override the size, e.g. `/pic 1024x1024 a sunset over Miami` or `/picHQ 1280x720 a sunset over Miami` — any size from 64×64 to 2048×2048.".into());
-        } else {
-            lines.push("- `/pic`, `/picHQ` — *(image generation not configured on this host — ask the host owner to set a ComfyUI URL in Settings → Image generation)*".into());
-        }
-        lines.push("- `/help` or `?` — show this list".into());
-        return Some(lines.join("\n"));
+        return Some(help_markdown(cfg));
     }
 
     // /pic and /picHQ
@@ -234,4 +206,94 @@ fn http_origin_for(cfg: &AppConfig) -> Option<String> {
         .map(|ip| ip.to_string())
         .unwrap_or_else(|_| cfg.host.bind_addr.clone());
     Some(format!("http://{host}:{}", cfg.host.port))
+}
+
+/// Markdown-flavored `/help` text. Rendered by the desktop chat (which
+/// runs the message through `marked`) and persisted to the DB so the
+/// thread keeps a readable transcript regardless of which client
+/// rendered it.
+///
+/// Section-grouped (Models / Image generation / Info) so it scans at
+/// a glance instead of being one wall of bullet points like the old
+/// version was.
+pub fn help_markdown(cfg: &AppConfig) -> String {
+    let comfy_on = crate::comfyui::is_configured(&cfg.comfyui.base_url);
+    let fast_on = cfg.llm.is_active();
+    let deep_on = cfg.llm_deep.is_active();
+    let mut out = String::from("**KinAI Commands**\n");
+
+    if fast_on && deep_on {
+        out.push_str("\n**Models**\n");
+        out.push_str(&format!(
+            "`/fast` — route this turn to the fast model (`{}`)\n",
+            cfg.llm.model
+        ));
+        out.push_str(&format!(
+            "`/deep` — route this turn to the deep model (`{}`), slower but higher quality\n",
+            cfg.llm_deep.model
+        ));
+    }
+
+    out.push_str("\n**Image generation**\n");
+    if comfy_on {
+        out.push_str("`/pic [WxH] <prompt>` — Z-Image Turbo (fast, ~5s, default 1280×720)\n");
+        out.push_str("`/picHQ [WxH] <prompt>` — Z-Image Base HQ (slower, ~30s, default 1024×1024)\n");
+        out.push_str("Optional `WxH` overrides the size, e.g. `/picHQ 1280x720 a sunset over Miami` — any size 64×64 to 2048×2048.\n");
+    } else {
+        out.push_str("*(image generation not configured on this host — ask the host owner to set a ComfyUI URL in Settings → Image generation)*\n");
+    }
+
+    out.push_str("\n**Info**\n");
+    out.push_str("`/help` or `?` — show this list\n");
+    out
+}
+
+/// Telegram-HTML version of `/help`. Sent with `parse_mode=HTML` so
+/// section headers come through as proper bold and command names
+/// render as inline code blocks. Without this, the same content sent
+/// as plain text via `sendMessage` produces literal asterisks and
+/// backticks in the bubble — visible noise instead of formatting.
+///
+/// Mirrors the structure of `help_markdown` so both renderings stay
+/// in sync; only the inline syntax differs (`<b>`/`<code>` vs.
+/// `**`/`` ` ``).
+pub fn help_html(cfg: &AppConfig) -> String {
+    let comfy_on = crate::comfyui::is_configured(&cfg.comfyui.base_url);
+    let fast_on = cfg.llm.is_active();
+    let deep_on = cfg.llm_deep.is_active();
+    let esc = telegram_html_escape;
+    let mut out = String::from("<b>KinAI Commands</b>\n");
+
+    if fast_on && deep_on {
+        out.push_str("\n<b>Models</b>\n");
+        out.push_str(&format!(
+            "<code>/fast</code> — route this turn to the fast model (<code>{}</code>)\n",
+            esc(&cfg.llm.model)
+        ));
+        out.push_str(&format!(
+            "<code>/deep</code> — route this turn to the deep model (<code>{}</code>), slower but higher quality\n",
+            esc(&cfg.llm_deep.model)
+        ));
+    }
+
+    out.push_str("\n<b>Image generation</b>\n");
+    if comfy_on {
+        out.push_str("<code>/pic [WxH] &lt;prompt&gt;</code> — Z-Image Turbo (fast, ~5s, default 1280×720)\n");
+        out.push_str("<code>/picHQ [WxH] &lt;prompt&gt;</code> — Z-Image Base HQ (slower, ~30s, default 1024×1024)\n");
+        out.push_str("Optional <code>WxH</code> overrides the size, e.g. <code>/picHQ 1280x720 a sunset over Miami</code> — any size 64×64 to 2048×2048.\n");
+    } else {
+        out.push_str("<i>(image generation not configured on this host — ask the host owner to set a ComfyUI URL in Settings → Image generation)</i>\n");
+    }
+
+    out.push_str("\n<b>Info</b>\n");
+    out.push_str("<code>/help</code> or <code>?</code> — show this list\n");
+    out
+}
+
+/// Escape the three special characters Telegram's HTML parse mode
+/// reserves: `<`, `>`, `&`. Used on values we substitute into the
+/// help template (model names from config). Static strings in the
+/// template are already pre-escaped.
+fn telegram_html_escape(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
