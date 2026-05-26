@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { api, events } from '$lib/api';
+  import { api, events, type Attachment } from '$lib/api';
   import { renderMarkdown } from '$lib/markdown';
   import { onMount, onDestroy } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -9,6 +9,7 @@
   import ThinkingDots from './ThinkingDots.svelte';
   import ThinkingPanel from './ThinkingPanel.svelte';
   import ToolPill from './ToolPill.svelte';
+  import { X } from '@lucide/svelte';
 
   let input = $state('');
   let busy = $state(false);
@@ -19,7 +20,81 @@
   let inputEl: HTMLTextAreaElement | undefined = $state();
   let containerEl: HTMLDivElement | undefined = $state();
   let currentClientId = $state<string | null>(null);
+  /** Image / PDF attachments staged for the next overlay send. Mirrors
+   *  the main ChatWindow's `pendingAttachments` semantics so a user can
+   *  paste a screenshot into the quick-chat (Cmd+Space) overlay and
+   *  have it ride along with the prompt, same as in the main window. */
+  let pendingAttachments = $state<Attachment[]>([]);
+  let attachmentError = $state('');
   const cleanups: Array<() => void> = [];
+
+  // Same limits as ChatWindow so the user sees a consistent rejection
+  // message whether they paste in the overlay or the main window.
+  const MAX_BYTES = 25 * 1024 * 1024;
+  const SUPPORTED_MIMES = /^(application\/pdf|image\/(png|jpe?g|gif|webp))$/i;
+
+  function fileToDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(reader.error ?? new Error('read failed'));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function ingestFiles(files: FileList | File[]) {
+    attachmentError = '';
+    const accepted: Attachment[] = [];
+    for (const file of Array.from(files)) {
+      if (file.size > MAX_BYTES) {
+        attachmentError = `${file.name || 'attachment'} is too large (max 25 MB).`;
+        continue;
+      }
+      if (file.type && !SUPPORTED_MIMES.test(file.type)) {
+        attachmentError = `${file.name || 'attachment'}: only PDFs and images are supported.`;
+        continue;
+      }
+      try {
+        const dataUrl = await fileToDataUrl(file);
+        accepted.push({
+          kind: file.type.startsWith('image/') ? 'image' : 'file',
+          mime: file.type || null,
+          name: file.name || null,
+          data_url: dataUrl,
+        });
+      } catch (e) {
+        attachmentError = `Couldn't read ${file.name || 'attachment'}: ${String(e)}`;
+      }
+    }
+    if (accepted.length) {
+      pendingAttachments = [...pendingAttachments, ...accepted];
+    }
+  }
+
+  /** Handle Cmd+V of an image (or PDF) into the overlay's textarea.
+   *  Without this, the paste produced literal text content for an image
+   *  blob (i.e. nothing useful) — the main ChatWindow had this support
+   *  but I missed adding it to the overlay when the quick-chat surface
+   *  was introduced. */
+  function onPaste(e: ClipboardEvent) {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (const item of Array.from(items)) {
+      if (item.kind === 'file') {
+        const f = item.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (files.length > 0) {
+      e.preventDefault();
+      void ingestFiles(files);
+    }
+  }
+
+  function removeAttachment(idx: number) {
+    pendingAttachments = pendingAttachments.filter((_, i) => i !== idx);
+  }
 
   const renderedHtml = $derived(streamingContent ? renderMarkdown(streamingContent) : '');
 
@@ -30,6 +105,10 @@
     void streamingContent;
     void reasoningContent;
     void tools.length;
+    // Resize when attachment count changes too — pasting an image
+    // adds a thumbnail row beneath the input that the window needs
+    // to fit, otherwise the preview is clipped.
+    void pendingAttachments.length;
     if (!containerEl) return;
     queueMicrotask(() => {
       const h = Math.min(Math.max(containerEl!.offsetHeight + 24, 96), 720);
@@ -130,18 +209,26 @@
   }
 
   async function send(text: string) {
-    if (!activeThreadId || !text.trim() || busy) return;
+    // Allow sending an attachment with no text (e.g. "what's in this
+    // image?" UX where the user just drags / pastes a screenshot and
+    // hits Enter without typing).
+    if (!activeThreadId || busy) return;
+    if (!text.trim() && pendingAttachments.length === 0) return;
     busy = true;
     streamingContent = '';
     reasoningContent = '';
     tools = [];
     currentClientId = crypto.randomUUID();
+    const attachmentsForTurn = pendingAttachments;
     input = '';
+    pendingAttachments = [];
+    attachmentError = '';
     try {
       await api.sendMessage({
         thread_id: activeThreadId,
         content: text,
         client_msg_id: currentClientId,
+        attachments: attachmentsForTurn,
       });
     } catch (err) {
       streamingContent = `Error: ${err}`;
@@ -179,6 +266,7 @@
         onkeydown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey) submit(e);
         }}
+        onpaste={onPaste}
       ></textarea>
       <MicButton
         compact
@@ -197,6 +285,36 @@
         />
       {/if}
     </form>
+    {#if pendingAttachments.length > 0 || attachmentError}
+      <div class="px-5 pb-2 flex flex-wrap items-center gap-2">
+        {#each pendingAttachments as att, idx}
+          <div class="relative group">
+            {#if att.kind === 'image' && att.data_url}
+              <img
+                src={att.data_url}
+                alt={att.name ?? 'pasted image'}
+                class="h-12 w-12 rounded-md object-cover border border-white/10"
+              />
+            {:else}
+              <div class="h-12 px-2 flex items-center rounded-md bg-white/5 border border-white/10 text-xs text-white/70 max-w-[160px] truncate">
+                {att.name ?? 'file'}
+              </div>
+            {/if}
+            <button
+              type="button"
+              class="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-ink-950 border border-white/20 grid place-items-center text-white/70 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+              onclick={() => removeAttachment(idx)}
+              aria-label="Remove attachment"
+            >
+              <X size={10} />
+            </button>
+          </div>
+        {/each}
+        {#if attachmentError}
+          <span class="text-xs text-red-300/80">{attachmentError}</span>
+        {/if}
+      </div>
+    {/if}
     {#if tools.length}
       <div class="px-5 pb-2 flex flex-wrap gap-2">
         {#each tools as t}

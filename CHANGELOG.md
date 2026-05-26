@@ -5,6 +5,35 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.46] — 2026-05-26
+
+### Fixed
+
+- **Pasting an image into the overlay (Cmd+Space quick chat) now
+  works.** The main app has handled paste-as-attachment since v0.2.32,
+  but I never wired the same handler into the overlay. Pasting just
+  produced empty text for a blob clipboard. Now the overlay has the
+  same image / PDF paste path, a thumbnail strip beneath the input
+  with hover-X to remove, the same 25 MB and PNG/JPG/GIF/WEBP/PDF
+  limits as the main chat, and the window auto-resizes to fit the
+  thumbnails. Attachments ride along with the prompt when you press
+  Enter.
+
+- **Mic "Speech recognition is blocked" no longer fires when there's
+  simply no mic plugged in.** macOS WKWebView's Web Speech API
+  reports `not-allowed` for both "permission denied" AND "no audio
+  input hardware available" — same error code, very different fixes.
+  Users (rightly) hit the alarming permissions message and toggled
+  System Settings panes they didn't need to touch. Added a pre-flight
+  check via `navigator.mediaDevices.enumerateDevices()`: if zero
+  audioinput devices are visible, show "No microphone detected. Plug
+  one in (or enable your built-in mic) and try again." instead. The
+  permissions message now fires only when there ARE audio devices but
+  the SR engine still refuses — i.e. the actual permission case.
+  Also softened the wording on the permissions message itself ("likely
+  a missing permission" instead of "blocked") so it sounds less
+  scary if it's wrong for some other reason.
+
 ## [0.2.45] — 2026-05-26
 
 ### Fixed

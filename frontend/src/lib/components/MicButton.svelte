@@ -49,7 +49,12 @@
       case 'not-allowed':
       case 'service-not-allowed':
         permissionDenied = true;
-        return "Speech recognition is blocked. macOS needs BOTH \"Microphone\" AND \"Speech Recognition\" enabled for KinAI in Privacy & Security — enabling just one is not enough. Open both panes below, toggle KinAI on, then quit and relaunch KinAI.";
+        // Pre-flight in startRecording() already eliminates the
+        // "no mic hardware" case, so reaching this branch genuinely
+        // means a permissions issue. Worded as a possibility, not a
+        // certainty, so the user doesn't panic-toggle settings if
+        // there's some other macOS quirk we missed.
+        return "Couldn't start speech recognition — likely a missing permission. macOS needs BOTH \"Microphone\" AND \"Speech Recognition\" enabled for KinAI in Privacy & Security (enabling one alone isn't enough). Open the panes below, toggle KinAI on in each, then quit and relaunch.";
       case 'audio-capture':
         return "No microphone detected. Plug one in (or enable your built-in mic) and try again.";
       case 'network':
@@ -104,8 +109,50 @@
     await openPrivacyPane('SpeechRecognition');
   }
 
-  function startRecording() {
+  /** Pre-flight check: does this machine actually HAVE any audio input
+   *  device? macOS WKWebView's Web Speech API reports `not-allowed`
+   *  even when the real cause is "no mic hardware at all" — same code
+   *  as a permissions denial. That misclassification scared a user
+   *  into thinking permissions were broken when they were just missing
+   *  the hardware (USB mic not plugged in / removed). enumerateDevices
+   *  is the cheap, correct distinguisher: if zero audioinput entries
+   *  exist, no hardware is currently visible to the OS regardless of
+   *  permission state.
+   *
+   *  Edge case: a browser that has NEVER been granted mic permission
+   *  may report audioinput devices with EMPTY labels. We treat that as
+   *  "hardware exists, permission missing" — the SR start() will then
+   *  fail with not-allowed and the permissions message is correct.
+   *  Returns true if we should proceed; false if we should bail out
+   *  with a "no mic" message instead. */
+  async function hasMicHardware(): Promise<boolean> {
+    if (!navigator.mediaDevices?.enumerateDevices) return true;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      return devices.some((d) => d.kind === 'audioinput');
+    } catch {
+      // If we can't check (rare), assume yes — letting SR run and
+      // surface its own error is better than blocking on an unknown
+      // failure mode.
+      return true;
+    }
+  }
+
+  async function startRecording() {
     if (!supported || listening) return;
+
+    // Catch the "no mic plugged in" case BEFORE the SR engine reports
+    // it as a permissions error. Without this pre-flight, removing a
+    // USB mic (or never having one) trips the "blocked / open Privacy
+    // panes" message — confusing the user into mashing settings they
+    // never needed.
+    if (!(await hasMicHardware())) {
+      setError(
+        "No microphone detected. Plug one in (or enable your built-in mic in System Settings → Sound → Input), then try again."
+      );
+      return;
+    }
+
     rec = createRecognition();
     if (!rec) return;
     accumulated = '';
