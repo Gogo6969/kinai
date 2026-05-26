@@ -318,26 +318,37 @@ pub async fn connect(
                 );
             }
             // Host's reply to any of List/Save/Delete/Clear UserFacts.
-            // We treat them all identically — pipe the fresh list back
-            // through whichever oneshot is parked, so client-mode
-            // Settings → Memory can render or re-render off the same
-            // envelope. The host always sends the full list, never
+            // Pipe the fresh list back through whichever oneshot is
+            // parked, so the awaiting Tauri command resolves with the
+            // new facts. The host always sends the full list, never
             // partial diffs, so the UI is always in sync with one
             // round-trip per action.
+            //
+            // IMPORTANT: do NOT emit `kinai://user-facts-updated` here.
+            // The Settings → Memory page subscribes to that event and
+            // re-calls `load()` when it fires — so emitting on every
+            // WS response races the explicit `await load()` that the
+            // mutation handler (delete / save / clear) already runs
+            // right after the IPC resolves. The race manifested as:
+            //
+            //   * the second load()'s sender displaced the first in
+            //     `user_facts_pending`, leaving the first to time out
+            //     after 10s ("timed out waiting for host's user_facts
+            //     response")
+            //   * the page flickered through loading→facts→loading→
+            //     facts as the two competing load() calls fought
+            //
+            // The event is still legitimately used on the HOST side
+            // where the background extractor writes a fact and the
+            // Settings page wants to refresh without polling. That
+            // emit lives in commands.rs after the extractor save and
+            // is unaffected by this change.
             Envelope::UserFacts { facts } => {
                 let mut net = state.net.lock().await;
                 if let Some(tx) = net.user_facts_pending.take() {
-                    let _ = tx.send(facts.clone());
+                    let _ = tx.send(facts);
                 }
                 drop(net);
-                // Also emit the kinai://user-facts-updated event the
-                // Settings page already listens for, so passive arrival
-                // (e.g. the host's extractor wrote a new fact and
-                // proactively pushed) re-renders without explicit
-                // polling. Today the host only sends UserFacts in
-                // response to a request, but the listener is harmless
-                // and keeps the door open for push later.
-                let _ = app.emit("kinai://user-facts-updated", &facts);
             }
             Envelope::Error { message } => {
                 // Surface authoritative host-side errors (e.g. "invite revoked",

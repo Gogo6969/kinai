@@ -17,6 +17,11 @@
   let newKey = $state('');
   let newValue = $state('');
   let adding = $state(false);
+  /** Generic busy flag for any in-flight mutation (delete, clear,
+   *  commitEdit). Disables row-level buttons during the request so a
+   *  fast double-click can't fire two WS round-trips that race each
+   *  other through `user_facts_pending`. */
+  let mutating = $state(false);
 
   let unlistenUpdated: (() => void) | null = null;
 
@@ -33,10 +38,12 @@
   }
 
   async function add() {
+    if (adding || mutating) return;
     const key = newKey.trim();
     const value = newValue.trim();
     if (!key || !value) return;
     adding = true;
+    mutating = true;
     try {
       await api.saveUserFact({ key, value });
       newKey = '';
@@ -46,6 +53,7 @@
       error = `Couldn't save: ${String(e).replace(/^Error:\s*/, '')}`;
     } finally {
       adding = false;
+      mutating = false;
     }
   }
 
@@ -62,12 +70,14 @@
   }
 
   async function commitEdit(original: UserFact) {
+    if (mutating) return;
     const key = editKey.trim();
     const value = editValue.trim();
     if (!key || !value) {
       cancelEdit();
       return;
     }
+    mutating = true;
     try {
       // If the key changed, delete the old row first so we don't leave
       // an orphan under the old name. Save under the new key.
@@ -79,31 +89,41 @@
       await load();
     } catch (e) {
       error = `Couldn't update: ${String(e).replace(/^Error:\s*/, '')}`;
+    } finally {
+      mutating = false;
     }
   }
 
   async function remove(f: UserFact) {
+    if (mutating) return;
     if (!confirm(`Forget "${f.key}: ${f.value}"?`)) return;
+    mutating = true;
     try {
       await api.deleteUserFact(f.id);
       await load();
     } catch (e) {
       error = `Couldn't delete: ${String(e).replace(/^Error:\s*/, '')}`;
+    } finally {
+      mutating = false;
     }
   }
 
   async function clearAll() {
+    if (mutating) return;
     if (
       !confirm(
         `Delete ALL ${facts.length} stored fact${facts.length === 1 ? '' : 's'}? This can't be undone.`
       )
     )
       return;
+    mutating = true;
     try {
       await api.clearUserFacts();
       await load();
     } catch (e) {
       error = `Couldn't clear: ${String(e).replace(/^Error:\s*/, '')}`;
+    } finally {
+      mutating = false;
     }
   }
 

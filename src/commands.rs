@@ -1075,6 +1075,18 @@ async fn client_user_facts_request(
     let (sender, receiver) = tokio::sync::oneshot::channel();
     let tx = {
         let mut net = state.net.lock().await;
+        // Defensive: if a previous request hasn't completed yet, fail
+        // fast with a clear message instead of silently overwriting
+        // its parked sender. Silent overwrite caused the v0.2.42
+        // "deleting on a client makes the screen flicker with
+        // 'timed out waiting for host's user_facts response'" bug:
+        // a stray `kinai://user-facts-updated` emit fired a second
+        // load() while the first was in flight, displacing it.
+        // We've also removed that emit; this guard belt-and-braces
+        // any future rapid-fire race.
+        if net.user_facts_pending.is_some() {
+            return Err("another memory request is already in flight; try again in a moment".to_string());
+        }
         net.user_facts_pending = Some(sender);
         net.client_tx.clone()
     };

@@ -5,6 +5,40 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.43] — 2026-05-26
+
+### Fixed
+
+- **Deleting a memory entry on a client no longer makes the screen
+  flicker and time out** with "Couldn't load memory: timed out
+  waiting for host's user_facts response." Three small fixes
+  cooperate to kill the race:
+
+  1. The client's WS handler for `UserFacts` was emitting
+     `kinai://user-facts-updated` on every response. The Settings
+     → Memory page subscribes to that event and calls `load()` in
+     response. So every delete/save fired two `load()` calls in
+     parallel — the explicit `await load()` after the mutation,
+     and the listener callback. The second `load()` displaced the
+     first's parked oneshot in `user_facts_pending`, the first's
+     receiver returned Closed, and the IPC waited the full 10s
+     before timing out. The two competing renders also caused the
+     visible flicker. Removed the client-side emit; the event is
+     still legitimately fired on the host when its background
+     extractor writes a new fact.
+
+  2. `client_user_facts_request` in `src/commands.rs` now refuses
+     a second request when one is already in flight, returning a
+     clear "another memory request is already in flight" error
+     instead of silently overwriting the parked sender. Belt-
+     and-braces against any future race that slips through.
+
+  3. The Memory page (`frontend/src/routes/settings/memory/
+     +page.svelte`) gains a shared `mutating` state that disables
+     remove / commitEdit / clearAll / add during any in-flight
+     mutation. Fast double-clicks now no-op instead of trying to
+     fire a second IPC.
+
 ## [0.2.42] — 2026-05-26
 
 ### Added
