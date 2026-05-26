@@ -5,6 +5,26 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.39] — 2026-05-26
+
+### Fixed
+
+- **"Create invite" no longer silently no-ops.** The host's
+  *Manage family → Invite a family member* page had three failure
+  paths that all looked identical to the user (button clicked,
+  nothing happened, no clue why):
+  - Empty/whitespace label was a silent `return` — no error message
+  - Backend IPC failures (DB locked, signing key unreadable, JWT
+    encode error) were unhandled promise rejections that vanished
+    into the console
+  - No busy state, so a slow IPC looked indistinguishable from a
+    broken button — users would click twice, three times, give up
+
+  Now: empty label shows a visible "Please enter a label…" message
+  inline; IPC errors render as a red banner with the actual error
+  text; the button itself flips to "Creating…" and disables for the
+  duration of the call so double-clicks are impossible.
+
 ## [0.2.38] — 2026-05-23
 
 ### Fixed

@@ -14,6 +14,13 @@
   let ttl = $state<number>(30);
   let invites = $state<Invite[]>([]);
   let qrSvgs = $state<Record<string, string>>({});
+  /** UI state for the Create button: blocks double-clicks while the
+   *  Tauri IPC is in flight, drives the spinner. */
+  let busy = $state(false);
+  /** Surfaces failure modes that previously silently no-op'd:
+   *  empty label, backend IPC errors (DB locked, signing key
+   *  unreadable, etc.). */
+  let createError = $state<string>('');
 
   /** Heuristic: an invite issued with the "never" sentinel comes back
    *  with expires_at well past any human lifetime. If the year is
@@ -47,10 +54,30 @@
   }
 
   async function create() {
-    if (!label.trim()) return;
-    await api.generateInvite({ label, ttl_days: ttl });
-    label = 'Family device';
-    await refresh();
+    createError = '';
+    const trimmed = label.trim();
+    if (!trimmed) {
+      // Previously this was a silent `return`, which made the button
+      // look broken — user clicks, nothing happens, no clue why. Now
+      // we surface a visible message so the user can actually fix it.
+      createError = 'Please enter a label so you can recognise this invite later.';
+      return;
+    }
+    if (busy) return;
+    busy = true;
+    try {
+      await api.generateInvite({ label: trimmed, ttl_days: ttl });
+      label = 'Family device';
+      await refresh();
+    } catch (e) {
+      // Previously these IPC failures (DB locked, signing key
+      // unreadable, etc.) were unhandled promise rejections — they
+      // silently bubbled into the void and the user saw "nothing
+      // happened". Surface the message so the failure is debuggable.
+      createError = `Couldn't create invite: ${String(e).replace(/^Error:\s*/, '')}`;
+    } finally {
+      busy = false;
+    }
   }
 
   async function revoke(id: string) {
@@ -95,8 +122,19 @@
             {/if}
           </p>
         </label>
-        <button class="kin-btn-primary self-start mt-6" onclick={create}>Create invite</button>
+        <button
+          class="kin-btn-primary self-start mt-6 disabled:opacity-60"
+          onclick={create}
+          disabled={busy}
+        >
+          {busy ? 'Creating…' : 'Create invite'}
+        </button>
       </div>
+      {#if createError}
+        <div class="rounded-lg border border-red-400/30 bg-red-400/10 text-red-200 px-3 py-2 text-sm">
+          {createError}
+        </div>
+      {/if}
     </div>
 
     <div class="space-y-4">
