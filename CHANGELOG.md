@@ -5,6 +5,44 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.44] — 2026-05-26
+
+### Fixed (regression — silently broke microphone for CI-distributed
+builds since v0.2.32-ish)
+
+- **macOS microphone works again on builds installed via auto-update
+  or the GitHub Releases page.** A subset of Mac users have been
+  seeing "Speech recognition is blocked…" with no obvious cause.
+  Root cause: my local `scripts/deploy.sh` does an explicit
+  `codesign --entitlements entitlements.plist` step that applies
+  the hardened-runtime entitlements (`audio-input`, `camera`,
+  `allow-jit`), but the CI path through `tauri-action` did its own
+  codesign without picking up our `entitlements.plist`. So builds
+  shipped via CI (every GitHub release since the workflow was set
+  up) had EMPTY entitlements — the hardened runtime denied
+  microphone access at the kernel level regardless of what the
+  user granted in System Settings.
+
+  Verified by running `codesign -d --entitlements -` on the v0.2.42
+  CI bundle: no `audio-input` key present at all.
+
+  Fix: declare `bundle.macOS.entitlements = "entitlements.plist"`
+  in `tauri.conf.json` so the Tauri bundler — used in BOTH local
+  deploy and CI — picks up the same entitlements file. No more
+  drift between the two paths.
+
+  Builds shipped from this release onward will have the
+  `com.apple.security.device.audio-input` entitlement attached at
+  codesign time. After upgrading, you may need to:
+  1. Quit + relaunch KinAI on the affected Mac
+  2. System Settings → Privacy & Security → Microphone → confirm
+     KinAI is toggled on (it should already be from when you
+     granted earlier)
+
+  If the entitlement was the only blocker (likely), step 2 isn't
+  needed — granting was preserved, the kernel just couldn't honor
+  it before.
+
 ## [0.2.43] — 2026-05-26
 
 ### Fixed
