@@ -5,6 +5,25 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.41] — 2026-05-26
+
+### Fixed
+
+- **CI: build frontend before `cargo test` runs.** The v0.2.40
+  release tagged a CI run that failed in the new `cargo test` gate
+  — `tauri::generate_context!()` is evaluated at compile time and
+  panics the proc-macro when `frontend/build/` doesn't exist. The
+  release.yml step ran `cargo test` BEFORE `tauri-action` got a
+  chance to invoke `beforeBuildCommand` (which builds the
+  frontend), so the test step couldn't compile. v0.2.40 was
+  installed locally fine but never produced GitHub bundles. Fixed
+  by inserting a `pnpm --filter kinai-frontend build` step ahead
+  of `cargo test`. Same guard added to `scripts/deploy.sh` so a
+  fresh-checkout local deploy also doesn't trip the macro.
+
+  v0.2.41 is the first release that actually completes the new
+  test-gated CI pipeline end-to-end.
+
 ## [0.2.40] — 2026-05-26
 
 ### Fixed (critical — read this if you've been confused since v0.2.36)

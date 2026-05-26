@@ -68,6 +68,16 @@ jobs:
 
       - run: pnpm install --frozen-lockfile=false
 
+      # Build the frontend before cargo test. tauri::generate_context!()
+      # is evaluated at COMPILE time and checks that `frontend/build/`
+      # (the path set as tauri.conf.json's frontendDist) actually
+      # exists, panicking the proc-macro otherwise. Locally that
+      # directory survives between builds so my deploy.sh test pass
+      # was hiding this; CI starts clean so cargo test couldn't even
+      # compile the lib. Build first.
+      - name: Build frontend (needed so tauri::generate_context! macro can compile)
+        run: pnpm --filter kinai-frontend build
+
       # Run the Rust test suite BEFORE the slow build + notarize +
       # release-upload steps. Catches silent regressions like the
       # v0.2.36 jsonwebtoken-v10 bump that compiled cleanly but

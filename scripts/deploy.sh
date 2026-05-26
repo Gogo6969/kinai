@@ -236,7 +236,17 @@ echo "→ building KinAI v$NEW_VERSION on $OS"
 # encode()/decode() panicked at runtime because a feature flag
 # wasn't enabled, and the test suite added afterwards would have
 # caught it in seconds).
+#
+# tauri::generate_context!() evaluates at compile time and checks
+# that `frontend/build/` exists. On a fresh checkout that dir isn't
+# there yet, so we build the frontend first — pnpm tauri build
+# would do this anyway later via beforeBuildCommand, doing it now
+# means cargo test can actually compile the lib.
 if [[ "${KINAI_DEPLOY_SKIP_TESTS:-0}" != "1" ]]; then
+  if [[ ! -d frontend/build ]]; then
+    echo "→ building frontend (so cargo test can compile the lib)"
+    pnpm --filter kinai-frontend build > /dev/null
+  fi
   echo "→ running cargo test (set KINAI_DEPLOY_SKIP_TESTS=1 to skip)"
   if ! cargo test --lib --quiet 2>&1 | tail -15; then
     echo "✗ tests failed — aborting deploy. Fix the failures or set KINAI_DEPLOY_SKIP_TESTS=1 if this is truly an emergency."
