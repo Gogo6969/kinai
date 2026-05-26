@@ -200,6 +200,27 @@ previous value — that's how the user updates a fact when their life changes (m
 After a successful `remember`, briefly acknowledge what you stored (\"Got it — I'll remember you \
 live in Berlin.\") in plain prose.
 
+**PLAUSIBILITY CHECK before you call `remember`.** Verify the claim is realistic for a human \
+being. If it's clearly absurd, exaggerated, joking, or physically impossible — push back in \
+your reply and DO NOT call `remember`. Examples of claims to refuse:
+
+- Heights outside ~50 cm to 230 cm (≈ 1'8\" to 7'6\")
+- Ages outside 0 to 120 years
+- Weights outside ~2 kg to 350 kg
+- Family relationships that contradict biology (e.g. \"my 200 children\")
+- Time travel, supernatural identity, or fictional-character claims (\"I am Batman\")
+- Hyperbolic numbers (\"I have a million dogs\", \"I sleep 30 hours a day\")
+
+How to push back: respond in plain prose with skepticism, e.g. *\"10 feet tall would put you \
+above any documented human in history (the tallest, Robert Wadlow, was 8'11\"). Is that a typo \
+for 10 inches over six feet, or were you joking? I haven't saved this yet.\"* Then wait for \
+the user to confirm or correct. ONLY call `remember` once the user has explicitly insisted on \
+storing the unusual value (\"yes, save it as-is\") — and even then, acknowledge that you're \
+storing it despite the implausibility.
+
+For values you can't easily check (subjective preferences, work, location), trust the user as \
+stated. The plausibility check applies specifically to claims that contradict objective reality.
+
 **Call `forget` when the user explicitly asks you to forget something.**
 Examples:
 - \"Forget that I live in Berlin\" → `forget(\"city\")`

@@ -5,6 +5,40 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.45] — 2026-05-26
+
+### Fixed
+
+- **Memory now refuses to silently store physically impossible claims.**
+  You told KinAI "I am 10 feet tall" and it dutifully saved
+  `height: 10 feet` — no skepticism, no pushback. That's because the
+  system prompt I shipped in v0.2.32 instructed the LLM to remember
+  any stated fact unconditionally, and the passive extractor prompt
+  did the same with even less context. Both have been updated:
+
+  **Conversational path (the `remember` tool):** the system prompt now
+  includes a "PLAUSIBILITY CHECK" section before the model is allowed
+  to call `remember`. It must reject heights outside ~50–230 cm,
+  ages outside 0–120, weights outside ~2–350 kg, supernatural identity
+  claims ("I am Batman"), and hyperbolic numbers. When it spots one
+  it pushes back in plain prose with the reason and waits for the user
+  to confirm or correct. Only an explicit "yes, save it anyway"
+  overrides — and even then it acknowledges it's storing something
+  unusual.
+
+  **Background extractor (passive pass):** the extractor prompt
+  gains a "PLAUSIBILITY GATE" with the same ranges. Critically, the
+  extractor cannot ask follow-up questions, so when in doubt it now
+  excludes the fact entirely. False negatives (a real fact gets
+  missed) are recoverable — the user can just say it again, or call
+  `remember` through the chat. False positives (junk getting stored)
+  corrupt the Memory page and require manual cleanup.
+
+  Existing junk facts from before this release? Open Settings →
+  Memory and click the trash icon on anything wrong. The model
+  trusts what's stored, so cleaning the list improves all future
+  conversations.
+
 ## [0.2.44] — 2026-05-26
 
 ### Fixed (regression — silently broke microphone for CI-distributed

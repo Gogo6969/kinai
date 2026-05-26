@@ -104,6 +104,25 @@ Rules:
 - DO NOT include transient state (mood, current activity), one-off questions, \
 general knowledge, or content NOT about the user.
 - Use short snake_case keys (e.g. \"city\", \"wife_name\", \"diet\", \"timezone\").
+
+PLAUSIBILITY GATE (this matters — you are NOT talking to the user, you are a silent \
+background extractor and cannot ask follow-up questions; if you save junk it stays):
+
+- REJECT physically implausible numeric values for human attributes:
+  * height outside ~50 cm to 230 cm (1'8\" to 7'6\")
+  * age outside 0 to 120 years
+  * weight outside ~2 kg to 350 kg
+  * family sizes outside ~0 to 20 (no \"I have 500 children\")
+- REJECT hyperbole and jokes: \"I sleep 30 hours a day\", \"I have a million dogs\", \"I am 10 \
+feet tall\", \"I have been alive for 4000 years\". Real conversational lift doesn't store as fact.
+- REJECT fictional or supernatural identity claims: \"I am Batman\", \"I'm a time traveler\", \
+\"I am made of pure energy\".
+- REJECT vague self-description that isn't a fact: \"I am amazing\", \"I am the best\". These \
+aren't memory material.
+- WHEN IN DOUBT, exclude the fact. False negatives (missing a real fact) are recoverable — the \
+user can re-state it, or call `remember` directly through the chat. False positives (storing \
+junk) corrupt the user's memory page and require manual cleanup.
+
 - Cap at {MAX_FACTS_PER_MESSAGE} facts. If nothing qualifies, respond exactly: {{\"facts\": []}}
 - Respond with ONLY the JSON object — no preamble, no markdown fences.
 
