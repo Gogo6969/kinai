@@ -68,6 +68,16 @@ jobs:
 
       - run: pnpm install --frozen-lockfile=false
 
+      # Run the Rust test suite BEFORE the slow build + notarize +
+      # release-upload steps. Catches silent regressions like the
+      # v0.2.36 jsonwebtoken-v10 bump that compiled cleanly but
+      # panicked at runtime on every encode/decode call because the
+      # required CryptoProvider feature flag wasn't enabled. That bug
+      # broke every JWT operation (invite creation, peer auth,
+      # Telegram pairing) and would have been caught here in seconds.
+      - name: Run cargo test
+        run: cargo test --lib --quiet
+
       # Materialize the App Store Connect .p8 to disk; notarytool needs
       # a file path (not contents). The file is ephemeral (lives only
       # for this job's runtime).

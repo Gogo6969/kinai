@@ -229,6 +229,22 @@ NEW_VERSION=$(grep -E '^version = "' Cargo.toml | head -1 | sed -E 's/.*"([^"]+)
 OS="$(uname -s)"
 echo "→ building KinAI v$NEW_VERSION on $OS"
 
+# Run the Rust test suite BEFORE any expensive build/sign/notarize work.
+# Skip with KINAI_DEPLOY_SKIP_TESTS=1 for genuinely emergency hotfix
+# situations (don't use this casually — silent breakage shipped this
+# way is what got us into the v0.2.36 JWT regression where every
+# encode()/decode() panicked at runtime because a feature flag
+# wasn't enabled, and the test suite added afterwards would have
+# caught it in seconds).
+if [[ "${KINAI_DEPLOY_SKIP_TESTS:-0}" != "1" ]]; then
+  echo "→ running cargo test (set KINAI_DEPLOY_SKIP_TESTS=1 to skip)"
+  if ! cargo test --lib --quiet 2>&1 | tail -15; then
+    echo "✗ tests failed — aborting deploy. Fix the failures or set KINAI_DEPLOY_SKIP_TESTS=1 if this is truly an emergency."
+    exit 1
+  fi
+  echo "  ✓ tests passed"
+fi
+
 # Updater signing — Tauri reads these env vars at build time. The private
 # key lives outside the repo (~/.kinai/keys/updater.key); the public key
 # is committed in tauri.conf.json. Without these, tauri build still

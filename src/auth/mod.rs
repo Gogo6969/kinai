@@ -80,3 +80,58 @@ pub fn peek_token(token: &str) -> Result<Claims> {
     }
     Ok(data.claims)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Smoke test that the JWT subsystem actually works end-to-end —
+    /// issue → validate → peek round-trip. Exists specifically to catch
+    /// silent breakage like the v0.2.36 → v0.2.39 regression: a
+    /// jsonwebtoken-v10 bump compiled cleanly but every encode/decode
+    /// panicked at runtime with "Could not automatically determine
+    /// the process-level CryptoProvider" because the crate's crypto
+    /// backend is now an optional feature. The panic only fired on
+    /// tokio worker threads, far from any console the user could see,
+    /// and the IPC just hung forever. This test guarantees a CI
+    /// failure before any release ships with a broken JWT path.
+    ///
+    /// Uses a tempdir for the keys so the test doesn't touch the
+    /// user's real ~/.kinai/keys/ directory.
+    #[test]
+    fn jwt_roundtrip_smoketest() {
+        // Route keys to a tempdir so we don't read/write the user's
+        // real ~/.kinai/keys/ during tests, and we exercise the
+        // key-generation path too.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("HOME", tmp.path());
+        // ensure_keys caches after first call; reset its cache by
+        // using a fresh process if the cache layer changes — for now
+        // tests run in the same process and the cache is fine because
+        // the tempdir keys persist for the test lifetime.
+
+        let host_url = "ws://192.168.1.1:4847/kin";
+        let token = issue_token("ABC123", host_url, "test-label", 30)
+            .expect("issue_token must succeed (CryptoProvider feature flag check)");
+        assert!(!token.is_empty(), "issued token should be non-empty");
+
+        // The big one: validate_token must succeed against the same
+        // host_url with a properly-signed token.
+        let claims = validate_token(&token, host_url)
+            .expect("validate_token must succeed on a token we just issued");
+        assert_eq!(claims.sub, "ABC123");
+        assert_eq!(claims.iss, "kinai");
+        assert_eq!(claims.aud, host_url);
+        assert_eq!(claims.label, "test-label");
+
+        // peek_token (no signature check, used on URL paste client-side)
+        // should also succeed.
+        let peeked = peek_token(&token).expect("peek_token must succeed");
+        assert_eq!(peeked.sub, "ABC123");
+
+        // Wrong audience must be rejected — this checks the validation
+        // pipeline isn't being a no-op.
+        let bad = validate_token(&token, "ws://wrong-host:4847/kin");
+        assert!(bad.is_err(), "wrong audience must fail validation");
+    }
+}

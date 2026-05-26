@@ -5,6 +5,48 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.40] — 2026-05-26
+
+### Fixed (critical — read this if you've been confused since v0.2.36)
+
+- **Every JWT operation was silently panicking on a tokio worker
+  thread since v0.2.36.** When I bumped `jsonwebtoken` from 9.3.1
+  to 10.3.0 in the dep-update pass, I missed that v10 made the
+  crypto backend an explicit Cargo feature. The crate compiled
+  cleanly without one, but at runtime every `encode()` and
+  `decode()` call panicked with *"Could not automatically determine
+  the process-level CryptoProvider"*. Because the panic happened
+  on a worker thread (not the main thread), the host process kept
+  running — it just couldn't do anything that touched JWTs.
+
+  This single bug caused every confusing failure of the past few
+  days:
+  - **Create invite hung on "Creating…" forever** — `issue_token`
+    panicked, the IPC handler never returned, the frontend's
+    `await` never resolved.
+  - **M2 Mac couldn't reconnect to the host** — the host couldn't
+    validate M2's JWT, the WS handshake failed.
+  - **The host's peers table stayed empty** — no client could
+    complete auth, no peer row was ever written.
+  - **Telegram pairing was broken** — same JWT validation path.
+
+  Fixed by adding `features = ["rust_crypto"]` to the jsonwebtoken
+  dependency in `Cargo.toml`. Pure-Rust crypto, no native deps,
+  no runtime panic.
+
+### Added (so this never silently ships again)
+
+- **`cargo test` now runs before every release.** Added a JWT
+  round-trip smoke test in `src/auth/mod.rs::tests` that issues
+  a token, validates it, and confirms the claims match. If the
+  crypto provider isn't wired up correctly, this test panics in
+  CI in seconds. Wired into `scripts/deploy.sh` (runs before the
+  build/sign/notarize chain) and `.github/workflows/release.yml`
+  (runs before the Mac DMG step). Both stop the release if tests
+  fail. Bypass with `KINAI_DEPLOY_SKIP_TESTS=1` only for genuine
+  emergencies — exactly the kind of escape valve we should NOT
+  have been using by default.
+
 ## [0.2.39] — 2026-05-26
 
 ### Fixed

@@ -1,6 +1,6 @@
 [package]
 name = "kinai"
-version = "0.2.39"
+version = "0.2.40"
 description = "Family-sharing layer for the local LLM you already run. Host on a Mac, point it at any OpenAI-compatible backend (Ollama, vLLM, LM Studio, llama.cpp anywhere on your LAN). Mac + Windows clients. Phones via the family Telegram bot. No cloud, no accounts."
 authors = ["KinAI Contributors"]
 license = "MIT"
@@ -71,7 +71,14 @@ toml = "0.8"
 sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "macros", "migrate", "chrono", "uuid"] }
 
 # --- Auth (JWT RS256) ---
-jsonwebtoken = "10"
+# v10 made the crypto backend an explicit feature. Without one of
+# `rust_crypto` or `aws_lc_rs`, every encode()/decode() panics at
+# runtime with "Could not automatically determine the process-level
+# CryptoProvider" — silently, on a tokio worker. Effect: every JWT
+# operation broke (generate_invite hung, peers couldn't authenticate
+# the WebSocket connect, Telegram pairing failed). rust_crypto is
+# pure-Rust, no native deps, fine for a desktop app.
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 rsa = { version = "0.9", features = ["pem"] }
 pkcs8 = { version = "0.10", features = ["pem"] }
 rand = "0.8"
@@ -109,6 +116,11 @@ tiktoken-rs = "0.5"
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
+
+[dev-dependencies]
+# Sandbox HOME during JWT roundtrip tests so they don't touch the
+# user's real ~/.kinai/keys/ directory.
+tempfile = "3"
 
 [profile.release]
 opt-level = 3
