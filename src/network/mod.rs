@@ -71,6 +71,12 @@ pub struct NetState {
     /// `ThreadMessages`. Lets clients page in message history that lives
     /// in the host's DB but not the client's own.
     pub thread_messages_pending: Option<oneshot::Sender<Vec<crate::db::Message>>>,
+    /// Pending user-facts round-trip. All four mutations
+    /// (List / Save / Delete / Clear) park a sender here; the host
+    /// responds with the fresh `UserFacts` list which the read loop
+    /// pipes back. One slot is enough because the Settings → Memory
+    /// UI only ever has one in-flight request at a time.
+    pub user_facts_pending: Option<oneshot::Sender<Vec<crate::db::UserFact>>>,
 }
 
 impl Default for NetState {
@@ -86,6 +92,7 @@ impl Default for NetState {
             telegram_unpair_pending: None,
             threads_pending: None,
             thread_messages_pending: None,
+            user_facts_pending: None,
         }
     }
 }

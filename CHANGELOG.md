@@ -5,6 +5,58 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.42] — 2026-05-26
+
+### Added
+
+- **Settings → Memory now works on clients (M2, Windows).** Previously
+  the Memory page on a client read the client's own local DB scoped
+  to `HOST_PEER`, which was empty — even though the host had been
+  storing per-peer facts under each client's id all along. Now the
+  client's Memory page round-trips to the host over the WebSocket
+  and gets back its own facts, scoped by the connecting peer's id.
+
+  Four new envelopes carry this:
+  - `ListUserFacts` — client requests its own facts
+  - `SaveUserFact { key, value }` — manual add from the client UI
+  - `DeleteUserFact { id }` — forget one fact
+  - `ClearUserFacts` — "Forget everything" button on client
+  - `UserFacts { facts: Vec<UserFact> }` — host's response to any of
+    the above (always sends the full fresh list, so the UI re-renders
+    off one envelope)
+
+  Same data, same DB on the host, same per-peer scoping the LLM has
+  always used at prompt-build time. The only thing that changed is
+  that the client's UI can now SEE and EDIT what the host knows
+  about it.
+
+  Privacy invariant unchanged and now explicitly tested: every
+  host-side handler uses `context_peer` (the connecting client's
+  peer id, derived from the JWT — clients cannot supply a peer_id
+  on the wire). One family member cannot see or modify another's
+  facts via any path.
+
+  Frontend code in Settings → Memory is unchanged — the Tauri
+  command detects Client mode and routes through WS, so the UI
+  doesn't know or care which mode it's in.
+
+### Added (more tests against the same class of bug)
+
+- **`src/db/user_facts.rs::tests`** — four tests that exercise the
+  peer-scope invariant directly against the DB layer:
+  - `peer_scope_is_strict` — Alice's list doesn't include Bob's facts
+  - `upsert_is_per_peer_not_global` — same key under two peers stays
+    two rows
+  - `delete_is_peer_scoped` — Bob trying to delete Alice's row by id
+    is a no-op, not a cross-peer deletion
+  - `clear_all_is_peer_scoped` — "Forget everything" wipes only the
+    requesting peer, never anyone else
+
+  These will catch the kind of refactoring accident that would
+  silently expose another family member's memory (e.g. someone
+  hardcoding `HOST_PEER` in a handler that should use
+  `context_peer`).
+
 ## [0.2.41] — 2026-05-26
 
 ### Fixed

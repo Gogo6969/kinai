@@ -157,4 +157,34 @@ pub enum Envelope {
         /// LLM (system prompt + memory recalls + recent turns + current).
         prompt: String,
     },
+
+    // ---- User facts (persistent memory) — client ↔ host ----
+    //
+    // The host stores per-peer user_facts in its DB, scoped by peer_id.
+    // The LLM already reads them in build_context — what these envelopes
+    // add is a way for the CLIENT to see/edit its own facts via the
+    // Settings → Memory page. Without these, the client's UI reads its
+    // local DB (which is empty because the LLM runs on the host).
+    //
+    // Privacy: every host-side handler dispatches with `context_peer`
+    // (the connecting client's peer_id), so a peer can only ever see/
+    // modify its own facts. A client cannot impersonate another peer's
+    // scope because the peer_id is derived from the connection's JWT,
+    // not the envelope body.
+    //
+    // The host responds to ALL four mutations with a fresh `UserFacts`
+    // list. That keeps the client UI in sync with one round-trip per
+    // action and removes the need for separate ack envelopes.
+    ListUserFacts,
+    SaveUserFact {
+        key: String,
+        value: String,
+    },
+    DeleteUserFact {
+        id: String,
+    },
+    ClearUserFacts,
+    UserFacts {
+        facts: Vec<crate::db::UserFact>,
+    },
 }

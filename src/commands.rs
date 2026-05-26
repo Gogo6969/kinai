@@ -1047,16 +1047,65 @@ pub async fn rename_thread(
 //
 // User-facing surface for the long-term per-peer memory layer. The
 // Settings → Memory page reads via list_user_facts, mutates via
-// save/delete/clear. All scoped to HOST_PEER for the in-app user;
-// peer-scoped writes from connected clients go through a separate
-// network envelope (not yet wired — clients see only their own
-// host's facts surfaced via the system prompt, can't currently
-// edit them remotely).
+// save/delete/clear.
+//
+// Mode-aware routing:
+//   * HOST mode → query the local DB scoped to HOST_PEER (the host
+//     owner's own memory).
+//   * CLIENT mode → request the same operations from the host over
+//     the WebSocket; host scopes by the connecting peer's id so each
+//     family member sees ONLY their own facts. Privacy invariant is
+//     enforced on the host side, not the client (a malicious client
+//     can't ask for another peer's facts because the host doesn't
+//     accept a peer_id from the wire — it derives one from the JWT).
+//
+// Why route through WS instead of duplicating the data to the client's
+// local DB: the host is the single source of truth — the LLM that
+// produces the facts runs there, and there's no sync-conflict surface.
+// Client storage would just be a stale cache.
+
+/// Run a user-facts request through the WS client connection and wait
+/// for the host's `UserFacts` response. Used by all four mode-aware
+/// commands below. 10s timeout matches load_thread; the operation is
+/// a single DB read on the host so it should complete in milliseconds.
+async fn client_user_facts_request(
+    state: &tauri::State<'_, SharedState>,
+    envelope: crate::network::protocol::Envelope,
+) -> Result<Vec<db::UserFact>> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let tx = {
+        let mut net = state.net.lock().await;
+        net.user_facts_pending = Some(sender);
+        net.client_tx.clone()
+    };
+    let Some(tx) = tx else {
+        state.net.lock().await.user_facts_pending = None;
+        return Err("not connected to a host".to_string());
+    };
+    if tx.send(envelope).is_err() {
+        state.net.lock().await.user_facts_pending = None;
+        return Err("WS send channel closed".to_string());
+    }
+    match tokio::time::timeout(std::time::Duration::from_secs(10), receiver).await {
+        Ok(Ok(facts)) => Ok(facts),
+        _ => {
+            state.net.lock().await.user_facts_pending = None;
+            Err("timed out waiting for host's user_facts response".to_string())
+        }
+    }
+}
 
 #[tauri::command]
 pub async fn list_user_facts(
     state: tauri::State<'_, SharedState>,
 ) -> Result<Vec<db::UserFact>> {
+    if matches!(state.config.read().mode, Mode::Client) {
+        return client_user_facts_request(
+            &state,
+            crate::network::protocol::Envelope::ListUserFacts,
+        )
+        .await;
+    }
     state
         .db
         .list_user_facts(db::HOST_PEER)
@@ -1075,6 +1124,23 @@ pub async fn save_user_fact(
     state: tauri::State<'_, SharedState>,
     args: SaveUserFactArgs,
 ) -> Result<db::UserFact> {
+    if matches!(state.config.read().mode, Mode::Client) {
+        let facts = client_user_facts_request(
+            &state,
+            crate::network::protocol::Envelope::SaveUserFact {
+                key: args.key.clone(),
+                value: args.value.clone(),
+            },
+        )
+        .await?;
+        // The host's response is the full updated list. Pick the row
+        // we just saved so the call's return type stays UserFact.
+        // Match by key (peer scope is implicit on the host side).
+        return facts
+            .into_iter()
+            .find(|f| f.key == args.key.trim())
+            .ok_or_else(|| "host accepted save but the new fact isn't in the response list".to_string());
+    }
     state
         .db
         .save_user_fact(db::HOST_PEER, &args.key, &args.value, "manual", None)
@@ -1087,6 +1153,14 @@ pub async fn delete_user_fact(
     state: tauri::State<'_, SharedState>,
     id: String,
 ) -> Result<()> {
+    if matches!(state.config.read().mode, Mode::Client) {
+        let _ = client_user_facts_request(
+            &state,
+            crate::network::protocol::Envelope::DeleteUserFact { id },
+        )
+        .await?;
+        return Ok(());
+    }
     state
         .db
         .delete_user_fact(db::HOST_PEER, &id)
@@ -1098,6 +1172,19 @@ pub async fn delete_user_fact(
 pub async fn clear_user_facts(
     state: tauri::State<'_, SharedState>,
 ) -> Result<u64> {
+    if matches!(state.config.read().mode, Mode::Client) {
+        // After clear, the host responds with the (now empty) list.
+        // Return the count we just wiped, not Vec.len() which is 0.
+        // The pre-clear count would have required two round-trips; not
+        // worth it for what's just a UI-toast number. Return 0 — the
+        // UI then re-renders an empty list which is the truth.
+        let _ = client_user_facts_request(
+            &state,
+            crate::network::protocol::Envelope::ClearUserFacts,
+        )
+        .await?;
+        return Ok(0);
+    }
     state.db.clear_user_facts(db::HOST_PEER).await.map_err(err)
 }
 

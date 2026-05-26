@@ -396,6 +396,45 @@ async fn dispatch(
                 .await?;
             let _ = tx.send(Envelope::ThreadMessages { thread_id, messages });
         }
+
+        // ---- User facts (persistent memory) ----
+        //
+        // All four handlers dispatch with `context_peer` so each client
+        // can only ever see/edit its own facts. Mutations re-list and
+        // ship the fresh full set back as `UserFacts` so the client UI
+        // can re-render off a single envelope. Errors land in the WS
+        // Error response — the client side surfaces them as a red
+        // banner just like the local error path on the host.
+        Envelope::ListUserFacts => {
+            let facts = s.app.db.list_user_facts(context_peer).await?;
+            let _ = tx.send(Envelope::UserFacts { facts });
+        }
+        Envelope::SaveUserFact { key, value } => {
+            // source = "manual" — same as the host's Settings → Memory
+            // → Add a fact path. Saves under the CONNECTING client's
+            // peer_id, not HOST_PEER, so a family member's manual
+            // entries stay theirs.
+            s.app
+                .db
+                .save_user_fact(context_peer, &key, &value, "manual", None)
+                .await?;
+            let facts = s.app.db.list_user_facts(context_peer).await?;
+            let _ = tx.send(Envelope::UserFacts { facts });
+        }
+        Envelope::DeleteUserFact { id } => {
+            s.app.db.delete_user_fact(context_peer, &id).await?;
+            let facts = s.app.db.list_user_facts(context_peer).await?;
+            let _ = tx.send(Envelope::UserFacts { facts });
+        }
+        Envelope::ClearUserFacts => {
+            let _ = s.app.db.clear_user_facts(context_peer).await?;
+            let facts = s.app.db.list_user_facts(context_peer).await?;
+            let _ = tx.send(Envelope::UserFacts { facts });
+        }
+        // Response envelope — host shouldn't receive this from a client.
+        // Silently ignore (better than panicking) since a buggy/old
+        // client could conceivably echo it back.
+        Envelope::UserFacts { .. } => {}
         Envelope::SendMessage {
             thread_id,
             content,

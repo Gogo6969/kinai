@@ -317,6 +317,28 @@ pub async fn connect(
                     serde_json::json!({"thread_id": thread_id, "messages": messages}),
                 );
             }
+            // Host's reply to any of List/Save/Delete/Clear UserFacts.
+            // We treat them all identically — pipe the fresh list back
+            // through whichever oneshot is parked, so client-mode
+            // Settings → Memory can render or re-render off the same
+            // envelope. The host always sends the full list, never
+            // partial diffs, so the UI is always in sync with one
+            // round-trip per action.
+            Envelope::UserFacts { facts } => {
+                let mut net = state.net.lock().await;
+                if let Some(tx) = net.user_facts_pending.take() {
+                    let _ = tx.send(facts.clone());
+                }
+                drop(net);
+                // Also emit the kinai://user-facts-updated event the
+                // Settings page already listens for, so passive arrival
+                // (e.g. the host's extractor wrote a new fact and
+                // proactively pushed) re-renders without explicit
+                // polling. Today the host only sends UserFacts in
+                // response to a request, but the listener is harmless
+                // and keeps the door open for push later.
+                let _ = app.emit("kinai://user-facts-updated", &facts);
+            }
             Envelope::Error { message } => {
                 // Surface authoritative host-side errors (e.g. "invite revoked",
                 // "rate limit exceeded") on the sidebar status pill in addition

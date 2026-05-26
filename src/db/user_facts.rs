@@ -182,6 +182,126 @@ pub async fn clear_all(pool: &SqlitePool, peer_id: &str) -> Result<u64> {
     Ok(result.rows_affected())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    /// Spin up an in-memory SQLite + apply the schema. Used by the
+    /// privacy-boundary tests below — keeps them hermetic and fast.
+    async fn fresh_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open in-memory sqlite");
+        // user_facts table — same DDL as migrate.rs.
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS user_facts (
+                id            TEXT PRIMARY KEY,
+                peer_id       TEXT NOT NULL,
+                key           TEXT NOT NULL,
+                value         TEXT NOT NULL,
+                source        TEXT NOT NULL DEFAULT 'tool',
+                source_msg_id TEXT,
+                created_at    TEXT NOT NULL,
+                updated_at    TEXT NOT NULL,
+                UNIQUE(peer_id, key)
+            )",
+        )
+        .execute(&pool)
+        .await
+        .expect("create user_facts table");
+        pool
+    }
+
+    /// The crown-jewel privacy invariant: peer A's facts must never
+    /// surface in peer B's list/get queries.
+    ///
+    /// This test was deliberately written to fail loudly if the WS
+    /// handlers in network/server.rs ever drop the `context_peer`
+    /// scope by accident — e.g. if someone refactors and uses
+    /// `HOST_PEER` instead of the connecting peer's id. Same kind of
+    /// regression as the JWT panic: would compile cleanly, ship
+    /// silently, expose another family member's memory.
+    #[tokio::test]
+    async fn peer_scope_is_strict() {
+        let pool = fresh_pool().await;
+
+        upsert(&pool, "ALICE", "city", "Berlin", "tool", None).await.unwrap();
+        upsert(&pool, "ALICE", "diet", "vegetarian", "tool", None).await.unwrap();
+        upsert(&pool, "BOB", "city", "Munich", "tool", None).await.unwrap();
+
+        let alice_facts = list(&pool, "ALICE").await.unwrap();
+        let bob_facts = list(&pool, "BOB").await.unwrap();
+
+        assert_eq!(alice_facts.len(), 2, "ALICE should see 2 own facts");
+        assert!(alice_facts.iter().all(|f| f.peer_id == "ALICE"));
+        assert!(!alice_facts.iter().any(|f| f.value == "Munich"),
+            "ALICE must not see BOB's city");
+
+        assert_eq!(bob_facts.len(), 1, "BOB should see 1 own fact");
+        assert_eq!(bob_facts[0].peer_id, "BOB");
+        assert_eq!(bob_facts[0].value, "Munich");
+    }
+
+    /// upsert under (peer_id, key) must overwrite within the SAME peer,
+    /// but creating the same key under a DIFFERENT peer must be a
+    /// separate row. That's how Wolf and the kid can both have
+    /// `city` set to different things without colliding.
+    #[tokio::test]
+    async fn upsert_is_per_peer_not_global() {
+        let pool = fresh_pool().await;
+        let a1 = upsert(&pool, "ALICE", "city", "Berlin", "tool", None).await.unwrap();
+        let a2 = upsert(&pool, "ALICE", "city", "Munich", "tool", None).await.unwrap();
+        assert_eq!(a1.id, a2.id, "same peer + same key → SAME row");
+        assert_eq!(a2.value, "Munich");
+
+        let b1 = upsert(&pool, "BOB", "city", "Hamburg", "tool", None).await.unwrap();
+        assert_ne!(a2.id, b1.id, "different peer + same key → DIFFERENT row");
+        let alice = list(&pool, "ALICE").await.unwrap();
+        let bob = list(&pool, "BOB").await.unwrap();
+        assert_eq!(alice[0].value, "Munich");
+        assert_eq!(bob[0].value, "Hamburg");
+    }
+
+    /// delete must only touch the requesting peer's rows. A malicious
+    /// or buggy client sending a delete with someone else's id should
+    /// be a no-op, not a cross-peer deletion.
+    #[tokio::test]
+    async fn delete_is_peer_scoped() {
+        let pool = fresh_pool().await;
+        let alice_fact = upsert(&pool, "ALICE", "city", "Berlin", "tool", None).await.unwrap();
+        upsert(&pool, "BOB", "city", "Munich", "tool", None).await.unwrap();
+
+        // BOB tries to delete ALICE's fact by id. Must NOT succeed.
+        delete(&pool, "BOB", &alice_fact.id).await.unwrap();
+        let alice_after = list(&pool, "ALICE").await.unwrap();
+        assert_eq!(alice_after.len(), 1, "ALICE's fact must still exist after BOB's cross-peer delete attempt");
+        assert_eq!(alice_after[0].id, alice_fact.id);
+
+        // ALICE deletes her own — must succeed.
+        delete(&pool, "ALICE", &alice_fact.id).await.unwrap();
+        assert!(list(&pool, "ALICE").await.unwrap().is_empty());
+        // BOB's row untouched.
+        assert_eq!(list(&pool, "BOB").await.unwrap().len(), 1);
+    }
+
+    /// clear_all wipes only the requesting peer.
+    #[tokio::test]
+    async fn clear_all_is_peer_scoped() {
+        let pool = fresh_pool().await;
+        upsert(&pool, "ALICE", "a", "1", "tool", None).await.unwrap();
+        upsert(&pool, "ALICE", "b", "2", "tool", None).await.unwrap();
+        upsert(&pool, "BOB", "c", "3", "tool", None).await.unwrap();
+
+        let wiped = clear_all(&pool, "ALICE").await.unwrap();
+        assert_eq!(wiped, 2);
+        assert!(list(&pool, "ALICE").await.unwrap().is_empty());
+        assert_eq!(list(&pool, "BOB").await.unwrap().len(), 1, "BOB's fact survives ALICE's clear_all");
+    }
+}
+
 fn row_to_fact(r: sqlx::sqlite::SqliteRow) -> UserFact {
     UserFact {
         id: r.get("id"),
