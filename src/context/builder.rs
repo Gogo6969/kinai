@@ -53,7 +53,36 @@ pub async fn build_context(
 
     messages.push(message_to_chat(new_message));
 
-    let budget = cfg.llm.context_window.saturating_sub(cfg.llm.max_tokens);
+    // Reserve generation headroom so the prompt never fills the entire
+    // context window. This is the fix for "the deep model thinks for a
+    // second then goes silent":
+    //
+    // Old code trimmed the prompt to `context_window - max_tokens`. With
+    // max_tokens = 0 (auto — the default, and what reasoning models need)
+    // that's `context_window - 0 = context_window`, i.e. the prompt was
+    // allowed to consume the FULL window. compute_max_tokens then derived
+    // `context_window - prompt - safety`, which collapsed to its 256-token
+    // floor once a thread's history grew large enough to fill the window.
+    //
+    // A non-reasoning model (gpt-oss) survives a 256-token budget — it
+    // emits the visible answer immediately. A reasoning model (Qwen3,
+    // R1) spends its whole budget on the <think> phase and hits
+    // finish_reason=length with EMPTY content before producing anything
+    // visible. Same prompt, same budget, opposite outcome — which is why
+    // the fast slot worked and the deep slot didn't.
+    //
+    // So when max_tokens is auto (0), reserve a generous fixed slice of
+    // the window for generation instead of zero. 8192 tokens is enough
+    // for a long chain-of-thought plus a substantial answer, while still
+    // leaving the bulk of a 32k window for prompt/history. When the user
+    // pinned an explicit max_tokens, honor that as the reserve.
+    const AUTO_GENERATION_RESERVE: usize = 8192;
+    let reserve = if cfg.llm.max_tokens > 0 {
+        cfg.llm.max_tokens
+    } else {
+        AUTO_GENERATION_RESERVE
+    };
+    let budget = cfg.llm.context_window.saturating_sub(reserve);
     token_guard::trim_to_fit(&mut messages, budget);
     Ok(messages)
 }

@@ -5,6 +5,42 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.49] — 2026-05-28
+
+### Fixed (the actual deep-model bug)
+
+- **The deep model no longer "thinks for a second then goes silent."**
+  This was a generation-budget collapse, distinct from (and on top of)
+  the v0.2.47 `reasoning_content` fix.
+
+  `build_context` trimmed the prompt to `context_window - max_tokens`.
+  With `max_tokens = 0` (auto — the default, and what reasoning models
+  need), that's the FULL context window, so once a thread accumulated
+  enough history the prompt packed right up to the limit and left ~0
+  tokens for generation. `compute_max_tokens` then floored at 256.
+
+  A non-reasoning model (gpt-oss on the fast slot) survives a 256-token
+  budget — it emits the visible answer immediately. A reasoning model
+  (Qwen3 on the deep slot) spends its entire budget on the `<think>`
+  phase, hits `finish_reason=length`, and produces EMPTY visible
+  content. Same prompt, same budget, opposite outcome — which is
+  exactly why the fast slot worked and the deep slot didn't, and why
+  it only broke after the thread grew long.
+
+  Fix: `build_context` now reserves 8192 tokens of generation headroom
+  when `max_tokens` is auto, instead of letting the prompt consume the
+  whole window. The deep model now gets ~8k+ tokens to think and
+  answer.
+
+  Proven with four tests (see `tests/deep_model_live.rs` and
+  `tests/context_budget.rs`):
+  - live: deep model streams reasoning + a real answer through the
+    full pipeline, with and without tools
+  - live: 64-token budget → empty (the bug); 8064-token budget →
+    "144" (the fix) — isolates the budget as the cause
+  - offline: build_context with a window-filling thread leaves 8351
+    tokens of generation headroom (was ~0)
+
 ## [0.2.48] — 2026-05-28
 
 ### Fixed
