@@ -3,7 +3,7 @@
 //! Two phases for the LAN scan (no live-host gate — too easy to miss boxes
 //! that only run an LLM and nothing else, e.g. SSH/HTTP disabled):
 //!   1. **LLM port scan** — TCP-probe every (host, llm_port) pair in the
-//!      /24 with bounded concurrency. 26 ports × 254 hosts = ~6.6k probes.
+//!      /24 with bounded concurrency. ~60 ports × 254 hosts ≈ 15k probes.
 //!      Dead hosts return RST/timeout fast; live ones come back quickly.
 //!   2. **HTTP(S) probe** — for each live host:port, try both `http://`
 //!      and `https://` against the provider's API endpoint. Accept
@@ -11,7 +11,13 @@
 //!      authenticates).
 //!
 //! Worst-case ~25–35s on a /24 — the price of not assuming any "discovery"
-//! port is open on the target.
+//! port is open on the target. The port set is generated from dense
+//! CONTIGUOUS RANGES around each known LLM base port (see `llm_ports`),
+//! not a sparse hand-picked list — because the single most common real
+//! miss is "the user started a second/third model instance on the next
+//! port over" (vLLM 8000→8001→8002…, llama.cpp 8080→8081→8082…, Ollama
+//! 11434→11435…). The larger list is offset by higher phase-1 concurrency
+//! so the wall-clock cost is unchanged.
 
 use std::collections::BTreeSet;
 use std::time::Duration;
@@ -35,8 +41,10 @@ pub struct ModelCaps {
     pub context_length: Option<u32>,
 }
 
-/// LLM-likely TCP ports + the best-guess provider label. We probe both
-/// http and https on each one. Sorted roughly by popularity.
+/// LLM-likely TCP port + the best-guess provider label. We probe both
+/// http and https on each one. The provider/label is only a UI hint —
+/// the HTTP probe confirms the real shape via `/v1/models` or Ollama's
+/// `/api/tags` regardless of which guess the port implied.
 #[derive(Clone, Copy)]
 struct LlmPort {
     port: u16,
@@ -44,38 +52,67 @@ struct LlmPort {
     label: &'static str,
 }
 
-const LLM_PORTS: &[LlmPort] = &[
-    // Well-known defaults
-    LlmPort { port: 11434, provider: "ollama",    label: "Ollama" },
-    LlmPort { port: 11435, provider: "ollama",    label: "Ollama" },
-    LlmPort { port: 11436, provider: "ollama",    label: "Ollama" },
-    LlmPort { port: 1234,  provider: "lmstudio",  label: "LM Studio" },
-    LlmPort { port: 1235,  provider: "lmstudio",  label: "LM Studio" },
-    LlmPort { port: 8000,  provider: "vllm",      label: "vLLM" },
-    LlmPort { port: 8001,  provider: "vllm",      label: "vLLM" },
-    LlmPort { port: 8080,  provider: "llamacpp",  label: "llama.cpp" },
-    LlmPort { port: 8081,  provider: "llamacpp",  label: "llama.cpp" },
-    LlmPort { port: 8082,  provider: "llamacpp",  label: "llama.cpp" },
-    LlmPort { port: 8088,  provider: "llamacpp",  label: "llama.cpp" },
-    LlmPort { port: 8090,  provider: "llamacpp",  label: "llama.cpp" },
-    LlmPort { port: 8888,  provider: "openwebui", label: "Open WebUI" },
-    LlmPort { port: 8889,  provider: "openai-compat", label: "OpenAI-compat" },
-    // Reverse-proxy / TLS variants
-    LlmPort { port: 443,   provider: "openai-compat", label: "OpenAI-compat (TLS)" },
-    LlmPort { port: 8443,  provider: "openai-compat", label: "OpenAI-compat (TLS)" },
-    // Dev-server / Gradio / custom
-    LlmPort { port: 3000,  provider: "openai-compat", label: "OpenAI-compat" },
-    LlmPort { port: 4000,  provider: "openai-compat", label: "OpenAI-compat" },
-    LlmPort { port: 5000,  provider: "openai-compat", label: "OpenAI-compat" },
-    LlmPort { port: 5001,  provider: "openai-compat", label: "OpenAI-compat" },
-    LlmPort { port: 7860,  provider: "openai-compat", label: "Gradio" },
-    LlmPort { port: 7861,  provider: "openai-compat", label: "Gradio" },
-    LlmPort { port: 9000,  provider: "openai-compat", label: "OpenAI-compat" },
-    LlmPort { port: 9090,  provider: "openai-compat", label: "OpenAI-compat" },
-    LlmPort { port: 9091,  provider: "openai-compat", label: "OpenAI-compat" },
-    LlmPort { port: 9292,  provider: "llamacpp",  label: "llama.cpp" },
-    LlmPort { port: 9999,  provider: "openai-compat", label: "OpenAI-compat" },
+/// Inclusive port range for a backend family. Generates one `LlmPort`
+/// per port so "the next instance over" (8000→8001→8002…) is covered
+/// without enumerating every port by hand.
+#[derive(Clone, Copy)]
+struct PortRange {
+    start: u16,
+    end: u16,
+    provider: &'static str,
+    label: &'static str,
+}
+
+/// Contiguous ranges around each known LLM base port. The key design
+/// choice: people run multiple llama.cpp / vLLM / Ollama instances on
+/// incrementing ports, so we sweep a band around each base rather than
+/// a few sparse points. Keep ranges modest — every extra port multiplies
+/// the probe count by the host count.
+const LLM_PORT_RANGES: &[PortRange] = &[
+    PortRange { start: 11434, end: 11439, provider: "ollama",        label: "Ollama" },
+    PortRange { start: 1234,  end: 1237,  provider: "lmstudio",      label: "LM Studio" },
+    PortRange { start: 8000,  end: 8010,  provider: "vllm",          label: "vLLM" },
+    PortRange { start: 8080,  end: 8095,  provider: "llamacpp",      label: "llama.cpp" },
+    PortRange { start: 5000,  end: 5005,  provider: "openai-compat", label: "OpenAI-compat" },
+    PortRange { start: 7860,  end: 7861,  provider: "openai-compat", label: "Gradio" },
+    PortRange { start: 8888,  end: 8889,  provider: "openwebui",     label: "Open WebUI" },
+    PortRange { start: 9090,  end: 9091,  provider: "openai-compat", label: "OpenAI-compat" },
+    PortRange { start: 30000, end: 30001, provider: "openai-compat", label: "SGLang" },
 ];
+
+/// One-off ports that don't belong to a contiguous band.
+const LLM_PORT_SINGLES: &[LlmPort] = &[
+    LlmPort { port: 80,   provider: "openai-compat", label: "OpenAI-compat (proxy)" },
+    LlmPort { port: 443,  provider: "openai-compat", label: "OpenAI-compat (TLS)" },
+    LlmPort { port: 8443, provider: "openai-compat", label: "OpenAI-compat (TLS)" },
+    LlmPort { port: 1337, provider: "openai-compat", label: "Jan" },
+    LlmPort { port: 3000, provider: "openai-compat", label: "OpenAI-compat" },
+    LlmPort { port: 4000, provider: "openai-compat", label: "LiteLLM" },
+    LlmPort { port: 8123, provider: "openai-compat", label: "OpenAI-compat" },
+    LlmPort { port: 9000, provider: "openai-compat", label: "OpenAI-compat" },
+    LlmPort { port: 9292, provider: "llamacpp",      label: "llama.cpp" },
+    LlmPort { port: 9999, provider: "openai-compat", label: "OpenAI-compat" },
+    LlmPort { port: 2242, provider: "openai-compat", label: "Aphrodite" },
+];
+
+/// Materialize the full port set from ranges + singles, deduped and
+/// sorted. Built once per scan (cheap — ~60 entries).
+fn llm_ports() -> Vec<LlmPort> {
+    let mut out: Vec<LlmPort> = Vec::new();
+    for r in LLM_PORT_RANGES {
+        for port in r.start..=r.end {
+            out.push(LlmPort {
+                port,
+                provider: r.provider,
+                label: r.label,
+            });
+        }
+    }
+    out.extend_from_slice(LLM_PORT_SINGLES);
+    out.sort_by_key(|p| p.port);
+    out.dedup_by_key(|p| p.port);
+    out
+}
 
 /// Detect backends on localhost only (fast).
 pub async fn detect_all() -> Vec<DetectedBackend> {
@@ -137,9 +174,10 @@ async fn scan_targets(hosts: Vec<String>) -> Vec<DetectedBackend> {
     }
 
     // Phase 1: TCP precheck across every (host, LLM port) pair.
-    let mut probes: Vec<(String, LlmPort)> = Vec::with_capacity(hosts.len() * LLM_PORTS.len());
+    let ports = llm_ports();
+    let mut probes: Vec<(String, LlmPort)> = Vec::with_capacity(hosts.len() * ports.len());
     for ip in &hosts {
-        for kind in LLM_PORTS {
+        for kind in &ports {
             probes.push((ip.clone(), *kind));
         }
     }
@@ -147,9 +185,12 @@ async fn scan_targets(hosts: Vec<String>) -> Vec<DetectedBackend> {
         "phase 1: {} TCP probes ({} hosts × {} ports)",
         probes.len(),
         hosts.len(),
-        LLM_PORTS.len()
+        ports.len()
     );
 
+    // 256-wide: TCP connects are cheap (one syscall + a short wait), so a
+    // high fan-out keeps the bigger port set from lengthening wall-clock
+    // time. Dead hosts RST or hit the 400ms timeout fast.
     let candidates: Vec<(String, LlmPort)> = futures_util::stream::iter(probes)
         .map(|(ip, kind)| async move {
             let addr = format!("{}:{}", ip, kind.port);
@@ -162,7 +203,7 @@ async fn scan_targets(hosts: Vec<String>) -> Vec<DetectedBackend> {
             .unwrap_or(false);
             if ok { Some((ip, kind)) } else { None }
         })
-        .buffer_unordered(64)
+        .buffer_unordered(256)
         .filter_map(|x| async move { x })
         .collect()
         .await;
@@ -406,4 +447,63 @@ async fn list_via_openai(
     struct M { id: String }
     let parsed: R = resp.json().await?;
     Ok(parsed.data.into_iter().map(|m| m.id).collect())
+}
+
+#[cfg(test)]
+mod port_coverage_tests {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    fn port_set() -> BTreeSet<u16> {
+        llm_ports().iter().map(|p| p.port).collect()
+    }
+
+    #[test]
+    fn covers_well_known_default_ports() {
+        let ports = port_set();
+        for (name, port) in [
+            ("Ollama", 11434u16),
+            ("LM Studio", 1234),
+            ("vLLM", 8000),
+            ("llama.cpp", 8080),
+            ("Open WebUI", 8888),
+            ("SGLang", 30000),
+            ("Jan", 1337),
+            ("LiteLLM", 4000),
+            ("Text-gen-webui/Kobold", 5000),
+        ] {
+            assert!(
+                ports.contains(&port),
+                "{name} default port {port} must be in the scan set"
+            );
+        }
+    }
+
+    #[test]
+    fn covers_adjacent_instance_ports() {
+        // The whole point of the range-based fix: a second/third model
+        // started on the next port over must be discoverable. These all
+        // fell in GAPS of the old sparse list.
+        let ports = port_set();
+        for p in [8002u16, 8083, 8085, 8089, 8091, 1236, 11437, 5002] {
+            assert!(
+                ports.contains(&p),
+                "adjacent-instance port {p} must be covered by a range"
+            );
+        }
+    }
+
+    #[test]
+    fn ports_are_unique_and_reasonable() {
+        let list = llm_ports();
+        let set = port_set();
+        assert_eq!(list.len(), set.len(), "no duplicate ports");
+        // Sanity: stay well under a count that would blow up scan time.
+        assert!(
+            list.len() < 90,
+            "port set grew to {} — keep it lean (probes = ports × 254 hosts)",
+            list.len()
+        );
+        assert!(list.iter().all(|p| p.port > 0));
+    }
 }

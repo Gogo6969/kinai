@@ -5,6 +5,28 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.53] — 2026-05-28
+
+### Fixed
+
+- **Network scan now finds LLM servers running on "the next port over."**
+  Discovery TCP-scanned a sparse, hand-picked list of 27 ports, so a
+  backend on any port between the picks was invisible — e.g. a second
+  llama.cpp instance on `8083` (the old list had `8082` then jumped to
+  `8088`). The port set is now generated from dense contiguous ranges
+  around each backend's base — Ollama `11434–11439`, LM Studio
+  `1234–1237`, vLLM `8000–8010`, llama.cpp `8080–8095`, text-gen/Kobold
+  `5000–5005` — plus well-known defaults it never probed: SGLang
+  `30000`, Jan `1337`, TGI `80`, Aphrodite `2242`. Phase-1 scan
+  concurrency was raised 64 → 256 so the larger set doesn't slow the
+  scan down. Verified against a live LAN: KinAI now discovers backends
+  on `8083` (and the other dense-range ports) that the old scan walked
+  right past.
+
+  Tests: `src/llm/detect.rs` (`port_coverage_tests`) and an
+  `#[ignore]`d live probe `tests/discovery_live.rs` that runs the real
+  `scan_local_network()`.
+
 ## [0.2.52] — 2026-05-28
 
 ### Fixed
