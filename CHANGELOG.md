@@ -5,6 +5,35 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.51] — 2026-05-28
+
+### Fixed (image handling)
+
+- **Sending an image to analyze on Telegram works again.** The
+  Telegram router only ever read a message's text/caption — it
+  silently dropped `msg.photo`, so photos sent to the bot did
+  nothing. Inbound photos are now downloaded (highest-resolution
+  size), wrapped as an image attachment, and routed through the
+  same vision pipeline the desktop app uses (configured Vision
+  endpoint — e.g. Gemini 2.5 Flash with Claude failover). A photo
+  with no caption gets a default "What's in this image?" prompt.
+
+- **`/deep` no longer dies in a thread that earlier contained an
+  image.** This was the real cause behind "Something went wrong"
+  on the long deep thread (on top of the v0.2.50 budget fix). The
+  router/route only inspects the CURRENT turn's attachments, so a
+  text follow-up correctly routes to the chat model — but
+  `build_context` still carried the earlier image from history and
+  serialized it into multipart content, which a non-vision backend
+  (llama.cpp without an `mmproj` projector — exactly the deep
+  slot's Qwen3) rejects with `500: image input is not supported`.
+  Historical images are now replaced with a short text marker
+  before a non-vision model sees them, so the turn succeeds and the
+  conversation still notes an image was there.
+
+  Tests: `src/vision.rs` (`image_strip_tests`) and
+  `src/telegram/router.rs` (`photo_tests` — largest-size selection).
+
 ## [0.2.50] — 2026-05-28
 
 ### Fixed

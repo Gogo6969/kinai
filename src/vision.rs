@@ -63,6 +63,41 @@ pub fn image_data_urls(attachments: &[Attachment]) -> Vec<String> {
         .collect()
 }
 
+/// Remove image parts from a message list, replacing each stripped image
+/// with a short text marker. Used before sending a turn to a non-vision
+/// text model so a historical image in the thread doesn't get serialized
+/// into multipart content that the backend rejects (llama.cpp without an
+/// mmproj returns a 500 for any image input).
+fn strip_images_from_history(
+    messages: Vec<crate::context::ChatMessage>,
+) -> Vec<crate::context::ChatMessage> {
+    use crate::context::ChatMessage;
+    messages
+        .into_iter()
+        .map(|m| match m {
+            ChatMessage::User {
+                content,
+                name,
+                image_data_urls,
+            } if !image_data_urls.is_empty() => {
+                const NOTE: &str =
+                    "[an image was attached here; the current model can't view images]";
+                let new_content = if content.trim().is_empty() {
+                    NOTE.to_string()
+                } else {
+                    format!("{content}\n\n{NOTE}")
+                };
+                ChatMessage::User {
+                    content: new_content,
+                    name,
+                    image_data_urls: vec![],
+                }
+            }
+            other => other,
+        })
+        .collect()
+}
+
 /// Where should this turn go?
 #[derive(Debug, Clone)]
 pub enum Route {
@@ -157,17 +192,37 @@ pub async fn run_with_route(
 ) -> Result<crate::tools::loop_pipeline::PipelineResult> {
     use crate::tools::loop_pipeline::run_pipeline;
     match route {
-        Route::Chat => run_pipeline(
-            default_client,
-            messages,
-            tools,
-            max_tokens,
-            tool_runtime,
-            handlers,
-            cancel,
-        )
-        .await
-        .map_err(Into::into),
+        Route::Chat => {
+            // Strip image parts from the messages when the chat model
+            // can't see images. This is the fix for the "/deep fails in
+            // a thread that earlier had an image" bug: decide() only
+            // inspects the CURRENT message's attachments, so a text
+            // follow-up routes here (Route::Chat) — but build_context
+            // still carries any IMAGE from the thread history, which
+            // serialize_message turns into OpenAI multipart content. A
+            // non-vision backend (notably llama.cpp without an mmproj
+            // projector — exactly the deep slot's Qwen3) then rejects
+            // the WHOLE request with "500: image input is not supported".
+            // The text model couldn't use the image anyway; replace it
+            // with a short text marker so the turn still succeeds and the
+            // conversation still references that an image was there.
+            let messages = if is_vision_capable(&default_client.settings.model) {
+                messages
+            } else {
+                strip_images_from_history(messages)
+            };
+            run_pipeline(
+                default_client,
+                messages,
+                tools,
+                max_tokens,
+                tool_runtime,
+                handlers,
+                cancel,
+            )
+            .await
+            .map_err(Into::into)
+        }
         Route::Vision { primary, failover } => {
             let primary_client =
                 crate::llm::LlmClient::new(endpoint_to_llm_settings(&primary, chat_cfg));
@@ -242,4 +297,59 @@ pub fn is_transient_failure(err_msg: &str) -> bool {
         "internal error",
     ];
     needles.iter().any(|n| lc.contains(n))
+}
+
+#[cfg(test)]
+mod image_strip_tests {
+    use super::*;
+    use crate::context::ChatMessage;
+
+    #[test]
+    fn strips_image_from_history_user_message() {
+        let msgs = vec![
+            ChatMessage::System { content: "sys".into() },
+            ChatMessage::User {
+                content: "look at this".into(),
+                name: Some("Wolf".into()),
+                image_data_urls: vec!["data:image/png;base64,AAAA".into()],
+            },
+            ChatMessage::Assistant { content: "nice pic".into(), tool_calls: vec![] },
+            ChatMessage::User {
+                content: "/deep test".into(),
+                name: Some("Wolf".into()),
+                image_data_urls: vec![],
+            },
+        ];
+        let out = strip_images_from_history(msgs);
+        // The image-bearing message must now carry zero image URLs...
+        if let ChatMessage::User { image_data_urls, content, .. } = &out[1] {
+            assert!(image_data_urls.is_empty(), "image url must be stripped");
+            assert!(content.contains("look at this"), "original text preserved");
+            assert!(content.contains("can't view images"), "marker appended");
+        } else {
+            panic!("expected User at index 1");
+        }
+        // ...and the text-only messages are untouched.
+        if let ChatMessage::User { content, .. } = &out[3] {
+            assert_eq!(content, "/deep test");
+        } else {
+            panic!("expected User at index 3");
+        }
+    }
+
+    #[test]
+    fn empty_caption_image_becomes_marker_only() {
+        let msgs = vec![ChatMessage::User {
+            content: "".into(),
+            name: None,
+            image_data_urls: vec!["data:image/png;base64,AAAA".into()],
+        }];
+        let out = strip_images_from_history(msgs);
+        if let ChatMessage::User { content, image_data_urls, .. } = &out[0] {
+            assert!(image_data_urls.is_empty());
+            assert!(content.contains("can't view images"));
+        } else {
+            panic!("expected User");
+        }
+    }
 }

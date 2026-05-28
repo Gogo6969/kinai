@@ -17,13 +17,15 @@
 //!      back via sendMessage / sendPhoto.
 
 use anyhow::Result;
+use base64::Engine;
 use tauri::{AppHandle, Emitter, Runtime};
 
 use crate::db::telegram as tg_db;
+use crate::db::Attachment;
 use crate::network::protocol::Envelope;
 use crate::SharedState;
 
-use super::api::{BotApi, TelegramMessage, TelegramUpdate};
+use super::api::{BotApi, PhotoSize, TelegramMessage, TelegramUpdate};
 
 pub async fn handle_update<R: Runtime>(
     api: &BotApi,
@@ -136,11 +138,41 @@ async fn run_turn_for_peer<R: Runtime>(
     chat_id: i64,
     peer_id: &str,
     content: &str,
-    _msg: &TelegramMessage,
+    msg: &TelegramMessage,
 ) -> Result<()> {
-    if content.trim().is_empty() {
-        return Ok(()); // ignore stickers / unknown payloads for v1
+    // Pull any inbound photo into a KinAI image attachment so the vision
+    // pipeline can analyze it (routes to the configured Vision endpoint —
+    // Gemini/Claude with failover — exactly like an in-app image paste).
+    // Before this the router only looked at text/caption and silently
+    // dropped `msg.photo`, so "send me an image to analyze" did nothing.
+    let attachments: Vec<Attachment> = match photo_attachment(api, msg).await {
+        Ok(Some(att)) => vec![att],
+        Ok(None) => vec![],
+        Err(e) => {
+            tracing::warn!("telegram photo download failed: {e:?}");
+            api.send_message(
+                chat_id,
+                &format!("I couldn't download that image from Telegram: {e}"),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+    let has_image = !attachments.is_empty();
+
+    // Nothing actionable: no text AND no image (sticker, voice note, …).
+    if content.trim().is_empty() && !has_image {
+        return Ok(()); // ignore unknown payloads for v1
     }
+
+    // A photo with no caption still needs a prompt for the model to act
+    // on. Fall back to a generic "describe it" so a bare image gets a
+    // useful answer instead of an empty user turn.
+    let content: &str = if content.trim().is_empty() && has_image {
+        "What's in this image?"
+    } else {
+        content
+    };
 
     // Ensure a dedicated thread exists for this peer's Telegram convo.
     // The id is deterministic so the same chat always lands in the
@@ -182,11 +214,12 @@ async fn run_turn_for_peer<R: Runtime>(
         return Ok(());
     }
 
-    // Persist user message.
+    // Persist user message (with any image attachment so build_context
+    // carries the image into the prompt and the desktop UI shows it too).
     let sender = "Telegram".to_string();
     let user_msg = state
         .db
-        .append_message(&thread_id, "user", &sender, content, &[])
+        .append_message(&thread_id, "user", &sender, content, &attachments)
         .await?;
     // Fan out to whichever KinAI surface(s) belong to this peer so the
     // chat shows up live instead of only on the next thread reload.
@@ -361,7 +394,7 @@ async fn run_turn_for_peer<R: Runtime>(
         on_reasoning: Arc::new(|_| {}),
         on_tool: Arc::new(|_| {}),
     };
-    let route = crate::vision::decide(&active_llm_settings.model, &[], &cfg.vision)?;
+    let route = crate::vision::decide(&active_llm_settings.model, &attachments, &cfg.vision)?;
     let started = std::time::Instant::now();
     let result = crate::vision::run_with_route(
         route,
@@ -576,6 +609,76 @@ pub(super) fn strip_inline_image_markdown(reply: &str) -> String {
         Err(_) => return reply.to_string(),
     };
     re.replace_all(reply, "").trim().to_string()
+}
+
+/// Pick the highest-resolution entry Telegram offered for an inbound
+/// photo. Telegram sends the SAME image at several escalating sizes in
+/// one `photo` array; the vision model deserves the sharpest one, so we
+/// take the largest by pixel area rather than blindly grabbing `[0]`
+/// (which is the thumbnail).
+fn largest_photo(sizes: &[PhotoSize]) -> Option<&PhotoSize> {
+    sizes
+        .iter()
+        .max_by_key(|p| (p.width as u64) * (p.height as u64))
+}
+
+/// Download the highest-resolution photo from an inbound Telegram
+/// message and wrap it as a KinAI image `Attachment` (base64 data URL),
+/// so the vision pipeline can analyze it exactly like an in-app paste.
+///
+/// Returns `Ok(None)` when the message carries no photo (the common
+/// text-only case). Telegram photos are always JPEG, so we hardcode that
+/// mime — the two-step Bot API download is getFile (file_id → file_path)
+/// then download_file (file_path → bytes).
+async fn photo_attachment(api: &BotApi, msg: &TelegramMessage) -> Result<Option<Attachment>> {
+    let Some(largest) = largest_photo(&msg.photo) else {
+        return Ok(None);
+    };
+    let file = api.get_file(&largest.file_id).await?;
+    let file_path = file
+        .file_path
+        .ok_or_else(|| anyhow::anyhow!("telegram getFile returned no file_path"))?;
+    let bytes = api.download_file(&file_path).await?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    let data_url = format!("data:image/jpeg;base64,{b64}");
+    Ok(Some(Attachment {
+        kind: "image".into(),
+        mime: Some("image/jpeg".into()),
+        name: Some("telegram-photo.jpg".into()),
+        data_url: Some(data_url),
+    }))
+}
+
+#[cfg(test)]
+mod photo_tests {
+    use super::*;
+
+    fn size(w: u32, h: u32, id: &str) -> PhotoSize {
+        PhotoSize {
+            file_id: id.into(),
+            width: w,
+            height: h,
+            file_size: None,
+        }
+    }
+
+    #[test]
+    fn largest_photo_picks_highest_resolution() {
+        // Telegram lists thumbnails first; the sharpest is usually last,
+        // but we must not assume ordering — pick by pixel area.
+        let sizes = vec![
+            size(90, 90, "thumb"),
+            size(1280, 720, "full"),
+            size(320, 240, "mid"),
+        ];
+        let pick = largest_photo(&sizes).expect("non-empty");
+        assert_eq!(pick.file_id, "full", "must select the largest by area");
+    }
+
+    #[test]
+    fn largest_photo_none_when_empty() {
+        assert!(largest_photo(&[]).is_none());
+    }
 }
 
 /// Deterministic thread id for `<peer>`'s Telegram conversation. UUID
