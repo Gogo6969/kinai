@@ -107,12 +107,30 @@ pub fn system_prompt(family_name: &str, addendum: &str) -> ChatMessage {
     // will retry with permuted queries indefinitely until the round budget runs
     // out. This is what every agent harness (including CCC) has had to learn
     // the hard way.
+    // Anchor the model in real time. Local LLMs have a training cutoff and
+    // NO inherent sense of "now" — so without this they assume any recent
+    // or in-progress event "hasn't happened yet" (e.g. claiming the French
+    // Open that's underway today is still "scheduled"). Every serious
+    // assistant injects the current date for exactly this reason; relying
+    // on the datetime() tool isn't enough, because a model that wrongly
+    // believes it already knows the answer never thinks to call it.
+    let now = crate::tools::datetime::now_pretty();
     let mut content = format!(
         "You are KinAI — a private family assistant running entirely on the {family_name} \
 household's own hardware. You are warm, direct, helpful, and honest. \
 You remember context across conversations. When you don't know something, say so. \
 Answer in the same language the user wrote in. Format with markdown when it helps — \
 including ```code blocks```, LaTeX between $$ delimiters, and tables.
+
+# CURRENT DATE & TIME
+
+Right now it is **{now}** on the host machine. Treat this as the present \
+moment. Your training data has a cutoff, but everything up to and including \
+today has already happened — never tell the user a recent or in-progress \
+event \"hasn't happened yet\" or is \"scheduled\" just because it falls after \
+your training cutoff. If a question needs current facts you don't reliably \
+know (live results, news, prices, who currently holds a role), use \
+web_search rather than guessing from stale knowledge.
 
 # READ THE LATEST MESSAGE FIRST
 
@@ -237,4 +255,33 @@ naturally when relevant, but don't recite the whole list at the start of every r
         content.push_str(addendum.trim());
     }
     ChatMessage::System { content }
+}
+
+#[cfg(test)]
+mod system_prompt_tests {
+    use super::*;
+    use chrono::{Datelike, Local};
+
+    #[test]
+    fn system_prompt_injects_current_date() {
+        let ChatMessage::System { content } = system_prompt("Test", "") else {
+            panic!("system_prompt must return a System message");
+        };
+        // The prompt must anchor the model in real time: the current
+        // year and a clearly-labeled date section. This guards the fix
+        // for "KinAI thinks an in-progress event hasn't happened yet."
+        let year = Local::now().year().to_string();
+        assert!(
+            content.contains(&year),
+            "system prompt must contain the current year ({year})"
+        );
+        assert!(
+            content.contains("CURRENT DATE & TIME"),
+            "system prompt must carry the date/time section header"
+        );
+        assert!(
+            content.contains("already happened"),
+            "system prompt must tell the model recent events have occurred"
+        );
+    }
 }

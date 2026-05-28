@@ -5,6 +5,23 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.52] — 2026-05-28
+
+### Fixed
+
+- **KinAI now knows what day it is.** Local models have a training
+  cutoff and no built-in sense of "now," so KinAI would insist a
+  recent or in-progress event "hasn't happened yet" — e.g. reporting
+  the French Open currently underway as still "scheduled." The system
+  prompt now injects the host's current date and time on every turn
+  and instructs the model that everything up to today has already
+  happened, and to use `web_search` for live facts (results, news,
+  prices) instead of guessing from stale knowledge. The `datetime()`
+  tool alone wasn't enough — a model that wrongly believes it already
+  knows the answer never thinks to call it.
+
+  Test: `src/context/mod.rs` (`system_prompt_tests`).
+
 ## [0.2.51] — 2026-05-28
 
 ### Fixed (image handling)
