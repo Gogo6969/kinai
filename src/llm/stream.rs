@@ -514,9 +514,19 @@ struct StreamChoice {
 struct StreamDelta {
     #[serde(default)]
     content: Option<String>,
-    /// Chain-of-thought trace emitted by reasoning models (gpt-oss, R1, etc.)
-    /// when the server is configured to surface it separately.
-    #[serde(default)]
+    /// Chain-of-thought trace emitted by reasoning models when the
+    /// server surfaces it as a separate field (not inline in content).
+    ///
+    /// Field-name zoo across backends — we accept all of them via serde
+    /// aliases so the reasoning panel lights up regardless of which
+    /// server the host points a slot at:
+    ///   * `reasoning`          — vLLM / some OpenAI-compatible servers
+    ///   * `reasoning_content`  — llama.cpp, DeepSeek-R1, Qwen3 (this is
+    ///     what the deep slot's Qwen3.6-35B emits — without the alias
+    ///     the entire multi-second thinking phase was silently dropped
+    ///     and the user saw dead air under the thinking-dots until the
+    ///     final answer finally arrived in `content`)
+    #[serde(default, alias = "reasoning_content")]
     reasoning: Option<String>,
     #[serde(default)]
     tool_calls: Option<Vec<StreamToolCall>>,
@@ -554,5 +564,39 @@ impl ToolCallAccum {
                 },
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod reasoning_field_tests {
+    use super::*;
+
+    /// The deep slot's Qwen3.6-35B (via llama.cpp) streams its
+    /// chain-of-thought in a `reasoning_content` delta field, while
+    /// vLLM-style servers use `reasoning`. KinAI's StreamDelta must
+    /// accept BOTH or the entire thinking phase gets silently dropped
+    /// (serde ignores unknown fields), leaving the user staring at
+    /// dead air under the thinking-dots. This was the v0.2.46 "deep
+    /// model doesn't work" bug. Guard both spellings.
+    #[test]
+    fn parses_reasoning_content_alias() {
+        let json = r#"{"delta":{"reasoning_content":"thinking..."},"finish_reason":null}"#;
+        let choice: StreamChoice = serde_json::from_str(json).unwrap();
+        assert_eq!(choice.delta.reasoning.as_deref(), Some("thinking..."));
+    }
+
+    #[test]
+    fn parses_reasoning_canonical() {
+        let json = r#"{"delta":{"reasoning":"thinking..."},"finish_reason":null}"#;
+        let choice: StreamChoice = serde_json::from_str(json).unwrap();
+        assert_eq!(choice.delta.reasoning.as_deref(), Some("thinking..."));
+    }
+
+    #[test]
+    fn parses_final_content() {
+        let json = r#"{"delta":{"content":"Hi"},"finish_reason":"stop"}"#;
+        let choice: StreamChoice = serde_json::from_str(json).unwrap();
+        assert_eq!(choice.delta.content.as_deref(), Some("Hi"));
+        assert_eq!(choice.finish_reason.as_deref(), Some("stop"));
     }
 }

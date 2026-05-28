@@ -5,6 +5,36 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.47] — 2026-05-26
+
+### Fixed
+
+- **The deep model (`/deep`) works again — KinAI now reads the
+  `reasoning_content` streaming field.** Reasoning models served via
+  recent llama.cpp builds (Qwen3, DeepSeek-R1, etc.) split their
+  chain-of-thought into a separate `reasoning_content` delta field
+  instead of inlining it in `content`. KinAI's stream parser only
+  recognized a field named `reasoning`, so every thinking token was
+  silently dropped by the JSON deserializer — the model would spend
+  30–60 seconds reasoning while KinAI showed nothing but pulsing
+  dots, then the final answer (which DOES arrive in `content`) would
+  appear after the dead air. That dead air read as "the deep model
+  is broken."
+
+  This wasn't a KinAI regression — it surfaced when the host's
+  llama.cpp server was rebuilt/updated to a newer build that defaults
+  to `--reasoning-format deepseek` (separated reasoning), versus
+  older builds that kept it inline. Either way the right fix is on
+  KinAI's side: added a serde alias so the `reasoning` field accepts
+  both `reasoning` (vLLM-style) AND `reasoning_content` (llama.cpp /
+  DeepSeek / Qwen3). The reasoning now streams live into the
+  collapsible thinking panel for the deep slot, same as the fast
+  slot.
+
+  Three parser tests added (`reasoning_field_tests`) so a future
+  backend using yet another field name fails CI loudly instead of
+  silently swallowing the model's output.
+
 ## [0.2.46] — 2026-05-26
 
 ### Fixed
