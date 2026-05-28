@@ -71,16 +71,25 @@ pub async fn build_context(
     // visible. Same prompt, same budget, opposite outcome — which is why
     // the fast slot worked and the deep slot didn't.
     //
-    // So when max_tokens is auto (0), reserve a generous fixed slice of
-    // the window for generation instead of zero. 8192 tokens is enough
-    // for a long chain-of-thought plus a substantial answer, while still
-    // leaving the bulk of a 32k window for prompt/history. When the user
-    // pinned an explicit max_tokens, honor that as the reserve.
-    const AUTO_GENERATION_RESERVE: usize = 8192;
+    // So when max_tokens is auto (0), reserve HALF the context window for
+    // generation (floored at 8192) instead of zero. This is the v0.2.50
+    // bump from a flat 8192: the v0.2.49 reserve fixed FRESH threads but
+    // a long thread still failed on /deep, because 8192 generation
+    // tokens isn't enough for a reasoning model to think over a large
+    // (~24k-token) context AND produce an answer — it ran out mid-think
+    // and emitted nothing. Reserving half the window caps the prompt at
+    // ~16k and guarantees the deep model ~16k tokens to reason + answer,
+    // which holds up even when a user switches to /deep deep into a long
+    // fast-model conversation.
+    //
+    // The cost is shallower recalled history on very long threads, but a
+    // truncated/empty answer is far worse than slightly less context —
+    // and the thread summary + memory layers preserve the gist of what
+    // gets trimmed. When the user pins an explicit max_tokens, honor it.
     let reserve = if cfg.llm.max_tokens > 0 {
         cfg.llm.max_tokens
     } else {
-        AUTO_GENERATION_RESERVE
+        (cfg.llm.context_window / 2).max(8192)
     };
     let budget = cfg.llm.context_window.saturating_sub(reserve);
     token_guard::trim_to_fit(&mut messages, budget);

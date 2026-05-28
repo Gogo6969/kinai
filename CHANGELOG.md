@@ -5,6 +5,35 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.50] — 2026-05-28
+
+### Fixed
+
+- **Switching to `/deep` deep into a long thread no longer fails
+  silently.** v0.2.49 reserved a flat 8192 generation tokens, which
+  fixed fresh threads but a long thread still starved the reasoning
+  model — 8k tokens isn't enough to think over ~24k of context AND
+  answer. `build_context` now reserves HALF the context window for
+  generation (≈16k on a 32k window), capping the prompt near 16k.
+  Verified: a window-filling 60-message thread now leaves 16786
+  tokens of generation headroom (was ~0 originally, ~8k in v0.2.49).
+  Switching from fast to deep mid-conversation works regardless of
+  how long the thread has grown.
+
+- **Bare `/deep` (and `/fast`) now switches models instead of
+  doing nothing.** Typing `/deep` and Enter — with no prompt after
+  it — used to send an empty message to the model and produce junk
+  or silence. Now it's a proper mode switch: it flips the thread to
+  the deep model (sticky for follow-ups), replies with a
+  confirmation naming the model ("Switched to the deep model
+  (`Qwen3.6-35B…`)…"), and skips the LLM turn entirely. Same for
+  `/fast`. You can switch with just `/deep` ⏎ the way you used to.
+
+  Tests: `tests/routing.rs` (bare switch is sticky; `/deep test`
+  still runs a normal turn; confirmation names the model) and
+  `tests/context_budget.rs` (half-window headroom holds on a full
+  thread).
+
 ## [0.2.49] — 2026-05-28
 
 ### Fixed (the actual deep-model bug)

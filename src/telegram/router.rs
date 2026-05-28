@@ -232,7 +232,13 @@ async fn run_turn_for_peer<R: Runtime>(
         return Ok(());
     }
 
-    if let Some(reply) = crate::slash::handle(&cfg, &llm_route_content).await {
+    // Bare `/fast` / `/deep` → mode switch confirmation, no LLM turn.
+    let slash_reply = if route_pick.bare_switch {
+        Some(crate::slash::switch_confirmation(&route_pick))
+    } else {
+        crate::slash::handle(&cfg, &llm_route_content).await
+    };
+    if let Some(reply) = slash_reply {
         send_assistant_reply(
             api,
             state,

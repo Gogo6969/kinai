@@ -69,17 +69,19 @@ async fn build_context_reserves_generation_headroom() {
     eprintln!("prompt tokens after build_context: {prompt_tokens}");
     eprintln!("context window: {}", cfg.llm.context_window);
 
-    // The whole point: the prompt must NOT fill the window. It should
-    // leave at least ~7000 tokens of headroom (reserve 8192 minus a
-    // little slack for the un-trimmable system + final-message tokens
-    // and the token-overhead constant). Pre-fix this was ~0.
+    // The whole point: the prompt must NOT fill the window. With the
+    // half-window reserve on a 32768 window, the prompt is capped near
+    // 16384, so generation headroom should be ~16000+. Pre-fix this was
+    // ~0; the v0.2.49 flat-8192 reserve gave ~8000 (still too little for
+    // a reasoning model over a long context); v0.2.50's half-window
+    // reserve gives ~16000.
     let headroom = cfg.llm.context_window.saturating_sub(prompt_tokens);
     eprintln!("generation headroom: {headroom}");
     assert!(
-        headroom >= 7000,
-        "build_context must leave usable generation headroom for \
-         reasoning models — got only {headroom} tokens (prompt={prompt_tokens}). \
-         Pre-fix this collapsed toward 0 and starved the deep model."
+        headroom >= 15000,
+        "build_context must leave a reasoning-model-sized generation \
+         headroom — got only {headroom} tokens (prompt={prompt_tokens}). \
+         A long thread on /deep needs room to think AND answer."
     );
 
     // And it must actually have trimmed (proving the test really

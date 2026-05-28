@@ -603,7 +603,14 @@ async fn run_chat_turn(
     // exact input ("/pic 1280x720 sunset over Miami"); the synthetic
     // assistant reply below shows the resulting image (or a usage hint /
     // error if generation fails).
-    if let Some(reply) = crate::slash::handle(&cfg, &llm_route_content).await {
+    // Bare `/fast` / `/deep` → mode switch confirmation, no LLM turn.
+    // Otherwise the normal slash handlers (/pic, /picHQ, /help, ?).
+    let slash_reply = if route_pick.bare_switch {
+        Some(crate::slash::switch_confirmation(&route_pick))
+    } else {
+        crate::slash::handle(&cfg, &llm_route_content).await
+    };
+    if let Some(reply) = slash_reply {
         let started_at = std::time::Instant::now();
         let mut assistant_msg = s
             .app

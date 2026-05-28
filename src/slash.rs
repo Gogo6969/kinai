@@ -23,6 +23,13 @@ pub struct ResolvedRoute<'cfg> {
     pub settings: &'cfg LlmSettings,
     pub stripped_content: String,
     pub slot_label: &'static str,
+    /// True when the user typed a bare `/fast` or `/deep` (no prompt
+    /// after it) — a pure mode switch. The caller should persist the
+    /// sticky slot (already done in route_for), reply with a short
+    /// confirmation, and NOT run an LLM turn on the empty content.
+    /// Without this, a bare `/deep` sent an empty user message to the
+    /// model and got back junk / nothing.
+    pub bare_switch: bool,
 }
 
 /// Pick the LlmSettings that should serve `content`:
@@ -67,7 +74,8 @@ pub async fn route_for<'cfg>(
         // Persist the switch on the thread row. Best-effort: a DB
         // failure shouldn't block the user's question.
         let _ = db.set_thread_active_slot(peer_id, thread_id, Some("deep")).await;
-        return ResolvedRoute { settings, stripped_content: stripped, slot_label: "deep" };
+        let bare_switch = stripped.trim().is_empty();
+        return ResolvedRoute { settings, stripped_content: stripped, slot_label: "deep", bare_switch };
     }
     if lower.starts_with("/fast ") || lower.starts_with("/fast\n") || lower == "/fast" {
         let stripped = strip_prefix(content, "/fast");
@@ -79,7 +87,8 @@ pub async fn route_for<'cfg>(
             &cfg.llm
         };
         let _ = db.set_thread_active_slot(peer_id, thread_id, Some("fast")).await;
-        return ResolvedRoute { settings, stripped_content: stripped, slot_label: "fast" };
+        let bare_switch = stripped.trim().is_empty();
+        return ResolvedRoute { settings, stripped_content: stripped, slot_label: "fast", bare_switch };
     }
     // No prefix — consult the thread's sticky slot first. If the
     // user previously typed `/deep` in this thread, keep routing
@@ -95,6 +104,7 @@ pub async fn route_for<'cfg>(
                 settings: &cfg.llm_deep,
                 stripped_content: content.to_string(),
                 slot_label: "deep",
+                bare_switch: false,
             };
         }
         Some("fast") if cfg.llm.is_active() => {
@@ -102,6 +112,7 @@ pub async fn route_for<'cfg>(
                 settings: &cfg.llm,
                 stripped_content: content.to_string(),
                 slot_label: "fast",
+                bare_switch: false,
             };
         }
         _ => {}
@@ -117,7 +128,19 @@ pub async fn route_for<'cfg>(
     } else {
         &cfg.llm
     };
-    ResolvedRoute { settings, stripped_content: content.to_string(), slot_label: "fast" }
+    ResolvedRoute { settings, stripped_content: content.to_string(), slot_label: "fast", bare_switch: false }
+}
+
+/// Confirmation text for a bare `/fast` / `/deep` mode switch. Shown to
+/// the user instead of running an empty LLM turn, so switching models
+/// gives visible feedback ("the deep model is now active") the way it
+/// did before the sticky-routing rewrite.
+pub fn switch_confirmation(route: &ResolvedRoute) -> String {
+    let label = route.slot_label;
+    let model = &route.settings.model;
+    format!(
+        "Switched to the **{label}** model (`{model}`). It stays active for this conversation until you switch again with `/fast` or `/deep`."
+    )
 }
 
 /// Remove a leading slash command (`/fast` / `/deep`) plus the one

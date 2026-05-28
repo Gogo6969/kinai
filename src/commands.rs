@@ -1360,10 +1360,17 @@ pub async fn send_message(
             .await;
     let llm_route_content = route_pick.stripped_content.clone();
 
-    // Slash commands (/pic, /picHQ, /help, ?) are intercepted BEFORE the
-    // LLM pipeline. Same handler the WebSocket dispatcher uses for client
-    // peers — keeps the two chat paths identical.
-    if let Some(reply) = crate::slash::handle(&cfg, &llm_route_content).await {
+    // Bare `/fast` / `/deep` (no prompt) → a pure mode switch. Reply with
+    // a confirmation and skip the LLM, instead of sending an empty user
+    // turn to the model (which produced junk/nothing). Falls through to
+    // the normal slash handler (/pic, /picHQ, /help, ?) otherwise — same
+    // handler the WebSocket dispatcher uses, so both chat paths match.
+    let slash_reply = if route_pick.bare_switch {
+        Some(crate::slash::switch_confirmation(&route_pick))
+    } else {
+        crate::slash::handle(&cfg, &llm_route_content).await
+    };
+    if let Some(reply) = slash_reply {
         let started_at = std::time::Instant::now();
         let mut assistant_msg = state
             .db
