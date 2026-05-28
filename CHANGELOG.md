@@ -5,6 +5,38 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.48] — 2026-05-28
+
+### Fixed
+
+- **Auto-update now actually reaches everyone stuck on 0.2.47, and the
+  Settings version chip shows the correct commit.** Two coupled
+  build-system bugs:
+
+  1. **`build.rs` cached the git commit hash.** It only declared
+     `cargo:rerun-if-changed=src`, so the embedded short-hash was
+     re-queried *only* when a file under `src/` changed. Committing
+     doesn't change file mtimes, so a rebuild right after `git commit`
+     embedded the PREVIOUS commit's hash. That's how a v0.2.47 binary
+     ended up reporting commit `458a300` (the v0.2.46 commit) despite
+     having v0.2.47's source compiled in. Now build.rs also watches
+     `.git/HEAD` and the ref it points to, and `scripts/deploy.sh`
+     touches `src/main.rs` before building as belt-and-suspenders.
+
+  2. **The fix couldn't ship via auto-update.** The broken-hash 0.2.47
+     binary reports version `0.2.47`; GitHub's latest was also
+     `0.2.47`. Tauri's updater compares semantic versions, sees
+     `0.2.47 == 0.2.47`, and concludes "up to date" — so it never
+     pulled the corrected build. Bumping to **0.2.48** is the only way
+     to make the version comparison trip and the update download. If
+     you were stuck on a 0.2.47 that didn't behave right, 0.2.48 is
+     what unsticks you.
+
+  No functional code change beyond the build script — 0.2.48 carries
+  the same deep-model `reasoning_content` fix as 0.2.47, now with a
+  version number that auto-update will actually act on and a commit
+  hash that tells the truth.
+
 ## [0.2.47] — 2026-05-26
 
 ### Fixed

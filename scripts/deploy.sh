@@ -229,6 +229,14 @@ NEW_VERSION=$(grep -E '^version = "' Cargo.toml | head -1 | sed -E 's/.*"([^"]+)
 OS="$(uname -s)"
 echo "→ building KinAI v$NEW_VERSION on $OS"
 
+# Belt-and-suspenders: force build.rs to re-run so the embedded git
+# short-hash + build time are always fresh. build.rs already watches
+# .git/HEAD and its ref, but packed refs (.git/packed-refs) can dodge
+# that; touching a src file guarantees the rerun-if-changed=src trigger
+# fires. Cheap insurance against shipping a binary that mislabels its
+# own commit (the 458a300-on-a-0.2.47-build confusion).
+touch src/main.rs 2>/dev/null || true
+
 # Run the Rust test suite BEFORE any expensive build/sign/notarize work.
 # Skip with KINAI_DEPLOY_SKIP_TESTS=1 for genuinely emergency hotfix
 # situations (don't use this casually — silent breakage shipped this
