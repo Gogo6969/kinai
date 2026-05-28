@@ -117,6 +117,11 @@ tiktoken-rs = "0.5"
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 
+# Unix-only: read/raise RLIMIT_NOFILE so the LAN scanner can open enough
+# concurrent sockets (macOS GUI apps default to a 256 fd soft limit).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 # Sandbox HOME during JWT roundtrip tests so they don't touch the
 # user's real ~/.kinai/keys/ directory.

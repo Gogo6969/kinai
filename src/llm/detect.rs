@@ -114,6 +114,82 @@ fn llm_ports() -> Vec<LlmPort> {
     out
 }
 
+/// Best-effort raise of this process's open-file soft limit, called once
+/// at startup. macOS launches GUI apps with `RLIMIT_NOFILE` soft = 256,
+/// which is tight: the app already holds ~100+ fds (webview, DB pool,
+/// WebSocket clients) before a LAN scan opens its concurrent probe
+/// sockets. Raising the soft limit toward the hard cap (clamped to a
+/// sane 8192) prevents `EMFILE` both for scanning AND for a busy host
+/// serving many family clients. Failure is non-fatal — `scan_concurrency`
+/// still sizes itself to whatever limit is actually in effect.
+#[cfg(unix)]
+pub fn raise_fd_limit_best_effort() {
+    unsafe {
+        let mut lim = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) != 0 {
+            return;
+        }
+        // Target 8192, but never exceed the hard cap (which may be
+        // RLIM_INFINITY — then 8192 is our self-imposed ceiling).
+        let target = if lim.rlim_max == libc::RLIM_INFINITY {
+            8192
+        } else {
+            lim.rlim_max.min(8192)
+        };
+        if lim.rlim_cur >= target {
+            return; // already ample
+        }
+        let new = libc::rlimit {
+            rlim_cur: target,
+            rlim_max: lim.rlim_max,
+        };
+        if libc::setrlimit(libc::RLIMIT_NOFILE, &new) == 0 {
+            tracing::info!("raised RLIMIT_NOFILE soft limit {} -> {}", lim.rlim_cur, target);
+        } else {
+            tracing::warn!("could not raise RLIMIT_NOFILE (soft={})", lim.rlim_cur);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+pub fn raise_fd_limit_best_effort() {
+    // Windows doesn't impose a comparable per-process socket fd cap on the
+    // tokio/IOCP path, so there's nothing to raise.
+}
+
+/// Phase-1 fan-out, sized to the fd budget actually in effect so the scan
+/// never exhausts file descriptors. Each in-flight probe holds one socket;
+/// we reserve headroom for the fds the app already has open (webview, DB,
+/// WS clients ≈ 100–150) before committing the rest to probes. On a raised
+/// limit (see `raise_fd_limit_best_effort`) this yields a fast 256-wide
+/// scan; on the bare macOS 256-fd default it backs off to ~96 so the scan
+/// still completes instead of failing with EMFILE.
+fn scan_concurrency() -> usize {
+    #[cfg(unix)]
+    {
+        unsafe {
+            let mut lim = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            if libc::getrlimit(libc::RLIMIT_NOFILE, &mut lim) == 0 {
+                let soft = lim.rlim_cur as usize;
+                // Reserve 160 fds for the rest of the app, cap the fan-out
+                // at 256 (more sockets churn buys little), floor at 16.
+                return soft.saturating_sub(160).clamp(16, 256);
+            }
+        }
+        96
+    }
+    #[cfg(not(unix))]
+    {
+        256
+    }
+}
+
 /// Detect backends on localhost only (fast).
 pub async fn detect_all() -> Vec<DetectedBackend> {
     // No host discovery — just scan the LLM port list against 127.0.0.1.
@@ -188,9 +264,14 @@ async fn scan_targets(hosts: Vec<String>) -> Vec<DetectedBackend> {
         ports.len()
     );
 
-    // 256-wide: TCP connects are cheap (one syscall + a short wait), so a
-    // high fan-out keeps the bigger port set from lengthening wall-clock
-    // time. Dead hosts RST or hit the 400ms timeout fast.
+    // Fan-out sized to the live fd budget (see `scan_concurrency`). TCP
+    // connects are cheap, but each in-flight probe holds a socket — too
+    // many at once exhausts the process's file descriptors and the whole
+    // scan fails with EMFILE (which is exactly how a 256-wide fan-out
+    // silently found *nothing* under macOS's 256-fd GUI default). Dead
+    // hosts RST or hit the 400ms timeout fast.
+    let concurrency = scan_concurrency();
+    tracing::info!("phase 1: scan concurrency = {concurrency}");
     let candidates: Vec<(String, LlmPort)> = futures_util::stream::iter(probes)
         .map(|(ip, kind)| async move {
             let addr = format!("{}:{}", ip, kind.port);
@@ -203,7 +284,7 @@ async fn scan_targets(hosts: Vec<String>) -> Vec<DetectedBackend> {
             .unwrap_or(false);
             if ok { Some((ip, kind)) } else { None }
         })
-        .buffer_unordered(256)
+        .buffer_unordered(concurrency)
         .filter_map(|x| async move { x })
         .collect()
         .await;
@@ -491,6 +572,17 @@ mod port_coverage_tests {
                 "adjacent-instance port {p} must be covered by a range"
             );
         }
+    }
+
+    #[test]
+    fn scan_concurrency_stays_within_safe_bounds() {
+        // Whatever the host's fd limit, the fan-out must never exceed the
+        // 256 cap (the value that caused EMFILE) and never drop to zero.
+        let c = scan_concurrency();
+        assert!(
+            (16..=256).contains(&c),
+            "scan concurrency {c} must be in [16, 256]"
+        );
     }
 
     #[test]

@@ -23,9 +23,20 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   on `8083` (and the other dense-range ports) that the old scan walked
   right past.
 
-  Tests: `src/llm/detect.rs` (`port_coverage_tests`) and an
-  `#[ignore]`d live probe `tests/discovery_live.rs` that runs the real
-  `scan_local_network()`.
+- **Network scan no longer exhausts file descriptors and finds
+  nothing.** macOS launches GUI apps with a 256 open-file soft limit,
+  and KinAI already holds ~100+ fds (webview, DB, WebSocket clients)
+  at idle. A wide scan fan-out then blew past 256 and every probe
+  failed with `EMFILE` — the scan silently returned zero results. The
+  scanner now sizes its concurrency to the fd budget actually in
+  effect, and KinAI raises its own `RLIMIT_NOFILE` toward 8192 at
+  startup (which also protects a busy host serving many family
+  clients). Verified under a simulated 256-fd limit: the scan backs
+  off and still discovers every backend.
+
+  Tests: `src/llm/detect.rs` (`port_coverage_tests`, incl. concurrency
+  bounds) and an `#[ignore]`d live probe `tests/discovery_live.rs` that
+  runs the real `scan_local_network()`.
 
 ## [0.2.52] — 2026-05-28
 

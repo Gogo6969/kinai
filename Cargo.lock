@@ -2695,7 +2695,7 @@ dependencies = [
 
 [[package]]
 name = "kinai"
-version = "0.2.52"
+version = "0.2.53"
 dependencies = [
  "anyhow",
  "axum",
@@ -2707,6 +2707,7 @@ dependencies = [
  "hex",
  "hyper",
  "jsonwebtoken",
+ "libc",
  "local-ip-address",
  "mdns-sd",
  "once_cell",

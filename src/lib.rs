@@ -98,6 +98,11 @@ pub fn run() {
         )
         .init();
 
+    // Raise the open-file soft limit before anything opens sockets. macOS
+    // launches GUI apps with a 256-fd cap, which the LAN scanner (and a
+    // busy host serving many family clients) can blow through.
+    llm::detect::raise_fd_limit_best_effort();
+
     let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     let cfg = AppConfig::load_or_default();
     tracing::info!("KinAI starting in {:?} mode", cfg.mode);
