@@ -1135,11 +1135,66 @@
           spellcheck="false"
         />
         <p class="text-xs text-white/50 mt-1">
-          Point at any ComfyUI server reachable from this Mac. Must have the
-          <code>z_image_turbo_bf16</code> + <code>z_image_bf16</code> models
-          installed for <code>/pic</code> and <code>/picHQ</code> respectively
-          (same setup as Olares One).
+          Point at any ComfyUI server reachable from this Mac — it can run on
+          Linux, Windows, or another Mac (ComfyUI is cross-platform), or on the
+          same machine. Default port is <code>8188</code>.
         </p>
+
+        <details class="mt-2 text-xs text-white/60">
+          <summary class="cursor-pointer text-white/70 hover:text-white select-none">
+            What needs to be installed? →
+          </summary>
+          <div class="mt-2 space-y-2 border-l border-white/10 pl-3">
+            <p>
+              <strong class="text-white/80">1. ComfyUI</strong> (a recent
+              version) on any machine on your network. Launch it so this Mac can
+              reach it by binding to all interfaces, not just localhost:
+              <code>python main.py --listen 0.0.0.0 --port 8188</code>. Without
+              <code>--listen</code> it only answers on its own machine.
+            </p>
+            <p>
+              <strong class="text-white/80">2. Four model files</strong> (the
+              Z-Image family), each placed in its standard ComfyUI folder:
+            </p>
+            <ul class="list-disc space-y-1 pl-4">
+              <li>
+                <code>models/diffusion_models/z_image_turbo_bf16.safetensors</code>
+                — drives <code>/pic</code> (fast, ~8 steps)
+              </li>
+              <li>
+                <code>models/diffusion_models/z_image_bf16.safetensors</code>
+                — drives <code>/picHQ</code> (higher quality, ~25 steps)
+              </li>
+              <li>
+                <code>models/text_encoders/qwen_3_4b.safetensors</code>
+                — shared text encoder
+              </li>
+              <li>
+                <code>models/vae/ae.safetensors</code> — shared VAE
+              </li>
+            </ul>
+            <p>
+              <strong class="text-white/80">3. No custom nodes</strong> are
+              required, but ComfyUI must be current enough to include the core
+              nodes this workflow uses (<code>ModelSamplingAuraFlow</code>,
+              <code>EmptySD3LatentImage</code>, the <code>res_multistep</code>
+              sampler). If <em>Test image-gen</em> reports node errors, update
+              ComfyUI.
+            </p>
+            <p>
+              <strong class="text-white/80">4.</strong> Paste the URL above
+              (e.g. <code>http://192.168.1.25:8188</code>) and hit
+              <em>Test image-gen</em>.
+            </p>
+            <p class="text-white/40">
+              Both commands share the same text encoder and VAE; only the
+              diffusion model differs. Folder names above are current ComfyUI —
+              older builds call <code>diffusion_models</code> →
+              <code>unet</code> and <code>text_encoders</code> →
+              <code>clip</code>.
+            </p>
+          </div>
+        </details>
       </label>
 
       <div class="flex items-center gap-2 flex-wrap">

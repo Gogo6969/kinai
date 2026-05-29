@@ -5,6 +5,22 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.54] — 2026-05-29
+
+### Changed
+
+- **Clearer, correct image-generation setup help.** The Settings →
+  Image generation hint was both Olares-One-centric (misleading —
+  ComfyUI is cross-platform and runs on Linux, Windows, or any Mac) and
+  incomplete: it listed only the two `z_image` diffusion models, but the
+  `/pic` and `/picHQ` workflows also require the shared text encoder
+  (`qwen_3_4b.safetensors`) and VAE (`ae.safetensors`) — without them
+  ComfyUI fails with node errors. The hint now states ComfyUI is
+  cross-platform and includes an expandable "What needs to be
+  installed?" guide listing all four model files with their target
+  folders, the `--listen 0.0.0.0` bind requirement, and a note that no
+  custom nodes are needed (just a recent ComfyUI).
+
 ## [0.2.53] — 2026-05-28
 
 ### Fixed
