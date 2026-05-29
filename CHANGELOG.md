@@ -7,6 +7,23 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [0.2.54] — 2026-05-29
 
+### Added
+
+- **Global hotkey is now a recorder, not a text field.** In Settings →
+  Overlay, click the Global hotkey field and just *press* your
+  combination — it's captured and shown as a valid accelerator (e.g.
+  `CmdOrCtrl+Shift+K`) instead of having to type it character by
+  character. Uses the physical key code so a held Option/Alt on macOS
+  doesn't turn the key into a stray character; requires a modifier
+  (or a standalone function key); Esc cancels. A "Type manually" toggle
+  keeps raw text entry for power users / unusual keys.
+
+### Security
+
+- **Bumped `tar` 0.4.45 → 0.4.46** (GHSA-3pv8-6f4r-ffg2, "PAX header
+  desynchronization", moderate). Pulled in transitively via
+  `tauri-plugin-updater`. Lockfile-only, semver-compatible.
+
 ### Changed
 
 - **Clearer, correct image-generation setup help.** The Settings →

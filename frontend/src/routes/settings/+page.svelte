@@ -60,6 +60,10 @@
     font_size: 14,
     auto_close_on_blur: true,
   });
+  // Global-hotkey recorder UI state. `recordingHotkey` = field focused and
+  // listening for a key combo; `hotkeyManual` = user opted into raw text entry.
+  let recordingHotkey = $state(false);
+  let hotkeyManual = $state(false);
   let theme = $state<Theme>('dark');
   let tools = $state<ToolSettings>({
     web_search: true,
@@ -545,6 +549,77 @@
       visionTestState = 'fail';
       visionTestMsg = String(e).replace(/^Error:\s*/, '');
     }
+  }
+
+  // Physical key codes for the modifier keys themselves — pressing one of
+  // these alone shouldn't end the recording; we wait for the real key.
+  const HOTKEY_MOD_CODES = new Set([
+    'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight',
+    'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight',
+  ]);
+
+  // Map a KeyboardEvent's physical `code` to an accelerator key token the
+  // backend's global-shortcut parser accepts. Uses `code` (not `key`) so a
+  // held Option/Alt on macOS doesn't turn the letter into a dead char.
+  // Returns null for keys we don't capture (use "Type manually" for those).
+  function hotkeyKeyToken(code: string): string | null {
+    if (/^Key[A-Z]$/.test(code)) return code.slice(3); // KeyK -> K
+    if (/^Digit[0-9]$/.test(code)) return code.slice(5); // Digit1 -> 1
+    if (/^Numpad[0-9]$/.test(code)) return code.slice(6); // Numpad1 -> 1
+    if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) return code; // F1..F24
+    switch (code) {
+      case 'Space': return 'Space';
+      case 'Enter':
+      case 'NumpadEnter': return 'Enter';
+      case 'Tab': return 'Tab';
+      case 'Backspace': return 'Backspace';
+      case 'Delete': return 'Delete';
+      case 'ArrowUp': return 'Up';
+      case 'ArrowDown': return 'Down';
+      case 'ArrowLeft': return 'Left';
+      case 'ArrowRight': return 'Right';
+      case 'Home': return 'Home';
+      case 'End': return 'End';
+      case 'PageUp': return 'PageUp';
+      case 'PageDown': return 'PageDown';
+      default: return null;
+    }
+  }
+
+  // Capture a pressed key combo into `overlay.hotkey`. Swallows the event so
+  // the keystroke doesn't leak into the page (or insert a stray character).
+  function captureHotkey(e: KeyboardEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (e.key === 'Escape') {
+      recordingHotkey = false;
+      (e.currentTarget as HTMLElement | null)?.blur();
+      return;
+    }
+    // Modifier-only press → keep listening for the actual key.
+    if (HOTKEY_MOD_CODES.has(e.code) ||
+        ['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) {
+      return;
+    }
+
+    const key = hotkeyKeyToken(e.code);
+    if (!key) return; // unsupported key — keep waiting
+
+    const mods: string[] = [];
+    if (e.metaKey) mods.push('CmdOrCtrl');
+    if (e.ctrlKey) mods.push('Ctrl');
+    if (e.altKey) mods.push('Alt');
+    if (e.shiftKey) mods.push('Shift');
+
+    const isFunctionKey = /^F([1-9]|1[0-9]|2[0-4])$/.test(key);
+    // A bare letter/space would hijack that key globally — require a
+    // modifier, except for standalone function keys (e.g. F8).
+    if (mods.length === 0 && !isFunctionKey) return;
+
+    overlay.hotkey = [...mods, key].join('+');
+    recordingHotkey = false;
+    (e.currentTarget as HTMLElement | null)?.blur();
   }
 
   async function testComfy() {
@@ -1397,10 +1472,41 @@
       <h2 class="font-semibold text-lg">Overlay</h2>
       <label class="block">
         <span class="text-sm text-white/70">Global hotkey</span>
-        <input class="kin-field mt-1 font-mono" bind:value={overlay.hotkey} />
-        <p class="text-xs text-white/50 mt-1">
-          Examples: <code>CmdOrCtrl+Space</code>, <code>Alt+Space</code>, <code>CmdOrCtrl+Shift+K</code>.
-        </p>
+        {#if hotkeyManual}
+          <input
+            class="kin-field mt-1 font-mono"
+            bind:value={overlay.hotkey}
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <p class="text-xs text-white/50 mt-1">
+            Type an accelerator, e.g. <code>CmdOrCtrl+Space</code>,
+            <code>Alt+Space</code>, <code>CmdOrCtrl+Shift+K</code>.
+            <button
+              type="button"
+              class="underline hover:text-white"
+              onclick={() => (hotkeyManual = false)}
+            >Record instead</button>
+          </p>
+        {:else}
+          <input
+            class="kin-field mt-1 font-mono cursor-pointer {recordingHotkey ? 'ring-2 ring-sky-400/70' : ''}"
+            readonly
+            value={recordingHotkey ? 'Press your shortcut…  (Esc to cancel)' : overlay.hotkey}
+            onfocus={() => (recordingHotkey = true)}
+            onblur={() => (recordingHotkey = false)}
+            onkeydown={captureHotkey}
+          />
+          <p class="text-xs text-white/50 mt-1">
+            Click the field and press your key combination — it's captured
+            automatically (needs a modifier like ⌘/⌥/⌃, or a function key).
+            <button
+              type="button"
+              class="underline hover:text-white"
+              onclick={() => { hotkeyManual = true; recordingHotkey = false; }}
+            >Type manually</button>
+          </p>
+        {/if}
       </label>
       <div class="grid grid-cols-2 gap-3">
         <label class="block">
