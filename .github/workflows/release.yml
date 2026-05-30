@@ -36,7 +36,9 @@ jobs:
   release:
     permissions:
       contents: write
-    # macOS only. Windows and Linux are coming.
+    # macOS (both arches) + Windows x64. Each produces an updater-signed
+    # bundle; tauri-action merges them all into ONE latest.json on the
+    # release so the updater serves every platform from a single manifest.
     strategy:
       fail-fast: false
       matrix:
@@ -45,6 +47,8 @@ jobs:
             args: '--target aarch64-apple-darwin'
           - os: macos-latest
             args: '--target x86_64-apple-darwin'
+          - os: windows-latest
+            args: ''
 
     runs-on: ${{ matrix.os }}
 
@@ -92,7 +96,7 @@ jobs:
       # a file path (not contents). The file is ephemeral (lives only
       # for this job's runtime).
       - name: Materialize Apple API key
-        if: env.APPLE_API_KEY_BASE64 != ''
+        if: runner.os == 'macOS' && env.APPLE_API_KEY_BASE64 != ''
         env:
           APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
         run: |
@@ -129,8 +133,9 @@ jobs:
 
             - **macOS Apple Silicon**: `KinAI_*_aarch64.dmg`
             - **macOS Intel**: `KinAI_*_x64.dmg`
+            - **Windows x64**: `KinAI_*_x64-setup.exe` (or `KinAI_*_x64_en-US.msi`)
 
-            > Windows and Linux are coming.
+            > Linux is coming.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}

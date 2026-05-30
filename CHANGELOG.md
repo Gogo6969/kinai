@@ -5,6 +5,31 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.56] — 2026-05-30
+
+### Fixed
+
+- **Windows auto-update no longer loops on the same version.** Windows
+  clients were stuck (e.g. on 0.2.48) while the banner kept advertising
+  the latest version: the host advertised the newest *staged* version
+  but served a **stale, older installer** under that version's folder,
+  so Windows Installer saw the same version already installed and
+  no-op'd. Root cause: nothing built a current-version Windows installer
+  per release — `release.yml` was macOS-only and `test-windows.yml` only
+  ran on manual dispatch, so `deploy.sh` fell back to a stale artifact.
+
+  Fixes:
+  - **`release.yml`** now builds, signs, and publishes the Windows
+    installer for every tag (added a `windows-latest` job), and
+    `tauri-action` merges it into the release's `latest.json` — so the
+    updater serves a correctly-versioned, signed Windows build from the
+    same manifest as macOS.
+  - **`deploy.sh`** stages the Windows bundle only from the matching
+    release (the stale `test-windows.yml` fallback that caused the skew
+    is gone), prefers the NSIS `-setup.exe` installer, clears any
+    previously-staged installer, and adds a `stage-windows` re-stage
+    mode for the post-publish step.
+
 ## [0.2.55] — 2026-05-29
 
 ### Changed

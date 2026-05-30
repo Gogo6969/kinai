@@ -122,33 +122,39 @@ stage_windows_update() {
 
   echo "→ staging Windows updater bundle from $REPO"
 
-  # 1. Try a Release with the matching tag.
+  # Pull the Windows installer from the GitHub Release WITH THE MATCHING
+  # TAG. This is the ONLY source we trust: the asset attached to
+  # `vX.Y.Z` is, by construction, that exact version.
+  #
+  # We deliberately do NOT fall back to the latest test-windows.yml
+  # artifact anymore. That fallback was the root cause of "Windows stuck
+  # on an old version": test-windows.yml runs only on manual dispatch, so
+  # its newest artifact lagged the release. deploy.sh then staged that
+  # STALE .msi under the CURRENT version dir, and the host advertised
+  # (say) 0.2.55 while serving a 0.2.48 installer — Windows Installer saw
+  # the same version already installed and no-op'd, so the client looped
+  # forever on the update banner.
+  #
+  # Since release.yml now builds + signs the Windows installer for every
+  # tag, the matching-tag asset always exists AFTER the release CI runs.
+  # deploy.sh itself runs BEFORE the push, so on the release machine this
+  # will usually skip (the tag isn't published yet) — that's fine: it
+  # just means no Windows bundle is advertised for the new version until
+  # you re-stage. Re-run `./scripts/deploy.sh stage-windows` once the
+  # release CI has published, or let a connected Windows client fall back
+  # to GitHub.
   if gh release download "v${NEW_VERSION}" -R "$REPO" \
-       --pattern '*x64_en-US.msi.zip' --pattern '*x64_en-US.msi.zip.sig' \
+       --pattern '*-setup.exe' --pattern '*-setup.exe.sig' \
+       --pattern '*_x64_en-US.msi' --pattern '*_x64_en-US.msi.sig' \
        --dir "$TMP" 2>/dev/null
   then
-    echo "  ↳ pulled from Release v${NEW_VERSION}"
+    echo "  ↳ pulled Windows installer from Release v${NEW_VERSION}"
   else
-    # 2. Fall back to the most recent successful test-windows.yml run.
-    local RUN_ID
-    RUN_ID=$(gh run list -R "$REPO" \
-      --workflow=test-windows.yml \
-      --status=success \
-      --limit 1 \
-      --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
-    if [[ -z "$RUN_ID" ]]; then
-      echo "  ⚠ no Windows artifacts on GitHub yet; Windows clients won't auto-update from this host"
-      rm -rf "$TMP"
-      return
-    fi
-    echo "  ↳ pulling from test-windows.yml run $RUN_ID"
-    if ! gh run download "$RUN_ID" -R "$REPO" \
-           --name kinai-windows-x86_64 --dir "$TMP" 2>/dev/null
-    then
-      echo "  ⚠ couldn't download workflow artifact (auth? expired?). Windows clients won't auto-update."
-      rm -rf "$TMP"
-      return
-    fi
+    echo "  ⚠ Release v${NEW_VERSION} has no Windows installer yet."
+    echo "    (deploy runs before the push; re-run './scripts/deploy.sh stage-windows'"
+    echo "     after the release CI publishes the Windows asset.)"
+    rm -rf "$TMP"
+    return
   fi
 
   # Tauri-bundler produces these Windows artifacts:
@@ -169,16 +175,18 @@ stage_windows_update() {
   # So we stage the raw .msi now. Smaller change footprint, no zip
   # crate involved, works on every Tauri 2.x version regardless of
   # plugin internals.
+  # Prefer the NSIS `-setup.exe` — it's the installer the Tauri updater
+  # is built around on Windows, and (unlike an MSI) it always installs
+  # over the existing version rather than consulting the MSI upgrade
+  # table. Fall back to the raw `.msi` only if no NSIS artifact exists.
   local SRC_MSI SRC_MSI_SIG DEST_NAME
-  SRC_MSI=$(find "$TMP" -name '*.msi' -type f -not -name '*.zip' 2>/dev/null | head -1)
-  SRC_MSI_SIG=$(find "$TMP" -name '*.msi.sig' -type f -not -name '*.zip.sig' 2>/dev/null | head -1)
-  DEST_NAME="KinAI.msi"
+  SRC_MSI=$(find "$TMP" -name '*-setup.exe' -type f 2>/dev/null | head -1)
+  SRC_MSI_SIG=$(find "$TMP" -name '*-setup.exe.sig' -type f 2>/dev/null | head -1)
+  DEST_NAME="KinAI.exe"
   if [[ -z "$SRC_MSI" || -z "$SRC_MSI_SIG" ]]; then
-    # Fallback to NSIS .exe if MSI isn't available (older artifact
-    # builds, or a future workflow that only emits NSIS).
-    SRC_MSI=$(find "$TMP" -name '*.exe' -type f 2>/dev/null | head -1)
-    SRC_MSI_SIG=$(find "$TMP" -name '*.exe.sig' -type f 2>/dev/null | head -1)
-    DEST_NAME="KinAI.exe"
+    SRC_MSI=$(find "$TMP" -name '*.msi' -type f -not -name '*.zip' 2>/dev/null | head -1)
+    SRC_MSI_SIG=$(find "$TMP" -name '*.msi.sig' -type f -not -name '*.zip.sig' 2>/dev/null | head -1)
+    DEST_NAME="KinAI.msi"
   fi
   if [[ -z "$SRC_MSI" || -z "$SRC_MSI_SIG" ]]; then
     echo "  ⚠ Windows artifacts don't contain a .msi/.exe + .sig pair. Skipping."
@@ -189,6 +197,11 @@ stage_windows_update() {
   SIG_DEST="$DEST.sig"
 
   mkdir -p "$STAGE_DIR"
+  # Clear any previously-staged installer so the host serves exactly the
+  # one we just fetched (the manifest resolver prefers .msi over .exe by
+  # filename order — a leftover stale .msi would otherwise win).
+  rm -f "$STAGE_DIR"/KinAI.msi "$STAGE_DIR"/KinAI.msi.sig \
+        "$STAGE_DIR"/KinAI.exe "$STAGE_DIR"/KinAI.exe.sig
   cp "$SRC_MSI" "$DEST"
   cp "$SRC_MSI_SIG" "$SIG_DEST"
   ln -sfn "${NEW_VERSION}" "$HOME/.kinai/updates/latest-${TARGET}"
@@ -221,6 +234,20 @@ install_windows() {
 # ---------- main ----------------------------------------------------------
 
 bump="${1:-patch}"
+
+# Re-stage ONLY the Windows updater bundle for the current version, then
+# exit. deploy.sh itself runs before the git push, so its first pass
+# can't fetch the Windows installer (the release tag isn't published
+# yet). Run this once the release CI has attached the Windows asset:
+#   ./scripts/deploy.sh stage-windows
+if [[ "$bump" == "stage-windows" ]]; then
+  NEW_VERSION=$(grep -E '^version = "' Cargo.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+  echo "→ re-staging Windows update for v$NEW_VERSION"
+  stage_windows_update
+  echo "✓ done"
+  exit 0
+fi
+
 if [[ "$bump" != "skip-bump" ]]; then
   ./scripts/bump-version.sh "$bump"
 fi
