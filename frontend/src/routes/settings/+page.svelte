@@ -394,14 +394,22 @@
     );
   }
 
-  function relativeBuildTime(epoch: number): string {
-    if (!epoch) return '';
-    const now = Date.now() / 1000;
-    const diff = now - epoch;
-    if (diff < 60) return 'just now';
-    if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)} h ago`;
-    return `${Math.floor(diff / 86400)} d ago`;
+  // Friendly platform label for the footer — the raw build target
+  // ("macos-aarch64") reads like a CI artifact; users recognize
+  // "macOS · Apple silicon".
+  function prettyPlatform(target: string): string {
+    switch (target) {
+      case 'macos-aarch64':
+        return 'macOS · Apple silicon';
+      case 'macos-x86_64':
+        return 'macOS · Intel';
+      case 'windows':
+        return 'Windows';
+      case 'linux':
+        return 'Linux';
+      default:
+        return target;
+    }
   }
 
   async function refreshModels({ silent = false }: { silent?: boolean } = {}) {
@@ -656,22 +664,24 @@
           <button
             type="button"
             onclick={copyVersion}
-            class="text-xs text-white/50 hover:text-white/80 font-mono mt-0.5 transition-colors"
-            title="Click to copy full build identifier"
+            class="group mt-1 block text-left transition-colors"
+            title="Click to copy full build details"
           >
-            v{versionInfo.version} · {versionInfo.target}
+            <span class="block text-xs text-white/55 group-hover:text-white/80 transition-colors">
+              v{versionInfo.version} · {prettyPlatform(versionInfo.target)}
+            </span>
             {#if versionInfo.git_commit && versionInfo.git_commit !== 'unknown'}
-              · {versionInfo.git_commit}
-            {/if}
-            {#if versionInfo.build_time}
-              · built {new Date(versionInfo.build_time * 1000).toLocaleString([], {
-                year: 'numeric',
-                month: 'short',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
-              ({relativeBuildTime(versionInfo.build_time)})
+              <span
+                class="block text-[11px] text-white/30 group-hover:text-white/50 font-mono transition-colors"
+              >
+                Build {versionInfo.git_commit}{#if versionInfo.build_time} · {new Date(
+                    versionInfo.build_time * 1000,
+                  ).toLocaleDateString([], {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric',
+                  })}{/if}
+              </span>
             {/if}
           </button>
         {/if}
@@ -680,21 +690,22 @@
              bugs or follow releases, without us shipping an analytics or
              phone-home system. The link opens in the OS default browser
              (intercepted by the global handler in +layout.svelte). -->
-        <div class="text-xs text-white/40 mt-1.5 flex items-center gap-3 flex-wrap">
+        <div class="text-xs text-white/40 mt-2 flex items-center gap-2.5 flex-wrap">
           <a
             href="https://kin-ai.replit.app"
             class="text-teal-300/80 hover:text-teal-200 underline-offset-2 hover:underline transition-colors"
-          >kin-ai.replit.app</a>
-          <span class="text-white/20">·</span>
-          <a
-            href="https://x.com/gogo6969"
-            class="text-teal-300/80 hover:text-teal-200 underline-offset-2 hover:underline transition-colors"
-          >Follow on X · @gogo6969</a>
+          >Website</a>
           <span class="text-white/20">·</span>
           <a
             href="https://github.com/Gogo6969/kinai"
             class="text-teal-300/80 hover:text-teal-200 underline-offset-2 hover:underline transition-colors"
           >GitHub</a>
+          <span class="text-white/20">·</span>
+          <a
+            href="https://x.com/gogo6969"
+            title="Follow on X"
+            class="text-teal-300/80 hover:text-teal-200 underline-offset-2 hover:underline transition-colors"
+          >@gogo6969</a>
         </div>
       </div>
       <button class="kin-btn flex-shrink-0" onclick={() => goto('/')}>Back to chat</button>
@@ -1533,7 +1544,7 @@
         <label class="flex items-start gap-2 text-sm text-white/80">
           <input type="checkbox" class="mt-0.5" bind:checked={overlay.auto_close_on_blur} />
           <span>
-            <span class="font-medium">Auto-hide when I click elsewhere</span>
+            <span class="font-medium">Auto-hide when clicking elsewhere</span>
             <span class="block text-xs text-white/50">
               The overlay disappears the moment it loses focus — like Spotlight.
               Turn off to keep the overlay open while you switch apps.

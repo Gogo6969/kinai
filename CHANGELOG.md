@@ -5,6 +5,22 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.55] — 2026-05-29
+
+### Changed
+
+- **Settings polish.** Tidied the Settings header/footer so it reads
+  like a shipped product: the build line drops the raw target and the
+  informal relative time — `macos-aarch64 · … (58 min ago)` becomes
+  `macOS · Apple silicon` with the commit + a clean date on a quiet
+  second line (clicking it still copies the full build identifier for
+  support). Project links are now consistent and uncluttered —
+  `Website · GitHub · @gogo6969` instead of the raw Replit domain and a
+  wordy "Follow on X" label.
+- **Overlay setting wording.** Renamed the toggle "Auto-hide when I
+  click elsewhere" → "Auto-hide when clicking elsewhere" (drops the
+  casual first-person phrasing).
+
 ## [0.2.54] — 2026-05-29
 
 ### Added
