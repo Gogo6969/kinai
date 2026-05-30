@@ -9,6 +9,7 @@ import {
   type ThreadMeta,
   type TurnMetrics,
 } from '$lib/api';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
 class AppStore {
   config = $state<AppConfig | null>(null);
@@ -412,6 +413,20 @@ class AppStore {
     this.cleanups.push(
       await events.onUpdateProgress((p) => {
         this.updateProgress = p.progress;
+      })
+    );
+    // Re-check for updates when the window regains focus. The periodic
+    // backend check only runs every 4h, so a long-running window could
+    // sit on a stale version until restart (the "I had to restart the
+    // app before the banner showed" case). Throttled to once a minute.
+    let lastFocusCheck = 0;
+    this.cleanups.push(
+      await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+        if (!focused) return;
+        const now = Date.now();
+        if (now - lastFocusCheck < 60_000) return;
+        lastFocusCheck = now;
+        void api.checkUpdates().catch(() => {});
       })
     );
   }

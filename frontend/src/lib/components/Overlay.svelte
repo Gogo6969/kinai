@@ -9,7 +9,7 @@
   import ThinkingDots from './ThinkingDots.svelte';
   import ThinkingPanel from './ThinkingPanel.svelte';
   import ToolPill from './ToolPill.svelte';
-  import { X } from '@lucide/svelte';
+  import { Download, X } from '@lucide/svelte';
 
   let input = $state('');
   let busy = $state(false);
@@ -26,6 +26,15 @@
    *  have it ride along with the prompt, same as in the main window. */
   let pendingAttachments = $state<Attachment[]>([]);
   let attachmentError = $state('');
+  // Update affordance. The main update banner lives only in the main
+  // window — someone who only ever uses this quick-chat bar would never
+  // be told about (or able to install) a new version. So the overlay
+  // listens for the same update event and shows its own install pill.
+  let updateInfo = $state<{ version: string; current: string; source: 'host' | 'github' } | null>(null);
+  let updateInstalling = $state(false);
+  let updateProgress = $state<number | null>(null);
+  let updateError = $state('');
+  let lastUpdateCheck = 0;
   const cleanups: Array<() => void> = [];
 
   // Same limits as ChatWindow so the user sees a consistent rejection
@@ -109,6 +118,9 @@
     // adds a thumbnail row beneath the input that the window needs
     // to fit, otherwise the preview is clipped.
     void pendingAttachments.length;
+    // …and when the update pill shows/hides.
+    void updateInfo;
+    void updateInstalling;
     if (!containerEl) return;
     queueMicrotask(() => {
       const h = Math.min(Math.max(containerEl!.offsetHeight + 24, 96), 720);
@@ -143,6 +155,10 @@
           autoCloseOnBlur = fresh.overlay.auto_close_on_blur;
           alwaysOnTop = fresh.overlay.always_on_top;
         } catch {}
+        // Each time the quick-chat bar opens, re-check for updates so a
+        // user who lives in the overlay still gets told about new
+        // versions (throttled — see maybeCheckUpdate).
+        void maybeCheckUpdate();
       });
       cleanups.push(unlistenOverlay);
 
@@ -198,6 +214,19 @@
           busy = false;
         })
       );
+      cleanups.push(
+        await events.onUpdateAvailable((u) => {
+          updateInfo = u;
+        })
+      );
+      cleanups.push(
+        await events.onUpdateProgress(({ progress }) => {
+          updateProgress = progress;
+        })
+      );
+      // Kick an initial check now that the listener is registered (the
+      // periodic backend check may have already fired before mount).
+      void maybeCheckUpdate();
     })();
   });
 
@@ -233,6 +262,34 @@
     } catch (err) {
       streamingContent = `Error: ${err}`;
       busy = false;
+    }
+  }
+
+  // Ask the backend to re-check for updates, at most once a minute so
+  // rapid open/close of the overlay doesn't spam the host/GitHub. A hit
+  // re-emits `kinai://update-available`, which our listener turns into
+  // the pill.
+  async function maybeCheckUpdate() {
+    const now = Date.now();
+    if (now - lastUpdateCheck < 60_000) return;
+    lastUpdateCheck = now;
+    try {
+      await api.checkUpdates();
+    } catch {}
+  }
+
+  async function installUpdate() {
+    if (updateInstalling) return;
+    updateInstalling = true;
+    updateError = '';
+    updateProgress = 0;
+    try {
+      // Relaunches the app on success — this normally never returns.
+      await api.installUpdate();
+    } catch (e) {
+      updateInstalling = false;
+      updateProgress = null;
+      updateError = String(e).replace(/^Error:\s*/, '');
     }
   }
 
@@ -285,6 +342,28 @@
         />
       {/if}
     </form>
+    {#if updateInfo}
+      <button
+        type="button"
+        onclick={installUpdate}
+        disabled={updateInstalling}
+        class="w-full flex items-center gap-2 border-t border-teal-500/20 bg-teal-500/5
+               hover:bg-teal-500/10 px-5 py-2 text-xs text-teal-200 transition-colors
+               disabled:cursor-default disabled:hover:bg-teal-500/5"
+        title={updateInstalling ? 'Installing…' : `Install KinAI v${updateInfo.version} and restart`}
+      >
+        <Download size={13} class="flex-shrink-0" />
+        {#if updateInstalling}
+          <span>Updating{updateProgress !== null ? ` · ${updateProgress.toFixed(0)}%` : '…'}</span>
+        {:else}
+          <span class="font-medium">Update available — v{updateInfo.version}</span>
+          <span class="text-teal-200/60">· click to install &amp; restart</span>
+        {/if}
+        {#if updateError}
+          <span class="text-red-300 ml-auto truncate">{updateError}</span>
+        {/if}
+      </button>
+    {/if}
     {#if pendingAttachments.length > 0 || attachmentError}
       <div class="px-5 pb-2 flex flex-wrap items-center gap-2">
         {#each pendingAttachments as att, idx}

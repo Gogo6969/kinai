@@ -5,6 +5,25 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.57] — 2026-05-30
+
+### Added
+
+- **Updates now reach overlay-only users.** The update banner only ever
+  rendered in the main window, so anyone who lived in the Option+Space
+  quick-chat bar would never be told about — or able to install — a new
+  version. The overlay now shows its own **"Update available — vX.Y.Z ·
+  click to install & restart"** pill (same install-and-restart flow as
+  the main banner, with download progress).
+
+### Changed
+
+- **Updates surface without a restart.** The background update check ran
+  only at launch and every 4 hours, so a long-running window could sit
+  on a stale version until restarted. Now both the main window (on focus)
+  and the overlay (each time it opens) re-check for updates — throttled
+  to once a minute — so a new release shows up promptly.
+
 ## [0.2.56] — 2026-05-30
 
 ### Fixed
