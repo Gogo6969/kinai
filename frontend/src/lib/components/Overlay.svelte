@@ -237,7 +237,36 @@
     await send(input);
   }
 
+  // `/newchat` → returns the trailing question ('' if bare), or null if
+  // the text isn't the command. Case-insensitive; `/newchatx` is normal text.
+  function parseNewchat(text: string): string | null {
+    const m = /^\/newchat(?:\s+([\s\S]*))?$/i.exec(text.trim());
+    return m ? (m[1] ?? '').trim() : null;
+  }
+
   async function send(text: string) {
+    // /newchat — start a fresh conversation (new thread, no prior
+    // context). Earlier messages won't be used; persistent memory stays.
+    const fresh = parseNewchat(text);
+    if (fresh !== null) {
+      try {
+        const t = await api.createThread('Quick chat');
+        activeThreadId = t.id;
+      } catch {}
+      reasoningContent = '';
+      tools = [];
+      pendingAttachments = [];
+      attachmentError = '';
+      input = '';
+      if (fresh) {
+        streamingContent = '';
+        await send(fresh); // answer the trailing question in the fresh thread
+      } else {
+        streamingContent = "🆕 Started a new chat — earlier messages won't be used as context.";
+      }
+      return;
+    }
+
     // Allow sending an attachment with no text (e.g. "what's in this
     // image?" UX where the user just drags / pastes a screenshot and
     // hits Enter without typing).

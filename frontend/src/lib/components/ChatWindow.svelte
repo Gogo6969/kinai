@@ -34,6 +34,11 @@
       desc: 'HQ image · default 1024×1024, ~30s',
       hint: 'Optional WxH prefix: /picHQ 1280x720 sunset over Miami',
     },
+    {
+      cmd: '/newchat',
+      desc: 'Start a fresh chat — no prior context (memory kept)',
+      hint: 'Add a question to ask right away: /newchat what is rust?',
+    },
     { cmd: '/help', desc: 'List slash commands' },
   ];
 
@@ -219,10 +224,29 @@
     });
   });
 
+  // `/newchat` → trailing question ('' if bare), or null if not the
+  // command. Case-insensitive; `/newchatx` is treated as normal text.
+  function parseNewchat(text: string): string | null {
+    const m = /^\/newchat(?:\s+([\s\S]*))?$/i.exec(text.trim());
+    return m ? (m[1] ?? '').trim() : null;
+  }
+
   async function submit(e: Event) {
     e.preventDefault();
     const text = input.trim();
     if ((!text && pendingAttachments.length === 0) || app.busy) return;
+    // /newchat — open a fresh thread so a new question doesn't reuse the
+    // current conversation's context (persistent memory is kept). Any
+    // trailing question is asked in the new thread.
+    const fresh = parseNewchat(text);
+    if (fresh !== null) {
+      input = '';
+      pendingAttachments = [];
+      attachmentError = '';
+      await app.newThread();
+      if (fresh) await app.send(fresh, []);
+      return;
+    }
     const atts = pendingAttachments;
     input = '';
     pendingAttachments = [];

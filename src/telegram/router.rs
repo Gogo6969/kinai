@@ -174,10 +174,36 @@ async fn run_turn_for_peer<R: Runtime>(
         content
     };
 
-    // Ensure a dedicated thread exists for this peer's Telegram convo.
-    // The id is deterministic so the same chat always lands in the
-    // same thread (across host restarts).
-    let thread_id = telegram_thread_id_for_peer(peer_id);
+    // /newchat — rotate this Telegram chat to a fresh thread so a new
+    // question doesn't inherit the previous conversation's context.
+    // Persistent memory + saved facts are unaffected (they're
+    // peer-scoped, not thread-scoped).
+    let mut content = content;
+    if let Some(rest) = strip_newchat(content) {
+        let fresh = state.db.create_thread(peer_id, Some("Telegram")).await?;
+        let _ = tg_db::set_active_thread(&state.db.pool, peer_id, &fresh.id).await;
+        if rest.is_empty() {
+            api.send_message(
+                chat_id,
+                "🆕 Started a new chat — earlier messages won't be used as \
+                 context. Your saved memory is still active.",
+            )
+            .await?;
+            return Ok(());
+        }
+        // A question rode along (`/newchat <prompt>`): answer it in the
+        // brand-new, empty thread.
+        content = rest;
+    }
+
+    // Resolve this peer's Telegram thread: the `/newchat`-rotated one if
+    // set, else the deterministic default (same chat → same thread
+    // across restarts; backward compatible with pre-/newchat pairings).
+    let thread_id = tg_db::active_thread(&state.db.pool, peer_id)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| telegram_thread_id_for_peer(peer_id));
     state
         .db
         .upsert_thread(peer_id, &thread_id, "Telegram")
@@ -191,10 +217,9 @@ async fn run_turn_for_peer<R: Runtime>(
     let trimmed_lc = content.trim().to_ascii_lowercase();
     if trimmed_lc == "/fast" || trimmed_lc == "/deep" {
         let slot = if trimmed_lc == "/deep" { "deep" } else { "fast" };
-        // Ensure the thread row exists before we try to write the slot.
-        let thread_id_local = telegram_thread_id_for_peer(peer_id);
-        let _ = state.db.upsert_thread(peer_id, &thread_id_local, "Telegram").await;
-        let _ = state.db.set_thread_active_slot(peer_id, &thread_id_local, Some(slot)).await;
+        // thread_id is already resolved + upserted above — write the
+        // sticky slot to the active (possibly /newchat-rotated) thread.
+        let _ = state.db.set_thread_active_slot(peer_id, &thread_id, Some(slot)).await;
         let active_model = if slot == "deep" {
             &cfg.llm_deep.model
         } else {
@@ -678,6 +703,47 @@ mod photo_tests {
     #[test]
     fn largest_photo_none_when_empty() {
         assert!(largest_photo(&[]).is_none());
+    }
+}
+
+/// If `content` is the `/newchat` command, return the remainder (the
+/// optional question typed after it, trimmed). `None` if it isn't
+/// `/newchat`. Case-insensitive; requires a whitespace/end boundary so
+/// `/newchattery` isn't mistaken for the command.
+fn strip_newchat(content: &str) -> Option<&str> {
+    const CMD: &str = "/newchat";
+    let t = content.trim_start();
+    if t.len() < CMD.len() {
+        return None;
+    }
+    let (head, rest) = t.split_at(CMD.len());
+    if !head.eq_ignore_ascii_case(CMD) {
+        return None;
+    }
+    if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+        Some(rest.trim_start())
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod newchat_tests {
+    use super::strip_newchat;
+
+    #[test]
+    fn matches_bare_and_with_prompt() {
+        assert_eq!(strip_newchat("/newchat"), Some(""));
+        assert_eq!(strip_newchat("/newchat   "), Some(""));
+        assert_eq!(strip_newchat("/newchat what is rust?"), Some("what is rust?"));
+        assert_eq!(strip_newchat("  /NewChat hi"), Some("hi"));
+    }
+
+    #[test]
+    fn ignores_non_command() {
+        assert_eq!(strip_newchat("/newchattery"), None);
+        assert_eq!(strip_newchat("tell me about /newchat"), None);
+        assert_eq!(strip_newchat("/new"), None);
     }
 }
 

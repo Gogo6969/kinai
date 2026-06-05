@@ -161,5 +161,42 @@ pub async fn unpair(pool: &SqlitePool, peer_id: &str) -> Result<()> {
         .bind(peer_id)
         .execute(pool)
         .await?;
+    // Forget any active-thread override too so a future re-pair starts
+    // from the deterministic default rather than a dangling thread.
+    let _ = sqlx::query("DELETE FROM telegram_active_thread WHERE peer_id = ?1")
+        .bind(peer_id)
+        .execute(pool)
+        .await;
+    Ok(())
+}
+
+/// The peer's currently-active Telegram thread, if `/newchat` has
+/// rotated it away from the deterministic default. `None` = use the
+/// default (`telegram_thread_id_for_peer`).
+pub async fn active_thread(pool: &SqlitePool, peer_id: &str) -> Result<Option<String>> {
+    let row = sqlx::query("SELECT thread_id FROM telegram_active_thread WHERE peer_id = ?1")
+        .bind(peer_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.map(|r| r.get::<String, _>("thread_id")))
+}
+
+/// Point this peer's Telegram conversation at `thread_id` (the
+/// `/newchat` rotation). Upsert so re-running `/newchat` just moves the
+/// pointer forward.
+pub async fn set_active_thread(pool: &SqlitePool, peer_id: &str, thread_id: &str) -> Result<()> {
+    let now = Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO telegram_active_thread (peer_id, thread_id, updated_at)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(peer_id) DO UPDATE SET
+             thread_id  = excluded.thread_id,
+             updated_at = excluded.updated_at",
+    )
+    .bind(peer_id)
+    .bind(thread_id)
+    .bind(&now)
+    .execute(pool)
+    .await?;
     Ok(())
 }

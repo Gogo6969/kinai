@@ -266,6 +266,9 @@ pub fn help_markdown(cfg: &AppConfig) -> String {
         out.push_str("*(image generation not configured on this host — ask the host owner to set a ComfyUI URL in Settings → Image generation)*\n");
     }
 
+    out.push_str("\n**Conversation**\n");
+    out.push_str("`/newchat` — start a fresh chat so a new question doesn't reuse earlier context (your saved memory is kept). Add a question to ask it right away: `/newchat what's the capital of Japan?`\n");
+
     out.push_str("\n**Info**\n");
     out.push_str("`/help` or `?` — show this list\n");
     out
@@ -307,6 +310,9 @@ pub fn help_html(cfg: &AppConfig) -> String {
     } else {
         out.push_str("<i>(image generation not configured on this host — ask the host owner to set a ComfyUI URL in Settings → Image generation)</i>\n");
     }
+
+    out.push_str("\n<b>Conversation</b>\n");
+    out.push_str("<code>/newchat</code> — start a fresh chat so a new question doesn't reuse earlier context (your saved memory is kept). Add a question to ask it right away: <code>/newchat what's the capital of Japan?</code>\n");
 
     out.push_str("\n<b>Info</b>\n");
     out.push_str("<code>/help</code> or <code>?</code> — show this list\n");

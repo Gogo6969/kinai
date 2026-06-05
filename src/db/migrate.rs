@@ -180,6 +180,20 @@ const STATEMENTS: &[&str] = &[
     r#"
     CREATE INDEX IF NOT EXISTS idx_user_facts_peer ON user_facts(peer_id)
     "#,
+
+    // Per-peer "active" Telegram thread. Telegram chats default to one
+    // deterministic thread per peer; the `/newchat` command rotates to a
+    // fresh thread and records its id here so subsequent messages from
+    // that chat land in the new thread instead of the old one. No row =
+    // use the deterministic default (backward compatible with chats
+    // paired before this column existed).
+    r#"
+    CREATE TABLE IF NOT EXISTS telegram_active_thread (
+        peer_id    TEXT PRIMARY KEY,
+        thread_id  TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    "#,
 ];
 
 pub async fn run(pool: &SqlitePool) -> Result<()> {

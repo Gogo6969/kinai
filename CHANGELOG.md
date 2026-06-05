@@ -5,6 +5,25 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.58] — 2026-05-30
+
+### Added
+
+- **`/newchat` — start a fresh conversation.** A new question shouldn't
+  inherit the previous one's context, but the quick-chat overlay reuses
+  your most-recent thread and Telegram keeps one thread per person, so
+  stale context leaked in. `/newchat` now opens a brand-new thread with
+  no prior context (your saved memory / facts are kept — they're
+  persistent, not conversation context). Works in all three surfaces:
+  the overlay (Option+Space), the main chat window (also in the slash
+  autocomplete), and the Telegram bot. Add a question to ask it right
+  away in the clean thread: `/newchat what's the capital of Japan?`
+
+  Telegram tracks the active thread per peer (new `telegram_active_thread`
+  table) so the rotation persists; existing pairings keep their history
+  (no row = the previous deterministic thread). Tests:
+  `src/telegram/router.rs` (`newchat_tests`).
+
 ## [0.2.57] — 2026-05-30
 
 ### Added
