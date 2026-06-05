@@ -101,6 +101,10 @@ fn default_command_menu() -> Vec<api::BotCommand> {
             description: "List available slash commands".into(),
         },
         api::BotCommand {
+            command: "newchat".into(),
+            description: "Start a fresh chat — ignore earlier context (memory kept)".into(),
+        },
+        api::BotCommand {
             command: "fast".into(),
             description: "Switch this chat to the fast model (default)".into(),
         },

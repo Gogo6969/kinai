@@ -5,6 +5,18 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.59] — 2026-05-30
+
+### Fixed
+
+- **`/newchat` now appears in the Telegram slash menu.** 0.2.58 added
+  the command and its `/help` entry but not the bot's registered command
+  list (`setMyCommands`), so it didn't show in Telegram's `/`
+  autocomplete. Added it to `default_command_menu()`; the menu
+  re-registers when the host's bot restarts. (The menu is per-bot, so
+  every family's own bot shows it automatically once their host runs
+  this build.)
+
 ## [0.2.58] — 2026-05-30
 
 ### Added
