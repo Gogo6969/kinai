@@ -138,6 +138,15 @@ export interface ThreadMeta {
   peer_id?: string;
 }
 
+/** One cross-thread search result (see `search_messages`). */
+export interface SearchHit {
+  thread_id: string;
+  thread_title: string;
+  message_id: string;
+  snippet: string;
+  created_at: string;
+}
+
 /** One row in the user_facts table — the persistent per-peer memory
  *  layer the LLM can read on every turn and add to via the `remember`
  *  tool. `source` is "tool" (LLM remembered it during a chat),
@@ -341,6 +350,7 @@ export const api = {
     invoke<TestConnectionResult>('test_llm_connection', { args }),
 
   listThreads: () => invoke<ThreadMeta[]>('list_threads'),
+  searchMessages: (query: string) => invoke<SearchHit[]>('search_messages', { query }),
   loadThread: (threadId: string) => invoke<Message[]>('load_thread', { threadId }),
   createThread: (title?: string) => invoke<ThreadMeta>('create_thread', { title: title ?? null }),
   deleteThread: (threadId: string) => invoke<void>('delete_thread', { threadId }),
@@ -367,6 +377,27 @@ export const api = {
     'send_message',
     { args }
   ),
+  /**
+   * Re-run the assistant reply for the turn that produced
+   * `assistant_msg_id`. Host-only — returns an error in client mode. The
+   * new reply streams in over the same kinai:// event channel as a normal
+   * send (keyed by `client_msg_id`).
+   */
+  regenerateMessage: (args: {
+    thread_id: string;
+    assistant_msg_id: string;
+    client_msg_id: string;
+  }) => invoke<{ user_message: Message; assistant_message: Message }>('regenerate_message', { args }),
+  /**
+   * Edit a previous user message and re-run from there. Everything after
+   * the edited message is dropped. Host-only.
+   */
+  editAndResend: (args: {
+    thread_id: string;
+    user_msg_id: string;
+    new_content: string;
+    client_msg_id: string;
+  }) => invoke<{ user_message: Message; assistant_message: Message }>('edit_and_resend', { args }),
   /**
    * Cancel an in-flight chat turn. Pass the client_msg_id used by the
    * original sendMessage call to cancel that specific turn; omit the

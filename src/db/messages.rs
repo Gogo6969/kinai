@@ -219,6 +219,61 @@ pub async fn load(
     Ok(messages)
 }
 
+/// One cross-thread search result: the matching message plus its thread's
+/// title and a highlighted snippet.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchHit {
+    pub thread_id: String,
+    pub thread_title: String,
+    pub message_id: String,
+    pub snippet: String,
+    pub created_at: String,
+}
+
+/// Full-text search over ONE peer's messages, across all their threads.
+/// Peer scoping via the `threads` join is the privacy boundary — a peer
+/// can never match another peer's (or the host's) messages. Ranked by
+/// bm25; `snippet()` builds a `[match]`-highlighted excerpt.
+pub async fn search(
+    pool: &SqlitePool,
+    peer_id: &str,
+    query: &str,
+    limit: i64,
+) -> Result<Vec<SearchHit>> {
+    let fts_query = crate::db::memory::sanitize_fts(query);
+    if fts_query.is_empty() {
+        return Ok(Vec::new()); // empty / all-stopword query → no results
+    }
+    let rows = sqlx::query(
+        "SELECT m.id        AS message_id,
+                m.thread_id  AS thread_id,
+                t.title      AS thread_title,
+                m.created_at AS created_at,
+                snippet(messages_fts, 0, '[', ']', '…', 12) AS snippet
+         FROM messages_fts
+         JOIN messages m ON m.rowid = messages_fts.rowid
+         JOIN threads  t ON t.id    = m.thread_id
+         WHERE messages_fts MATCH ?1 AND t.peer_id = ?2
+         ORDER BY bm25(messages_fts) ASC
+         LIMIT ?3",
+    )
+    .bind(&fts_query)
+    .bind(peer_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| SearchHit {
+            thread_id: r.get("thread_id"),
+            thread_title: r.get("thread_title"),
+            message_id: r.get("message_id"),
+            snippet: r.get("snippet"),
+            created_at: r.get("created_at"),
+        })
+        .collect())
+}
+
 pub async fn append(
     pool: &SqlitePool,
     thread_id: &str,
@@ -282,6 +337,62 @@ pub async fn update_content(pool: &SqlitePool, id: &str, new_content: &str) -> R
         .execute(pool)
         .await?;
     Ok(())
+}
+
+/// Delete every message in `thread_id` with `created_at >= from_created_at`
+/// (inclusive). Peer-scoped via the `IN (SELECT … WHERE peer_id = ?)`
+/// subquery — SQLite has no `DELETE … JOIN`, so this is the idiomatic
+/// equivalent and preserves the same ownership guarantee as `load`. Bumps
+/// the thread's `updated_at` so the sidebar re-sorts. Returns rows removed.
+/// Used by regenerate/edit-and-resend to truncate a turn before re-running.
+pub async fn delete_from(
+    pool: &SqlitePool,
+    peer_id: &str,
+    thread_id: &str,
+    from_created_at: &str,
+) -> Result<u64> {
+    let res = sqlx::query(
+        "DELETE FROM messages
+         WHERE thread_id = ?1
+           AND created_at >= ?2
+           AND thread_id IN (SELECT id FROM threads WHERE id = ?1 AND peer_id = ?3)",
+    )
+    .bind(thread_id)
+    .bind(from_created_at)
+    .bind(peer_id)
+    .execute(pool)
+    .await?;
+    sqlx::query("UPDATE threads SET updated_at = ?1 WHERE id = ?2 AND peer_id = ?3")
+        .bind(Utc::now().to_rfc3339())
+        .bind(thread_id)
+        .bind(peer_id)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected())
+}
+
+/// Fetch a single message by id, but only if it lives in a thread owned by
+/// `peer_id`. Returns `None` for a wrong peer or unknown id — the
+/// regenerate/edit commands use this to resolve the cut point AND to
+/// re-confirm ownership before mutating, so a forged id can't reach
+/// another peer's data.
+pub async fn get_by_id(
+    pool: &SqlitePool,
+    peer_id: &str,
+    id: &str,
+) -> Result<Option<Message>> {
+    let row = sqlx::query(
+        "SELECT m.id, m.thread_id, m.role, m.sender, m.content, m.attachments,
+                m.created_at, m.summarized_into, m.metrics
+         FROM messages m
+         JOIN threads t ON t.id = m.thread_id
+         WHERE m.id = ?1 AND t.peer_id = ?2",
+    )
+    .bind(id)
+    .bind(peer_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(row_to_message))
 }
 
 pub async fn count_since_summary(
@@ -357,5 +468,111 @@ fn row_to_message(r: sqlx::sqlite::SqliteRow) -> Message {
         created_at: r.get("created_at"),
         summarized_into: r.try_get("summarized_into").ok(),
         metrics,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    /// In-memory DB with the REAL migrations applied (threads + messages +
+    /// the FTS index + sync triggers), so these tests also validate that
+    /// the new `messages_fts` DDL is well-formed. `max_connections(1)` is
+    /// required: each connection to `sqlite::memory:` is a separate DB.
+    async fn fresh_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open in-memory sqlite");
+        super::super::migrate::run(&pool).await.expect("apply migrations");
+        pool
+    }
+
+    async fn seed_thread(pool: &SqlitePool, peer: &str, title: &str) -> String {
+        create_thread(pool, peer, Some(title)).await.unwrap().id
+    }
+
+    #[tokio::test]
+    async fn delete_from_is_inclusive_and_peer_scoped() {
+        let pool = fresh_pool().await;
+        let tid = seed_thread(&pool, HOST_PEER, "t").await;
+        let user = append(&pool, &tid, "user", "me", "hello there", &[]).await.unwrap();
+        let asst = append(&pool, &tid, "assistant", "KinAI", "hi back", &[]).await.unwrap();
+
+        // Wrong peer can't truncate: 0 rows removed.
+        let removed = delete_from(&pool, "BOB", &tid, &asst.created_at).await.unwrap();
+        assert_eq!(removed, 0, "cross-peer delete must be a no-op");
+        assert_eq!(load(&pool, HOST_PEER, &tid, 50).await.unwrap().len(), 2);
+
+        // Owner truncates from the assistant's timestamp (inclusive): the
+        // assistant goes, the earlier user message stays.
+        let removed = delete_from(&pool, HOST_PEER, &tid, &asst.created_at).await.unwrap();
+        assert_eq!(removed, 1);
+        let remaining = load(&pool, HOST_PEER, &tid, 50).await.unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, user.id);
+    }
+
+    #[tokio::test]
+    async fn get_by_id_is_peer_scoped() {
+        let pool = fresh_pool().await;
+        let tid = seed_thread(&pool, HOST_PEER, "t").await;
+        let m = append(&pool, &tid, "user", "me", "secret note", &[]).await.unwrap();
+        assert!(get_by_id(&pool, HOST_PEER, &m.id).await.unwrap().is_some());
+        assert!(
+            get_by_id(&pool, "BOB", &m.id).await.unwrap().is_none(),
+            "a foreign peer must not be able to fetch another peer's message"
+        );
+    }
+
+    #[tokio::test]
+    async fn search_is_peer_scoped() {
+        let pool = fresh_pool().await;
+        let host_t = seed_thread(&pool, HOST_PEER, "Host thread").await;
+        let bob_t = seed_thread(&pool, "BOB", "Bob thread").await;
+        append(&pool, &host_t, "user", "me", "the budget meeting is friday", &[]).await.unwrap();
+        append(&pool, &bob_t, "user", "bob", "budget budget budget", &[]).await.unwrap();
+
+        let host_hits = search(&pool, HOST_PEER, "budget", 50).await.unwrap();
+        assert_eq!(host_hits.len(), 1);
+        assert_eq!(host_hits[0].thread_id, host_t);
+
+        let bob_hits = search(&pool, "BOB", "budget", 50).await.unwrap();
+        assert_eq!(bob_hits.len(), 1);
+        assert_eq!(bob_hits[0].thread_id, bob_t);
+    }
+
+    #[tokio::test]
+    async fn search_index_syncs_on_delete_and_edit() {
+        let pool = fresh_pool().await;
+        let tid = seed_thread(&pool, HOST_PEER, "t").await;
+        let m = append(&pool, &tid, "user", "me", "pineapple upside down", &[]).await.unwrap();
+        assert_eq!(search(&pool, HOST_PEER, "pineapple", 50).await.unwrap().len(), 1);
+
+        // Edit retracts the old body, indexes the new one (messages_au).
+        update_content(&pool, &m.id, "oranges and lemons").await.unwrap();
+        assert_eq!(search(&pool, HOST_PEER, "pineapple", 50).await.unwrap().len(), 0);
+        assert_eq!(search(&pool, HOST_PEER, "oranges", 50).await.unwrap().len(), 1);
+
+        // Delete retracts the rowid (messages_ad) — no ghost hit.
+        delete_from(&pool, HOST_PEER, &tid, &m.created_at).await.unwrap();
+        assert_eq!(search(&pool, HOST_PEER, "oranges", 50).await.unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn search_neutralizes_fts_syntax_and_short_queries() {
+        let pool = fresh_pool().await;
+        let tid = seed_thread(&pool, HOST_PEER, "t").await;
+        append(&pool, &tid, "user", "me", "ordinary content here", &[]).await.unwrap();
+        // Injection attempt + sub-3-char + whitespace all sanitize to an
+        // empty MATCH → Ok(empty), never a SQL error.
+        for q in ["\") OR 1=1 --", "a", "   ", "*", "OR"] {
+            assert!(
+                search(&pool, HOST_PEER, q, 50).await.unwrap().is_empty(),
+                "query {q:?} should yield no results and no error"
+            );
+        }
     }
 }

@@ -3,17 +3,56 @@
   import { renderMarkdown } from '$lib/markdown';
   import { app } from '$lib/stores/app.svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { Check, Copy, FileText, Search } from '@lucide/svelte';
+  import { Check, Copy, FileText, Search, RefreshCw, Pencil } from '@lucide/svelte';
 
   let {
     message,
     streaming = false,
     metrics = null,
+    canRegenerate = false,
   }: {
     message: { content: string; role: string; sender: string; created_at?: string } & Partial<Message>;
     streaming?: boolean;
     metrics?: TurnMetrics | null;
+    /** True only for the last assistant message — gates the regenerate
+     *  affordance so older replies don't show it. */
+    canRegenerate?: boolean;
   } = $props();
+
+  // Regenerate / edit are host-only: the commands return an error in
+  // client mode (no local authoritative DB), so we hide the buttons there
+  // rather than surface a failure toast.
+  const isHost = $derived(app.config?.mode === 'host');
+
+  // Inline edit state for user messages. `editing` swaps the bubble for a
+  // textarea; Save calls editAndResend, which drops everything after this
+  // message and re-runs the turn with the new text.
+  let editing = $state(false);
+  let draft = $state('');
+  let editEl = $state<HTMLTextAreaElement | null>(null);
+  function startEdit() {
+    if (!message.id || app.busy) return;
+    draft = message.content;
+    editing = true;
+  }
+  function cancelEdit() {
+    editing = false;
+    draft = '';
+  }
+  async function saveEdit() {
+    const text = draft.trim();
+    if (!text || app.busy || !message.id) return;
+    editing = false;
+    await app.editAndResend(message.id, text);
+  }
+  // Focus + select the textarea once it mounts so the user can type/replace
+  // immediately. Re-runs when `editing` flips and `editEl` binds.
+  $effect(() => {
+    if (editing && editEl) {
+      editEl.focus();
+      editEl.select();
+    }
+  });
 
   // Per-session prompt snapshot for assistant messages — populated by
   // the host's kinai://prompt-debug event right after generation. Empty
@@ -151,7 +190,42 @@
   }
 </script>
 
-<div class="flex flex-col gap-1 {isUser ? 'items-end' : 'items-start'}">
+<div
+  id={message.id ? `msg-${message.id}` : undefined}
+  class="flex flex-col gap-1 {isUser ? 'items-end' : 'items-start'}"
+>
+  {#if isUser && editing}
+    <div class="max-w-[85%] w-80 rounded-2xl rounded-br-md px-3 py-2.5 bg-teal-500">
+      <textarea
+        bind:this={editEl}
+        bind:value={draft}
+        rows="3"
+        class="w-full bg-white/25 text-ink-900 rounded-md px-2 py-1.5 text-sm outline-none resize-y placeholder:text-ink-900/50"
+        onkeydown={(e) => {
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+            e.preventDefault();
+            void saveEdit();
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            cancelEdit();
+          }
+        }}
+      ></textarea>
+      <div class="flex justify-end gap-3 mt-1.5 text-xs">
+        <button type="button" class="text-ink-900/70 hover:text-ink-900" onclick={cancelEdit}>
+          Cancel
+        </button>
+        <button
+          type="button"
+          class="font-medium text-ink-900 hover:underline disabled:opacity-50 disabled:no-underline"
+          onclick={saveEdit}
+          disabled={!draft.trim() || app.busy}
+        >
+          Save &amp; resend
+        </button>
+      </div>
+    </div>
+  {:else}
   <div
     class="max-w-[85%] rounded-2xl px-4 py-2.5 kin-prose
            {isUser
@@ -185,12 +259,26 @@
       <span class="inline-block w-1.5 h-4 bg-current align-middle ml-0.5 animate-pulse-soft"></span>
     {/if}
   </div>
-  {#if isUser}
+  {/if}
+  {#if isUser && !editing}
     <!-- User bubbles: the right-aligned teal bubble already says "you" by
          position + color, so the name/timestamp row is suppressed to reduce
          visual noise. The copy button is the only affordance we keep here
          so users can re-grab their own prompt for editing/sharing. -->
     <div class="flex gap-2 text-xs text-white/30 px-1.5 items-center">
+      {#if isHost && message.id}
+        <button
+          type="button"
+          class="inline-flex items-center gap-1 hover:text-teal-300 transition-colors cursor-pointer disabled:opacity-50"
+          onclick={startEdit}
+          disabled={app.busy}
+          title="Edit this message and re-run from here"
+          aria-label="Edit message"
+        >
+          <Pencil size={11} />
+          <span>edit</span>
+        </button>
+      {/if}
       <button
         type="button"
         class="inline-flex items-center gap-1 hover:text-teal-300 transition-colors cursor-pointer"
@@ -272,6 +360,19 @@
           <span>copy</span>
         {/if}
       </button>
+      {#if canRegenerate && isHost}
+        <button
+          type="button"
+          class="inline-flex items-center gap-1 text-white/40 hover:text-teal-300 transition-colors cursor-pointer disabled:opacity-50"
+          onclick={() => message.id && app.regenerateLast(message.id)}
+          disabled={app.busy}
+          title="Re-run this reply"
+          aria-label="Regenerate reply"
+        >
+          <RefreshCw size={11} />
+          <span>regenerate</span>
+        </button>
+      {/if}
     </div>
   {/if}
 </div>

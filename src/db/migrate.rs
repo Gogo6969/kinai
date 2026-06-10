@@ -181,6 +181,50 @@ const STATEMENTS: &[&str] = &[
     CREATE INDEX IF NOT EXISTS idx_user_facts_peer ON user_facts(peer_id)
     "#,
 
+    // Full-text index over message bodies, for cross-thread search.
+    // External-content FTS5 (same pattern as memory_fts): the text lives
+    // in `messages`, this stores only the inverted index keyed by
+    // messages.rowid. We index only `content`; thread/role/created_at are
+    // fetched via the rowid join. Unlike memory_notes (never deleted/
+    // edited), messages ARE deleted (delete_thread CASCADE) and edited
+    // (update_content), so we need DELETE + UPDATE triggers too, else the
+    // index returns stale rowids.
+    r#"
+    CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+        content,
+        content='messages',
+        content_rowid='rowid'
+    )
+    "#,
+    r#"
+    CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+        INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+    END
+    "#,
+    r#"
+    CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+        INSERT INTO messages_fts(messages_fts, rowid, content)
+        VALUES ('delete', old.rowid, old.content);
+    END
+    "#,
+    r#"
+    CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+        INSERT INTO messages_fts(messages_fts, rowid, content)
+        VALUES ('delete', old.rowid, old.content);
+        INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+    END
+    "#,
+    // One-time backfill for DBs that predate the FTS index (the triggers
+    // only fire on rows written after they exist). Guarded so a second
+    // launch is a no-op: only runs when the index is empty but messages
+    // exist. Must come AFTER the CREATE VIRTUAL TABLE above.
+    r#"
+    INSERT INTO messages_fts(rowid, content)
+        SELECT rowid, content FROM messages
+        WHERE (SELECT COUNT(*) FROM messages_fts) = 0
+          AND EXISTS (SELECT 1 FROM messages)
+    "#,
+
     // Per-peer "active" Telegram thread. Telegram chats default to one
     // deterministic thread per peer; the `/newchat` command rotates to a
     // fresh thread and records its id here so subsequent messages from

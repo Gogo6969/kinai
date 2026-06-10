@@ -102,7 +102,7 @@ pub async fn search(
     Ok(rows.into_iter().map(row_to_note).collect())
 }
 
-fn sanitize_fts(input: &str) -> String {
+pub(crate) fn sanitize_fts(input: &str) -> String {
     let mut tokens: Vec<String> = input
         .split_whitespace()
         .map(|t| {

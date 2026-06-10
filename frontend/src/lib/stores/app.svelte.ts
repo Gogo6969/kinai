@@ -7,6 +7,7 @@ import {
   type Message,
   type RuntimeStats,
   type ThreadMeta,
+  type SearchHit,
   type TurnMetrics,
 } from '$lib/api';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -120,6 +121,60 @@ class AppStore {
     this.threads = [t, ...this.threads];
     this.activeThreadId = t.id;
     this.messages[t.id] = [];
+  }
+
+  // ---- Cross-thread message search --------------------------------------
+  searchQuery = $state('');
+  searchResults = $state<SearchHit[]>([]);
+  searching = $state(false);
+  private searchTimer: ReturnType<typeof setTimeout> | null = null;
+  private searchSeq = 0; // guards against out-of-order async results
+
+  /** Debounced search (200ms) so we don't fire an IPC per keystroke. */
+  runSearch(query: string) {
+    this.searchQuery = query;
+    if (this.searchTimer) clearTimeout(this.searchTimer);
+    if (!query.trim()) {
+      this.searchResults = [];
+      this.searching = false;
+      return;
+    }
+    this.searching = true;
+    const seq = ++this.searchSeq;
+    this.searchTimer = setTimeout(async () => {
+      try {
+        const hits = await api.searchMessages(query);
+        if (seq !== this.searchSeq) return; // a newer query superseded this one
+        this.searchResults = hits;
+      } catch (e) {
+        if (seq !== this.searchSeq) return;
+        console.warn('search failed', e);
+        this.searchResults = [];
+      } finally {
+        if (seq === this.searchSeq) this.searching = false;
+      }
+    }, 200);
+  }
+
+  clearSearch() {
+    this.searchSeq++; // invalidate any in-flight result
+    if (this.searchTimer) clearTimeout(this.searchTimer);
+    this.searchQuery = '';
+    this.searchResults = [];
+    this.searching = false;
+  }
+
+  /** Jump to the thread of a search hit and scroll/flash the message. */
+  async jumpToHit(hit: SearchHit) {
+    this.activeThreadId = hit.thread_id;
+    await this.loadActive();
+    this.clearSearch();
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`msg-${hit.message_id}`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el?.classList.add('kin-flash');
+      setTimeout(() => el?.classList.remove('kin-flash'), 1600);
+    });
   }
 
   /**
@@ -249,6 +304,92 @@ class AppStore {
       delete this.toolActivity[clientMsgId];
       this.busy = false;
       this.activeTurnId = null;
+    }
+  }
+
+  // ---- Regenerate / edit-and-resend (host-only) -------------------------
+
+  /** Spin up the same streaming bookkeeping `send()` uses so the
+   *  thinking-dots bubble renders and `onAssistantDone` cleans up. */
+  private beginTurn(): string {
+    const clientMsgId = crypto.randomUUID();
+    this.busy = true;
+    this.activeTurnId = clientMsgId;
+    this.streaming[clientMsgId] = '';
+    this.reasoning[clientMsgId] = '';
+    this.toolActivity[clientMsgId] = [];
+    return clientMsgId;
+  }
+
+  /** Tear down a turn's placeholders after an IPC error and re-sync the
+   *  thread from the authoritative DB so the UI can't get stuck. */
+  private async failTurn(clientMsgId: string, e: unknown) {
+    console.error(e);
+    delete this.streaming[clientMsgId];
+    delete this.reasoning[clientMsgId];
+    delete this.toolActivity[clientMsgId];
+    this.streaming = { ...this.streaming };
+    this.reasoning = { ...this.reasoning };
+    this.toolActivity = { ...this.toolActivity };
+    this.busy = false;
+    this.activeTurnId = null;
+    await this.loadActive();
+  }
+
+  /**
+   * Re-run the last assistant reply. Optimistically drops the old reply
+   * (and anything after it) from the local list, then invokes the
+   * host-only command; the new reply streams in over the kinai:// events
+   * and `onAssistantDone` finalizes it. On error we reload from the DB.
+   */
+  async regenerateLast(assistantId: string) {
+    const threadId = this.activeThreadId;
+    if (!threadId || this.busy) return;
+    const list = this.messages[threadId] ?? [];
+    const idx = list.findIndex((m) => m.id === assistantId);
+    if (idx < 0) return;
+    // Optimistic truncation: drop the old assistant reply (+ anything after).
+    this.messages[threadId] = list.slice(0, idx);
+    this.messages = { ...this.messages };
+    const clientMsgId = this.beginTurn();
+    try {
+      await api.regenerateMessage({
+        thread_id: threadId,
+        assistant_msg_id: assistantId,
+        client_msg_id: clientMsgId,
+      });
+    } catch (e) {
+      await this.failTurn(clientMsgId, e);
+    }
+  }
+
+  /**
+   * Edit a previous user message and re-run from there. Keeps the edited
+   * user bubble (with the new text), drops everything after it, then
+   * invokes the host-only command. On error we reload from the DB.
+   */
+  async editAndResend(userMsgId: string, newText: string) {
+    const threadId = this.activeThreadId;
+    if (!threadId || this.busy) return;
+    const trimmed = newText.trim();
+    if (!trimmed) return;
+    const list = this.messages[threadId] ?? [];
+    const idx = list.findIndex((m) => m.id === userMsgId);
+    if (idx < 0) return;
+    // Keep the edited user bubble, drop everything after it.
+    const edited = { ...list[idx], content: trimmed };
+    this.messages[threadId] = [...list.slice(0, idx), edited];
+    this.messages = { ...this.messages };
+    const clientMsgId = this.beginTurn();
+    try {
+      await api.editAndResend({
+        thread_id: threadId,
+        user_msg_id: userMsgId,
+        new_content: trimmed,
+        client_msg_id: clientMsgId,
+      });
+    } catch (e) {
+      await this.failTurn(clientMsgId, e);
     }
   }
 

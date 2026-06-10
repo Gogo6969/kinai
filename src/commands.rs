@@ -900,6 +900,30 @@ pub async fn test_llm_connection(args: TestConnectionArgs) -> Result<TestConnect
 //   * On a client machine the local DB only has that client's own data,
 //     so peer_id is effectively a no-op (all rows are "host" by default)
 
+/// Cross-thread full-text search over the current peer's messages.
+/// Host-only for now: a client has no authoritative local message DB
+/// (its chat is a WS pass-through), so it returns empty rather than
+/// searching a partial local store — the UI gates the search box to host
+/// mode. The client WS round-trip (Envelope::SearchMessages) is a planned
+/// follow-up, mirroring list_threads.
+#[tauri::command]
+pub async fn search_messages(
+    state: tauri::State<'_, SharedState>,
+    query: String,
+) -> Result<Vec<db::SearchHit>> {
+    if query.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    if matches!(state.config.read().mode, Mode::Client) {
+        return Ok(Vec::new());
+    }
+    state
+        .db
+        .search_messages(db::HOST_PEER, &query, 50)
+        .await
+        .map_err(err)
+}
+
 #[tauri::command]
 pub async fn list_threads(state: tauri::State<'_, SharedState>) -> Result<Vec<db::ThreadMeta>> {
     // Mode-aware. Host reads its local DB (HOST_PEER bucket); client
@@ -1338,12 +1362,43 @@ pub async fn send_message(
         .map_err(err)?;
     let _ = app.emit("kinai://message", &user_msg);
 
+    run_assistant_turn(
+        &app,
+        &state,
+        &args.thread_id,
+        user_msg,
+        &args.client_msg_id,
+        &sender,
+        false,
+    )
+    .await
+}
+
+/// The LLM half of a chat turn, factored out of `send_message` so
+/// `regenerate_message` / `edit_and_resend` can re-run it against an
+/// existing (or edited) user message without duplicating the streaming /
+/// metrics / Telegram-echo plumbing. The user row is assumed to already be
+/// persisted — this fn never appends it. `suppress_echo` skips the Telegram
+/// typing indicator + Q&A mirror so a regenerate/edit doesn't bounce a
+/// duplicate message back into a Telegram-linked thread.
+#[allow(clippy::too_many_arguments)]
+async fn run_assistant_turn(
+    app: &AppHandle,
+    state: &tauri::State<'_, SharedState>,
+    thread_id: &str,
+    user_msg: db::Message,
+    client_msg_id: &str,
+    sender: &str,
+    suppress_echo: bool,
+) -> Result<SendMessageResult> {
     // Bidirectional Telegram sync (host side): if the host owner is
     // typing inside their own Telegram thread on KinAI, show the
     // "typing…" indicator on Telegram while the LLM thinks. The full
     // Q&A echo (combined into one bot message) happens after the LLM
     // finishes — see `maybe_echo_qa` calls below.
-    crate::telegram::echo::maybe_show_typing(&state, db::HOST_PEER, &args.thread_id).await;
+    if !suppress_echo {
+        crate::telegram::echo::maybe_show_typing(state, db::HOST_PEER, thread_id).await;
+    }
 
     let cfg = state.config.read().clone();
 
@@ -1356,7 +1411,7 @@ pub async fn send_message(
     // thread-aware so /deep sticks across follow-up turns until the
     // user switches back with /fast.
     let route_pick =
-        crate::slash::route_for(&state.db, &cfg, db::HOST_PEER, &args.thread_id, &args.content)
+        crate::slash::route_for(&state.db, &cfg, db::HOST_PEER, thread_id, &user_msg.content)
             .await;
     let llm_route_content = route_pick.stripped_content.clone();
 
@@ -1374,7 +1429,7 @@ pub async fn send_message(
         let started_at = std::time::Instant::now();
         let mut assistant_msg = state
             .db
-            .append_message(&args.thread_id, "assistant", "KinAI", &reply, &[])
+            .append_message(thread_id, "assistant", "KinAI", &reply, &[])
             .await
             .map_err(err)?;
         let total_ms = started_at.elapsed().as_millis() as u64;
@@ -1401,7 +1456,7 @@ pub async fn send_message(
         let _ = app.emit(
             "kinai://assistant-done",
             serde_json::json!({
-                "client_msg_id": &args.client_msg_id,
+                "client_msg_id": client_msg_id,
                 "message": &assistant_msg,
                 "metrics": &metrics,
             }),
@@ -1409,15 +1464,17 @@ pub async fn send_message(
         // Bidirectional Telegram sync: mirror the full Q&A turn (the
         // user's slash-command input + the resolved reply) to Telegram
         // as one combined bot message. No-op on non-Telegram threads.
-        crate::telegram::echo::maybe_echo_qa(
-            &state,
-            db::HOST_PEER,
-            &args.thread_id,
-            &sender,
-            &args.content,
-            &assistant_msg.content,
-        )
-        .await;
+        if !suppress_echo {
+            crate::telegram::echo::maybe_echo_qa(
+                state,
+                db::HOST_PEER,
+                thread_id,
+                sender,
+                &user_msg.content,
+                &assistant_msg.content,
+            )
+            .await;
+        }
         return Ok(SendMessageResult {
             user_message: user_msg,
             assistant_message: assistant_msg,
@@ -1433,7 +1490,7 @@ pub async fn send_message(
         ..user_msg.clone()
     };
     let messages =
-        context::builder::build_context(&state.db, &cfg, db::HOST_PEER, &args.thread_id, &user_msg_for_llm)
+        context::builder::build_context(&state.db, &cfg, db::HOST_PEER, thread_id, &user_msg_for_llm)
             .await
             .map_err(err)?;
     // Snapshot for the 🔍 debug panel — emitted alongside the
@@ -1450,7 +1507,7 @@ pub async fn send_message(
     let tool_defs = registry::enabled(&cfg.tools);
     let tool_runtime = registry::ToolRuntime::from_tool_settings(&cfg.tools)
         .with_memory(state.db.clone(), db::HOST_PEER)
-        .with_source_msg(args.client_msg_id.clone());
+        .with_source_msg(client_msg_id.to_string());
 
     let max_tokens = compute_max_tokens(&cfg, &messages);
 
@@ -1466,7 +1523,7 @@ pub async fn send_message(
     state
         .pending_turns
         .lock()
-        .insert(args.client_msg_id.clone(), cancel.clone());
+        .insert(client_msg_id.to_string(), cancel.clone());
     // Drop-guard removes the token when this function returns, so a
     // panic mid-pipeline doesn't leak entries that would later get
     // cancelled by accident on a future turn with the same id.
@@ -1480,16 +1537,16 @@ pub async fn send_message(
         }
     }
     let _turn_guard = TurnGuard {
-        id: args.client_msg_id.clone(),
+        id: client_msg_id.to_string(),
         pending: state.pending_turns.clone(),
     };
 
     let app_for_token = app.clone();
-    let client_id_token = args.client_msg_id.clone();
+    let client_id_token = client_msg_id.to_string();
     let app_for_reasoning = app.clone();
-    let client_id_reasoning = args.client_msg_id.clone();
+    let client_id_reasoning = client_msg_id.to_string();
     let app_for_tool = app.clone();
-    let client_id_tool = args.client_msg_id.clone();
+    let client_id_tool = client_msg_id.to_string();
 
     let started_at = std::time::Instant::now();
     let first_token_seen = Arc::new(parking_lot::Mutex::new(None::<u64>));
@@ -1519,7 +1576,7 @@ pub async fn send_message(
         }),
     };
 
-    let route = crate::vision::decide(&active_llm_settings.model, &args.attachments, &cfg.vision)
+    let route = crate::vision::decide(&active_llm_settings.model, &user_msg.attachments, &cfg.vision)
         .map_err(err)?;
     let result = crate::vision::run_with_route(
         route,
@@ -1561,7 +1618,7 @@ pub async fn send_message(
     let mut assistant_msg = state
         .db
         .append_message(
-            &args.thread_id,
+            thread_id,
             "assistant",
             "KinAI",
             &result.final_content,
@@ -1588,7 +1645,7 @@ pub async fn send_message(
     }
 
     if let Err(e) =
-        context::memory::maybe_summarize(&state.db, db::HOST_PEER, &args.thread_id).await
+        context::memory::maybe_summarize(&state.db, db::HOST_PEER, thread_id).await
     {
         tracing::warn!("summarizer: {e:?}");
     }
@@ -1601,7 +1658,7 @@ pub async fn send_message(
     let extractor_db = state.db.clone();
     let extractor_settings = cfg.llm.clone();
     let extractor_msg_id = user_msg.id.clone();
-    let extractor_content = args.content.clone();
+    let extractor_content = user_msg.content.clone();
     let extractor_app = app.clone();
     tokio::spawn(async move {
         match context::extractor::extract_and_save(
@@ -1627,7 +1684,7 @@ pub async fn send_message(
     let _ = app.emit(
         "kinai://assistant-done",
         serde_json::json!({
-            "client_msg_id": args.client_msg_id,
+            "client_msg_id": client_msg_id,
             "message": assistant_msg,
             "metrics": metrics,
         }),
@@ -1637,21 +1694,163 @@ pub async fn send_message(
     // Telegram as one combined bot message. No-op on non-Telegram
     // threads; `maybe_echo_qa` also skips the question quote when
     // sender == "Telegram" so we don't bounce inbound messages.
-    crate::telegram::echo::maybe_echo_qa(
-        &state,
-        db::HOST_PEER,
-        &args.thread_id,
-        &sender,
-        &args.content,
-        &assistant_msg.content,
-    )
-    .await;
+    if !suppress_echo {
+        crate::telegram::echo::maybe_echo_qa(
+            state,
+            db::HOST_PEER,
+            thread_id,
+            sender,
+            &user_msg.content,
+            &assistant_msg.content,
+        )
+        .await;
+    }
 
     Ok(SendMessageResult {
         user_message: user_msg,
         assistant_message: assistant_msg,
         metrics,
     })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RegenerateArgs {
+    pub thread_id: String,
+    /// id of the ASSISTANT message to re-run.
+    pub assistant_msg_id: String,
+    /// Fresh uuid from the frontend; drives the streaming events for the
+    /// new reply (same role as `client_msg_id` in `send_message`).
+    pub client_msg_id: String,
+}
+
+/// Re-run the assistant reply for the user turn that produced
+/// `assistant_msg_id`. Deletes that assistant message (and anything after
+/// it — the cut is inclusive for safety; the UI only offers regenerate on
+/// the last reply, so normally there's nothing after), then re-runs the
+/// pipeline against the unchanged user turn. Host-only for now.
+#[tauri::command]
+pub async fn regenerate_message(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+    args: RegenerateArgs,
+) -> Result<SendMessageResult> {
+    if matches!(state.config.read().mode, Mode::Client) {
+        return Err("Regenerate isn't available in client mode yet.".into());
+    }
+    let assistant = state
+        .db
+        .get_message(db::HOST_PEER, &args.assistant_msg_id)
+        .await
+        .map_err(err)?
+        .ok_or_else(|| "message not found".to_string())?;
+    if assistant.role != "assistant" {
+        return Err("can only regenerate an assistant reply".into());
+    }
+    // The user message that produced it = the newest user message in the
+    // thread strictly older than the assistant reply. `load_messages`
+    // returns oldest-first, so `.last()` of the filtered set is the newest.
+    let history = state
+        .db
+        .load_messages(db::HOST_PEER, &args.thread_id, 500)
+        .await
+        .map_err(err)?;
+    let user_msg = history
+        .iter()
+        .filter(|m| m.role == "user" && m.created_at < assistant.created_at)
+        .next_back()
+        .cloned()
+        .ok_or_else(|| "no user message to regenerate from".to_string())?;
+    // Drop the old assistant reply (inclusive cut at its created_at).
+    state
+        .db
+        .delete_messages_from(db::HOST_PEER, &args.thread_id, &assistant.created_at)
+        .await
+        .map_err(err)?;
+    let sender = user_msg.sender.clone();
+    // suppress_echo = true: a desktop-initiated regenerate of a
+    // Telegram-linked thread shouldn't bounce a duplicate Q&A to Telegram.
+    run_assistant_turn(
+        &app,
+        &state,
+        &args.thread_id,
+        user_msg,
+        &args.client_msg_id,
+        &sender,
+        true,
+    )
+    .await
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EditResendArgs {
+    pub thread_id: String,
+    /// id of the user's own message being edited.
+    pub user_msg_id: String,
+    pub new_content: String,
+    /// Fresh uuid from the frontend; drives the streaming events.
+    pub client_msg_id: String,
+}
+
+/// Edit a previous user message in place (same id + created_at so ordering
+/// is stable), delete everything strictly after it, then re-run the
+/// pipeline against the edited turn. Host-only for now.
+#[tauri::command]
+pub async fn edit_and_resend(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+    args: EditResendArgs,
+) -> Result<SendMessageResult> {
+    if matches!(state.config.read().mode, Mode::Client) {
+        return Err("Edit & resend isn't available in client mode yet.".into());
+    }
+    let trimmed = args.new_content.trim().to_string();
+    if trimmed.is_empty() {
+        return Err("Edited message can't be empty.".into());
+    }
+    let original = state
+        .db
+        .get_message(db::HOST_PEER, &args.user_msg_id)
+        .await
+        .map_err(err)?
+        .ok_or_else(|| "message not found".to_string())?;
+    if original.role != "user" {
+        return Err("can only edit your own messages".into());
+    }
+    // Update content in place, then delete the first message after it
+    // (the old assistant reply) and everything beyond.
+    state
+        .db
+        .update_message(&original.id, &trimmed)
+        .await
+        .map_err(err)?;
+    let history = state
+        .db
+        .load_messages(db::HOST_PEER, &args.thread_id, 500)
+        .await
+        .map_err(err)?;
+    if let Some(next) = history.iter().find(|m| m.created_at > original.created_at) {
+        let cut = next.created_at.clone();
+        state
+            .db
+            .delete_messages_from(db::HOST_PEER, &args.thread_id, &cut)
+            .await
+            .map_err(err)?;
+    }
+    let sender = original.sender.clone();
+    let edited = db::Message {
+        content: trimmed,
+        ..original
+    };
+    run_assistant_turn(
+        &app,
+        &state,
+        &args.thread_id,
+        edited,
+        &args.client_msg_id,
+        &sender,
+        true,
+    )
+    .await
 }
 
 #[derive(Debug, Deserialize)]

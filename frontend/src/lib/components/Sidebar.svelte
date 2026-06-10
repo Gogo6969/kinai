@@ -3,7 +3,7 @@
   import { api } from '$lib/api';
   import { goto } from '$app/navigation';
   import Logo from './Logo.svelte';
-  import { Plus, Settings as Cog, Users, Trash2, Cpu, RefreshCw, Pencil } from '@lucide/svelte';
+  import { Plus, Settings as Cog, Users, Trash2, Cpu, RefreshCw, Pencil, Search, X } from '@lucide/svelte';
   import { tick } from 'svelte';
 
   async function newChat() {
@@ -174,6 +174,54 @@
     </div>
   {/if}
 
+  {#if app.config?.mode === 'host'}
+    <!-- Cross-thread message search. Host-only: the host holds the
+         authoritative DB, so search runs locally; clients would need a
+         WS round-trip we deliberately deferred to keep their connection
+         path unchanged. -->
+    <div class="px-3 pb-2">
+      <div class="relative">
+        <Search size={14} class="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/40 pointer-events-none" />
+        <input
+          type="text"
+          placeholder="Search messages…"
+          class="w-full bg-white/5 rounded-md pl-8 pr-7 py-1.5 text-sm text-white placeholder:text-white/40 outline-none focus:ring-1 focus:ring-teal-400/60"
+          value={app.searchQuery}
+          oninput={(e) => app.runSearch(e.currentTarget.value)}
+          onkeydown={(e) => { if (e.key === 'Escape') app.clearSearch(); }}
+        />
+        {#if app.searchQuery}
+          <button
+            class="absolute right-2 top-1/2 -translate-y-1/2 text-white/40 hover:text-white"
+            onclick={() => app.clearSearch()}
+            aria-label="Clear search"
+          >
+            <X size={13} />
+          </button>
+        {/if}
+      </div>
+    </div>
+  {/if}
+
+  {#if app.config?.mode === 'host' && app.searchQuery.trim()}
+    <nav class="flex-1 overflow-y-auto px-2 py-2 space-y-0.5">
+      {#if app.searching}
+        <div class="text-xs text-white/40 px-3 py-2">Searching…</div>
+      {:else if app.searchResults.length === 0}
+        <div class="text-xs text-white/40 px-3 py-2">No matches.</div>
+      {:else}
+        {#each app.searchResults as hit (hit.message_id)}
+          <button
+            class="w-full text-left rounded-md px-3 py-2 text-sm text-white/70 hover:bg-white/5"
+            onclick={() => app.jumpToHit(hit)}
+          >
+            <div class="truncate font-medium text-white/90">{hit.thread_title || 'Untitled'}</div>
+            <div class="truncate text-xs text-white/50">{hit.snippet}</div>
+          </button>
+        {/each}
+      {/if}
+    </nav>
+  {:else}
   <nav class="flex-1 overflow-y-auto px-2 py-2 space-y-0.5">
     {#each app.threads as t (t.id)}
       <div
@@ -229,6 +277,7 @@
       <div class="text-xs text-white/40 px-3 py-2">No conversations yet.</div>
     {/if}
   </nav>
+  {/if}
 
   <div class="border-t border-white/5 px-2 py-2 space-y-0.5">
     {#if app.config?.mode === 'host'}

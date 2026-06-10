@@ -12,7 +12,7 @@ use anyhow::Result;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 
 pub use memory::MemoryNote;
-pub use messages::{Attachment, Message, ThreadMeta, HOST_PEER};
+pub use messages::{Attachment, Message, SearchHit, ThreadMeta, HOST_PEER};
 pub use user_facts::UserFact;
 
 #[derive(Clone)]
@@ -89,6 +89,14 @@ impl Db {
     ) -> Result<Vec<Message>> {
         messages::load(&self.pool, peer_id, thread_id, limit).await
     }
+    pub async fn search_messages(
+        &self,
+        peer_id: &str,
+        query: &str,
+        limit: i64,
+    ) -> Result<Vec<SearchHit>> {
+        messages::search(&self.pool, peer_id, query, limit).await
+    }
     pub async fn append_message(
         &self,
         thread_id: &str,
@@ -101,6 +109,21 @@ impl Db {
     }
     pub async fn update_message(&self, id: &str, new_content: &str) -> Result<()> {
         messages::update_content(&self.pool, id, new_content).await
+    }
+    /// Truncate a thread at `from_created_at` (inclusive), peer-scoped.
+    /// Returns rows removed. Backs regenerate/edit-and-resend.
+    pub async fn delete_messages_from(
+        &self,
+        peer_id: &str,
+        thread_id: &str,
+        from_created_at: &str,
+    ) -> Result<u64> {
+        messages::delete_from(&self.pool, peer_id, thread_id, from_created_at).await
+    }
+    /// Fetch one message by id, scoped to a peer's threads (`None` if not
+    /// owned / not found).
+    pub async fn get_message(&self, peer_id: &str, id: &str) -> Result<Option<Message>> {
+        messages::get_by_id(&self.pool, peer_id, id).await
     }
     pub async fn set_message_metrics(
         &self,

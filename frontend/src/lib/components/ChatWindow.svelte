@@ -299,10 +299,13 @@
         {/if}
       </div>
     {:else}
-      {#each messages as m (m.id)}
+      {#each messages as m, i (m.id)}
         <MessageBubble
           message={m}
           metrics={app.metricsByMsgId[m.id] ?? m.metrics ?? null}
+          canRegenerate={i === messages.length - 1 &&
+            m.role === 'assistant' &&
+            streamingIds.length === 0}
         />
       {/each}
       {#each streamingIds as id (id)}
