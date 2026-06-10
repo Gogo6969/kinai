@@ -63,14 +63,42 @@ pub async fn handle_update<R: Runtime>(
 
     // No readable content? Say so instead of silently dropping the
     // update — a voice message especially feels broken when the bot
-    // (which SPEAKS via /voice!) doesn't even react to it.
+    // (which SPEAKS via /voice!) doesn't even react to it. The exchange
+    // is mirrored into the peer's KinAI thread like any other turn, so
+    // the app shows the same conversation Telegram does.
     if text_or_caption.trim().is_empty() && msg.photo.is_empty() {
-        let reply = if msg.voice.is_some() || msg.audio.is_some() || msg.video_note.is_some() {
-            "🎙 I can't listen to voice messages yet — please type your question. \
-             (I can talk back though: send /voice and my answers arrive as spoken voice notes.)"
+        let (marker, reply) = if msg.voice.is_some() || msg.audio.is_some() || msg.video_note.is_some() {
+            (
+                "🎙 (voice message)",
+                "🎙 I can't listen to voice messages yet — please type your question. \
+                 (I can talk back though: send /voice and my answers arrive as spoken voice notes.)",
+            )
         } else {
-            "I can only read text and photos for now."
+            (
+                "(unsupported content)",
+                "I can only read text and photos for now.",
+            )
         };
+        let thread_id = tg_db::active_thread(&state.db.pool, &peer_id)
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| telegram_thread_id_for_peer(&peer_id));
+        state.db.upsert_thread(&peer_id, &thread_id, "Telegram").await.ok();
+        if let Ok(m) = state
+            .db
+            .append_message(&thread_id, "user", "Telegram", marker, &[])
+            .await
+        {
+            fan_out_message(state, app, &peer_id, &m).await;
+        }
+        if let Ok(m) = state
+            .db
+            .append_message(&thread_id, "assistant", "KinAI", reply, &[])
+            .await
+        {
+            fan_out_message(state, app, &peer_id, &m).await;
+        }
         api.send_message(chat_id, reply).await?;
         return Ok(());
     }
