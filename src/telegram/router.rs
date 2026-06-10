@@ -256,7 +256,7 @@ async fn run_turn_for_peer<R: Runtime>(
     // in-app chat paths (see voice_command_reply); the exchange is
     // mirrored into the thread so the KinAI app shows it too.
     if let Some(arg) = strip_voice(content) {
-        let reply = voice_command_reply(state, peer_id, arg).await;
+        let outcome = voice_command_outcome(state, peer_id, arg).await;
         if let Ok(m) = state
             .db
             .append_message(&thread_id, "user", "Telegram", content, &[])
@@ -266,12 +266,18 @@ async fn run_turn_for_peer<R: Runtime>(
         }
         if let Ok(m) = state
             .db
-            .append_message(&thread_id, "assistant", "KinAI", &reply, &[])
+            .append_message(&thread_id, "assistant", "KinAI", &outcome.reply, &[])
             .await
         {
             fan_out_message(state, app, peer_id, &m).await;
         }
-        api.send_message(chat_id, &reply).await?;
+        api.send_message(chat_id, &outcome.reply).await?;
+        // Turning voice ON: speak the confirmation itself — instant
+        // audible proof the pipeline works. (The pref is already ON, so
+        // maybe_send_voice_note passes its own opt-in check.)
+        if outcome.enabled_now == Some(true) {
+            maybe_send_voice_note(api, state, peer_id, chat_id, &outcome.reply).await;
+        }
         return Ok(());
     }
 
@@ -1044,21 +1050,38 @@ fn strip_newchat(content: &str) -> Option<&str> {
     }
 }
 
-/// Resolve a `/voice` command for `peer_id` (bare toggle / "on" / "off")
-/// and return the reply text. Shared by the Telegram router and BOTH
-/// in-app chat paths (host desktop + client WS), so the toggle works —
-/// and answers identically — on every surface. The pref controls voice
-/// notes in the peer's TELEGRAM chat; desktop playback is the separate
-/// host-side speak-button / auto-speak setting.
-pub(crate) async fn voice_command_reply(
+/// Outcome of a `/voice` command: the reply text plus the resulting
+/// state (`Some(new_state)` on a successful toggle, `None` for the
+/// error/usage/not-paired replies). Callers use `enabled_now` to decide
+/// whether the confirmation itself should be SPOKEN: turning voice ON
+/// speaks the confirmation (instant audible proof it works); turning it
+/// OFF — or any meta reply — must stay silent, because a voice that
+/// answers "voice is off" out loud is absurd.
+pub(crate) struct VoiceCommandOutcome {
+    pub reply: String,
+    pub enabled_now: Option<bool>,
+}
+
+/// Resolve a `/voice` command for `peer_id` (bare toggle / "on" / "off").
+/// Shared by the Telegram router and BOTH in-app chat paths (host
+/// desktop + client WS), so the toggle works — and answers identically —
+/// on every surface. The pref controls voice notes in the peer's
+/// TELEGRAM chat; desktop playback is the separate host-side
+/// speak-button / auto-speak setting.
+pub(crate) async fn voice_command_outcome(
     state: &SharedState,
     peer_id: &str,
     arg: &str,
-) -> String {
+) -> VoiceCommandOutcome {
+    let meta = |reply: &str| VoiceCommandOutcome {
+        reply: reply.into(),
+        enabled_now: None,
+    };
     if !state.config.read().tts.enabled {
-        return "🔇 Voice replies are switched off on the host. Ask the host to \
-                enable them in KinAI → Settings → Voice replies."
-            .into();
+        return meta(
+            "🔇 Voice replies are switched off on the host. Ask the host to \
+             enable them in KinAI → Settings → Voice replies.",
+        );
     }
     let paired = tg_db::chat_for_peer(&state.db.pool, peer_id)
         .await
@@ -1066,9 +1089,10 @@ pub(crate) async fn voice_command_reply(
         .flatten()
         .is_some();
     if !paired {
-        return "🔇 Voice notes arrive in Telegram, but you haven't connected a \
-                Telegram chat yet — open KinAI → Settings → Telegram to pair."
-            .into();
+        return meta(
+            "🔇 Voice notes arrive in Telegram, but you haven't connected a \
+             Telegram chat yet — open KinAI → Settings → Telegram to pair.",
+        );
     }
     let current = tg_db::voice_replies(&state.db.pool, peer_id)
         .await
@@ -1077,21 +1101,26 @@ pub(crate) async fn voice_command_reply(
         "" => !current,
         "on" => true,
         "off" => false,
-        _ => {
-            return "Usage: /voice — toggle spoken replies, or /voice on / /voice off."
-                .into()
-        }
+        _ => return meta("Usage: /voice — toggle spoken replies, or /voice on / /voice off."),
     };
     if let Err(e) = tg_db::set_voice_replies(&state.db.pool, peer_id, new_state).await {
-        return format!("Couldn't update the voice setting: {e}");
+        return meta(&format!("Couldn't update the voice setting: {e}"));
     }
     if new_state {
-        "🔊 Voice replies are ON for your Telegram chat — answers there now arrive \
-         as text plus a spoken voice note. Send /voice again to turn them off."
-            .into()
+        VoiceCommandOutcome {
+            reply: "🔊 Voice replies are ON for your Telegram chat — answers there now \
+                    arrive as text plus a spoken voice note. Send /voice again to turn \
+                    them off."
+                .into(),
+            enabled_now: Some(true),
+        }
     } else {
-        "🔇 Voice replies are OFF for your Telegram chat — answers arrive as text only."
-            .into()
+        VoiceCommandOutcome {
+            reply: "🔇 Voice replies are OFF for your Telegram chat — answers arrive as \
+                    text only."
+                .into(),
+            enabled_now: Some(false),
+        }
     }
 }
 

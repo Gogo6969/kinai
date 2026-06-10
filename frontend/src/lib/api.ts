@@ -299,6 +299,10 @@ export interface AssistantDone {
   client_msg_id: string;
   message: Message;
   metrics: TurnMetrics;
+  /** Desktop auto-speak override for this reply: true = always speak,
+   *  false = never speak, absent/null = follow the auto-speak setting.
+   *  Set by /voice so its OFF confirmation isn't spoken out loud. */
+  speak?: boolean | null;
 }
 
 export const api = {

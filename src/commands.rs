@@ -1535,13 +1535,21 @@ async fn run_assistant_turn(
     // turn to the model (which produced junk/nothing). Falls through to
     // the normal slash handler (/pic, /picHQ, /help, ?) otherwise — same
     // handler the WebSocket dispatcher uses, so both chat paths match.
+    // Some(true)/Some(false) force/suppress desktop auto-speak for this
+    // reply; None = follow the user's auto-speak setting. /voice sets it:
+    // the ON confirmation is always spoken (audible proof it works), the
+    // OFF confirmation never is — a voice saying "voice is off" is absurd.
+    let mut speak_override: Option<bool> = None;
     let slash_reply = if route_pick.bare_switch {
         Some(crate::slash::switch_confirmation(&route_pick))
     } else if let Some(arg) = crate::telegram::router::strip_voice(&llm_route_content) {
         // /voice typed in the host's desktop chat — toggles the host
         // user's own Telegram voice-note opt-in. Intercepted before the
         // LLM so the model can't roleplay a fake confirmation.
-        Some(crate::telegram::router::voice_command_reply(&state, db::HOST_PEER, arg).await)
+        let outcome =
+            crate::telegram::router::voice_command_outcome(&state, db::HOST_PEER, arg).await;
+        speak_override = Some(outcome.enabled_now == Some(true));
+        Some(outcome.reply)
     } else {
         crate::slash::handle(&cfg, &llm_route_content).await
     };
@@ -1579,6 +1587,7 @@ async fn run_assistant_turn(
                 "client_msg_id": client_msg_id,
                 "message": &assistant_msg,
                 "metrics": &metrics,
+                "speak": speak_override,
             }),
         );
         // Bidirectional Telegram sync: mirror the full Q&A turn (the
