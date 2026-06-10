@@ -346,6 +346,40 @@ impl BotApi {
         Ok(())
     }
 
+    /// Upload an audio file (AAC `.m4a` from the TTS engine) as a
+    /// Telegram VOICE NOTE — the round waveform bubble. Since Bot API
+    /// 7.2 sendVoice accepts .m4a/.mp3 in addition to OGG/Opus, so the
+    /// macOS-native AAC output works directly. No caption: the reply
+    /// text was already delivered as a normal message right before.
+    pub async fn send_voice_file(&self, chat_id: i64, path: &std::path::Path) -> Result<()> {
+        let file_bytes = tokio::fs::read(path)
+            .await
+            .with_context(|| format!("read {}", path.display()))?;
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("voice.m4a")
+            .to_string();
+        let form = reqwest::multipart::Form::new()
+            .text("chat_id", chat_id.to_string())
+            .part(
+                "voice",
+                reqwest::multipart::Part::bytes(file_bytes)
+                    .file_name(file_name)
+                    .mime_str("audio/mp4")
+                    .unwrap_or_else(|_| reqwest::multipart::Part::bytes(vec![])),
+            );
+        let resp = self
+            .http
+            .post(self.endpoint("sendVoice"))
+            .multipart(form)
+            .send()
+            .await
+            .context("sendVoice send")?;
+        let _: Value = Self::unwrap_response(resp).await?;
+        Ok(())
+    }
+
     /// Resolve a Telegram file_id to a downloadable URL. Step 1 of the
     /// two-step Bot API file download.
     pub async fn get_file(&self, file_id: &str) -> Result<TelegramFile> {

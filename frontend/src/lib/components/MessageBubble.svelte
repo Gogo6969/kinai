@@ -3,7 +3,8 @@
   import { renderMarkdown } from '$lib/markdown';
   import { app } from '$lib/stores/app.svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { Check, Copy, FileText, Search, RefreshCw, Pencil } from '@lucide/svelte';
+  import { Check, Copy, FileText, Search, RefreshCw, Pencil, Volume2, Square } from '@lucide/svelte';
+  import { api } from '$lib/api';
 
   let {
     message,
@@ -23,6 +24,48 @@
   // client mode (no local authoritative DB), so we hide the buttons there
   // rather than surface a failure toast.
   const isHost = $derived(app.config?.mode === 'host');
+
+  // Desktop speak button (host-only: audio plays on the host's
+  // speakers). Click = speak, click again = stop. Since `say` runs as a
+  // separate process, we poll is_speaking to flip the icon back when
+  // playback finishes on its own.
+  const ttsEnabled = $derived(isHost && (app.config?.tts?.enabled ?? false));
+  let speaking = $state(false);
+  let speakPoll: ReturnType<typeof setInterval> | undefined;
+  async function toggleSpeak() {
+    if (speaking) {
+      speaking = false;
+      if (speakPoll) clearInterval(speakPoll);
+      try {
+        await api.stopSpeaking();
+      } catch (e) {
+        console.warn('stopSpeaking', e);
+      }
+      return;
+    }
+    try {
+      await api.speakText(message.content);
+      speaking = true;
+      if (speakPoll) clearInterval(speakPoll);
+      speakPoll = setInterval(async () => {
+        try {
+          const still = await api.isSpeaking();
+          if (!still) {
+            speaking = false;
+            if (speakPoll) clearInterval(speakPoll);
+          }
+        } catch {
+          speaking = false;
+          if (speakPoll) clearInterval(speakPoll);
+        }
+      }, 1000);
+    } catch (e) {
+      const msg = String(e).replace(/^Error:\s*/, '');
+      window.dispatchEvent(
+        new CustomEvent('kin-toast', { detail: { msg: `✗ ${msg}`, ms: 4000 } })
+      );
+    }
+  }
 
   // Inline edit state for user messages. `editing` swaps the bubble for a
   // textarea; Save calls editAndResend, which drops everything after this
@@ -333,6 +376,23 @@
            enough to force a flex wrap — the whole cluster moves to the
            next line together instead. -->
       <span class="ml-auto inline-flex items-center gap-2 whitespace-nowrap">
+        {#if ttsEnabled && !streaming}
+          <button
+            type="button"
+            class="inline-flex items-center gap-1 text-white/40 hover:text-teal-300 transition-colors cursor-pointer"
+            onclick={toggleSpeak}
+            title={speaking ? 'Stop speaking' : 'Read this reply aloud'}
+            aria-label={speaking ? 'Stop speaking' : 'Speak reply'}
+          >
+            {#if speaking}
+              <Square size={11} />
+              <span>stop</span>
+            {:else}
+              <Volume2 size={11} />
+              <span>speak</span>
+            {/if}
+          </button>
+        {/if}
         {#if promptSnapshot}
           <button
             type="button"

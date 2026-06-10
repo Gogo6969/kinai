@@ -8,6 +8,8 @@
     type TelegramLinkStatus,
     type Theme,
     type ToolSettings,
+    type TtsConfig,
+    type TtsVoice,
     type VisionEndpoint,
     type VisionSettings,
   } from '$lib/api';
@@ -91,6 +93,40 @@
   let comfyui = $state<ComfyConfig>({ base_url: '', default_model: 'zimage' });
   let comfyTestState = $state<'idle' | 'testing' | 'ok' | 'fail'>('idle');
   let comfyTestMsg = $state<string>('');
+
+  // Voice replies (TTS) — host-only, macOS `say` engine.
+  let tts = $state<TtsConfig>({ enabled: false, voice_en: 'Zoe (Premium)', voice_de: 'Anna (Premium)' });
+  let ttsVoices = $state<TtsVoice[]>([]);
+  let ttsVoicesLoading = $state(false);
+  let ttsPreviewing = $state<'' | 'en' | 'de'>('');
+  const ttsVoicesEn = $derived(ttsVoices.filter((v) => v.lang.startsWith('en')));
+  const ttsVoicesDe = $derived(ttsVoices.filter((v) => v.lang.startsWith('de')));
+
+  async function refreshTtsVoices() {
+    ttsVoicesLoading = true;
+    try {
+      ttsVoices = await api.listTtsVoices();
+    } catch (e) {
+      console.warn('listTtsVoices failed', e);
+    } finally {
+      ttsVoicesLoading = false;
+    }
+  }
+
+  async function previewTtsVoice(lang: 'en' | 'de') {
+    ttsPreviewing = lang;
+    try {
+      await api.previewTtsVoice({
+        voice: lang === 'de' ? tts.voice_de : tts.voice_en,
+        lang,
+      });
+    } catch (e) {
+      console.warn('preview failed', e);
+    } finally {
+      // The sample is ~4s; release the button shortly after.
+      setTimeout(() => (ttsPreviewing = ''), 4000);
+    }
+  }
 
   // Telegram bot integration.
   let telegramTokenInput = $state('');
@@ -317,6 +353,12 @@
       if (app.config.comfyui) {
         comfyui = { ...app.config.comfyui };
       }
+      if (app.config.tts) {
+        tts = { ...app.config.tts };
+      }
+    }
+    if (app.config?.mode === 'host') {
+      void refreshTtsVoices();
     }
     // Pull current Telegram pairing state regardless of mode — host
     // sees the bot-token card + their own pair status; client peers
@@ -486,6 +528,7 @@
           base_url: comfyui.base_url.trim(),
           default_model: comfyui.default_model || 'zimage',
         });
+        await api.setTtsConfig({ ...tts });
       }
       // Always-applicable settings.
       await api.setOverlaySettings(overlay);
@@ -1318,6 +1361,139 @@
           <span class="text-xs text-red-300">✗ {comfyTestMsg}</span>
         {/if}
       </div>
+    </div>
+    {/if}
+
+    {#if isHost}
+    <div class="kin-card space-y-4">
+      <div class="flex items-center justify-between gap-3">
+        <div class="min-w-0">
+          <h2 class="font-semibold text-lg">Voice replies</h2>
+          <p class="text-xs text-white/50">
+            Optional. KinAI speaks its answers — on Telegram as voice notes
+            (each family member opts in by sending <code>/voice</code> to the
+            bot), and on this Mac via the speak button on replies. Fully
+            local, powered by macOS speech synthesis.
+          </p>
+        </div>
+        <label class="flex items-center gap-2 shrink-0 cursor-pointer">
+          <input type="checkbox" bind:checked={tts.enabled} class="accent-teal-400" />
+          <span class="text-sm text-white/70">Enabled</span>
+        </label>
+      </div>
+
+      {#if tts.enabled}
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <label class="block">
+            <span class="text-sm text-white/70">English voice</span>
+            <div class="flex gap-2 mt-1">
+              <select class="kin-field flex-1" bind:value={tts.voice_en}>
+                {#if !ttsVoicesEn.some((v) => v.name === tts.voice_en)}
+                  <option value={tts.voice_en}>{tts.voice_en} (not installed)</option>
+                {/if}
+                {#each ttsVoicesEn as v (v.name)}
+                  <option value={v.name}>{v.name}</option>
+                {/each}
+              </select>
+              <button
+                class="kin-btn !px-3"
+                type="button"
+                title="Play a sample"
+                onclick={() => previewTtsVoice('en')}
+                disabled={ttsPreviewing !== ''}
+              >
+                {ttsPreviewing === 'en' ? '🔊' : '▶'}
+              </button>
+            </div>
+          </label>
+          <label class="block">
+            <span class="text-sm text-white/70">German voice</span>
+            <div class="flex gap-2 mt-1">
+              <select class="kin-field flex-1" bind:value={tts.voice_de}>
+                {#if !ttsVoicesDe.some((v) => v.name === tts.voice_de)}
+                  <option value={tts.voice_de}>{tts.voice_de} (not installed)</option>
+                {/if}
+                {#each ttsVoicesDe as v (v.name)}
+                  <option value={v.name}>{v.name}</option>
+                {/each}
+              </select>
+              <button
+                class="kin-btn !px-3"
+                type="button"
+                title="Play a sample"
+                onclick={() => previewTtsVoice('de')}
+                disabled={ttsPreviewing !== ''}
+              >
+                {ttsPreviewing === 'de' ? '🔊' : '▶'}
+              </button>
+            </div>
+          </label>
+        </div>
+        <p class="text-xs text-white/50">
+          The language of each reply is detected automatically — German
+          answers use the German voice, everything else the English one.
+        </p>
+
+        <details class="text-xs text-white/60">
+          <summary class="cursor-pointer text-white/70 hover:text-white select-none">
+            Get better voices (free, highly recommended) →
+          </summary>
+          <div class="mt-2 space-y-2 border-l border-white/10 pl-3">
+            <p>
+              The default compact voices sound robotic. Apple ships
+              much better <strong class="text-white/80">Premium</strong> and
+              <strong class="text-white/80">Enhanced</strong> voices as free
+              one-time downloads — they just aren't installed out of the box.
+              On <em>this Mac</em> (the host — voices are generated here):
+            </p>
+            <ol class="list-decimal space-y-1 pl-4">
+              <li>
+                Open <strong class="text-white/80">System Settings →
+                Accessibility → Spoken Content</strong>
+              </li>
+              <li>
+                Next to <strong class="text-white/80">System Voice</strong>,
+                open the dropdown and click
+                <strong class="text-white/80">Manage Voices…</strong>
+              </li>
+              <li>
+                Search the voice name — recommended:
+                <code>Zoe (Premium)</code> for English,
+                <code>Anna (Premium)</code> or <code>Petra (Premium)</code>
+                for German — and click the
+                <strong class="text-white/80">⬇ download</strong> icon
+              </li>
+              <li>
+                Come back here and press
+                <strong class="text-white/80">Refresh voices</strong> — the
+                new voice appears in the dropdowns above
+              </li>
+            </ol>
+            <p class="text-white/40">
+              Downloading a voice in System Settings does NOT change your
+              Mac's system voice — KinAI just uses it for speech synthesis.
+            </p>
+          </div>
+        </details>
+
+        <div class="flex items-center gap-2 flex-wrap">
+          <button
+            class="kin-btn"
+            type="button"
+            onclick={refreshTtsVoices}
+            disabled={ttsVoicesLoading}
+          >
+            {#if ttsVoicesLoading}
+              <Loader2 size={14} class="animate-spin" /> Refreshing…
+            {:else}
+              <RefreshCw size={14} /> Refresh voices
+            {/if}
+          </button>
+          <span class="text-xs text-white/40">
+            {ttsVoicesEn.length} English · {ttsVoicesDe.length} German voices installed
+          </span>
+        </div>
+      {/if}
     </div>
     {/if}
 

@@ -196,6 +196,46 @@ async fn run_turn_for_peer<R: Runtime>(
         content = rest;
     }
 
+    // /voice — per-chat opt-in for spoken replies. Bare `/voice`
+    // toggles; `/voice on` / `/voice off` set explicitly. Gated on the
+    // host's master switch so the command can explain itself instead of
+    // silently doing nothing when TTS is disabled in Settings.
+    if let Some(arg) = strip_voice(content) {
+        if !state.config.read().tts.enabled {
+            api.send_message(
+                chat_id,
+                "🔇 Voice replies are switched off on the host. Ask the host \
+                 to enable them in KinAI → Settings → Voice replies.",
+            )
+            .await?;
+            return Ok(());
+        }
+        let current = tg_db::voice_replies(&state.db.pool, peer_id)
+            .await
+            .unwrap_or(false);
+        let new_state = match arg.to_ascii_lowercase().as_str() {
+            "" => !current,
+            "on" => true,
+            "off" => false,
+            _ => {
+                api.send_message(
+                    chat_id,
+                    "Usage: /voice — toggle spoken replies, or /voice on / /voice off.",
+                )
+                .await?;
+                return Ok(());
+            }
+        };
+        tg_db::set_voice_replies(&state.db.pool, peer_id, new_state).await?;
+        let confirmation = if new_state {
+            "🔊 Voice replies are ON for this chat — answers now arrive as text plus a spoken voice note. Send /voice again to turn them off."
+        } else {
+            "🔇 Voice replies are OFF for this chat — answers arrive as text only."
+        };
+        api.send_message(chat_id, confirmation).await?;
+        return Ok(());
+    }
+
     // Resolve this peer's Telegram thread: the `/newchat`-rotated one if
     // set, else the deterministic default (same chat → same thread
     // across restarts; backward compatible with pre-/newchat pairings).
@@ -702,10 +742,13 @@ async fn send_assistant_reply<R: Runtime>(
         fan_out_message(state, app, peer_id, &msg).await;
     }
 
-    // Streaming path: finalize the live bubble with the complete text.
-    // (A streamed turn is always the LLM path, never /pic, so we don't run
-    // pic detection here.)
+    // --- Text delivery: three mutually exclusive paths. Kept as an
+    // if/else chain (no early returns) so the voice-note hook below
+    // runs after the text has landed, whichever path delivered it.
+    let mut sent_photo = false;
     if let Some(id) = stream_msg_id {
+        // Streaming path: finalize the live bubble with the complete
+        // text. (A streamed turn is always the LLM path, never /pic.)
         if reply.chars().count() <= 4096 {
             if let Err(e) = api.edit_message_text(chat_id, id, reply).await {
                 // One retry on a transient rate-limit so we don't lose the
@@ -728,23 +771,67 @@ async fn send_assistant_reply<R: Runtime>(
                 api.send_message(chat_id, part).await?;
             }
         }
-        return Ok(());
-    }
-
-    // Detect a `![alt](http://host/v1/pic/<uuid>.png)` from ComfyUI
-    // output. When found, upload the local file as a photo and send
-    // the rest of the text as a separate message.
-    if let Some(local_path) = extract_local_pic_path(state, reply) {
+    } else if let Some(local_path) = extract_local_pic_path(state, reply) {
+        // `![alt](http://host/v1/pic/<uuid>.png)` from ComfyUI output:
+        // upload the local file as a photo with the rest as caption.
         let caption = strip_inline_image_markdown(reply);
         let caption_opt = if caption.trim().is_empty() { None } else { Some(caption.as_str()) };
         // Plain-text caption (no parse_mode) — the user typed this on
         // Telegram, so we don't need the blockquote-formatted Q&A echo.
         api.send_photo_file(chat_id, &local_path, caption_opt, None).await?;
-        return Ok(());
+        sent_photo = true;
+    } else {
+        api.send_message(chat_id, reply).await?;
     }
 
-    api.send_message(chat_id, reply).await?;
+    // --- Voice note (opt-in per chat via /voice, host master switch in
+    // Settings). Spawned so synthesis/upload never delays the turn;
+    // failures only log. Photo replies are skipped — reading an image
+    // caption aloud is noise.
+    if !sent_photo {
+        maybe_send_voice_note(api, state, peer_id, chat_id, reply).await;
+    }
     Ok(())
+}
+
+/// If this peer opted in (/voice) and the host has TTS enabled,
+/// synthesize `reply` and send it as a Telegram voice note in a
+/// background task. Best-effort: any failure is logged and the chat
+/// flow is unaffected.
+async fn maybe_send_voice_note(
+    api: &BotApi,
+    state: &SharedState,
+    peer_id: &str,
+    chat_id: i64,
+    reply: &str,
+) {
+    let tts_cfg = state.config.read().tts.clone();
+    if !tts_cfg.enabled {
+        return;
+    }
+    let opted_in = tg_db::voice_replies(&state.db.pool, peer_id)
+        .await
+        .unwrap_or(false);
+    if !opted_in {
+        return;
+    }
+    let text = crate::tts::speakable_text(reply);
+    if text.is_empty() {
+        return; // nothing speakable (e.g. pure code answer)
+    }
+    let voice = crate::tts::voice_for_text(&tts_cfg, &text);
+    let api = api.clone();
+    tokio::spawn(async move {
+        match crate::tts::synthesize_m4a(&text, &voice).await {
+            Ok(path) => {
+                if let Err(e) = api.send_voice_file(chat_id, &path).await {
+                    tracing::warn!("telegram: voice note upload failed: {e:?}");
+                }
+                let _ = tokio::fs::remove_file(&path).await;
+            }
+            Err(e) => tracing::warn!("telegram: voice synthesis failed: {e:?}"),
+        }
+    });
 }
 
 /// Surface a persisted Telegram-originated message to whichever KinAI
@@ -926,6 +1013,41 @@ fn strip_newchat(content: &str) -> Option<&str> {
         Some(rest.trim_start())
     } else {
         None
+    }
+}
+
+/// If `content` is the `/voice` command, return the remainder (e.g.
+/// "on", "off", or "" for the bare toggle), trimmed. Same boundary
+/// rules as `strip_newchat` so `/voicemail` isn't mistaken for it.
+fn strip_voice(content: &str) -> Option<&str> {
+    const CMD: &str = "/voice";
+    let t = content.trim_start();
+    if t.len() < CMD.len() {
+        return None;
+    }
+    let (head, rest) = t.split_at(CMD.len());
+    if !head.eq_ignore_ascii_case(CMD) {
+        return None;
+    }
+    if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+        Some(rest.trim())
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod voice_cmd_tests {
+    use super::strip_voice;
+
+    #[test]
+    fn matches_bare_on_off_and_boundaries() {
+        assert_eq!(strip_voice("/voice"), Some(""));
+        assert_eq!(strip_voice("/VOICE on"), Some("on"));
+        assert_eq!(strip_voice("  /voice off  "), Some("off"));
+        assert_eq!(strip_voice("/voicemail"), None);
+        assert_eq!(strip_voice("voice"), None);
+        assert_eq!(strip_voice("tell me about /voice"), None);
     }
 }
 

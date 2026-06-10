@@ -350,6 +350,121 @@ pub async fn set_comfy_config(
 }
 
 // ============================================================
+// Voice replies (TTS)
+// ============================================================
+
+#[tauri::command]
+pub async fn set_tts_config(
+    state: tauri::State<'_, SharedState>,
+    tts: crate::config::TtsConfig,
+) -> Result<AppConfig> {
+    let new_cfg = {
+        let mut cfg = state.config.write();
+        cfg.tts = tts;
+        cfg.save().map_err(err)?;
+        cfg.clone()
+    };
+    Ok(new_cfg)
+}
+
+/// Installed system voices for the Settings dropdowns. Empty on
+/// non-macOS / client machines — the UI hides the card then.
+#[tauri::command]
+pub async fn list_tts_voices() -> Result<Vec<crate::tts::TtsVoice>> {
+    crate::tts::list_voices().await.map_err(err)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PreviewVoiceArgs {
+    pub voice: String,
+    /// "de" → German sample sentence, anything else → English.
+    pub lang: String,
+}
+
+/// Play a short sample sentence in `voice` on the host's speakers so
+/// the user can audition voices from Settings. Replaces any playback
+/// already running.
+#[tauri::command]
+pub async fn preview_tts_voice(
+    state: tauri::State<'_, SharedState>,
+    args: PreviewVoiceArgs,
+) -> Result<()> {
+    let sample = if args.lang == "de" {
+        "Hallo! Ich bin KinAI. Morgen wird es sonnig bei zweiundzwanzig Grad."
+    } else {
+        "Hi! I'm KinAI. Tomorrow looks sunny, twenty two degrees."
+    };
+    start_playback(&state, sample, &args.voice).await
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SpeakTextArgs {
+    pub text: String,
+}
+
+/// The desktop speak button: read a reply aloud on the host. Markdown
+/// is stripped server-side; the voice follows the configured
+/// per-language choice. Host-only — clients run on other machines, so
+/// playing on the host's speakers would be nonsense there.
+#[tauri::command]
+pub async fn speak_text(
+    state: tauri::State<'_, SharedState>,
+    args: SpeakTextArgs,
+) -> Result<()> {
+    if matches!(state.config.read().mode, Mode::Client) {
+        return Err("Voice playback runs on the host only.".into());
+    }
+    let tts_cfg = state.config.read().tts.clone();
+    let text = crate::tts::speakable_text(&args.text);
+    if text.is_empty() {
+        return Err("Nothing speakable in this message.".into());
+    }
+    let voice = crate::tts::voice_for_text(&tts_cfg, &text);
+    start_playback(&state, &text, &voice).await
+}
+
+/// Stop any in-progress desktop playback. Safe to call when idle.
+#[tauri::command]
+pub async fn stop_speaking(state: tauri::State<'_, SharedState>) -> Result<()> {
+    if let Some(mut child) = state.tts_child.lock().take() {
+        let _ = child.start_kill();
+    }
+    Ok(())
+}
+
+/// Whether desktop playback is still running — the frontend polls this
+/// to flip the speak button back from ⏹ to ▶ when the voice finishes.
+#[tauri::command]
+pub async fn is_speaking(state: tauri::State<'_, SharedState>) -> Result<bool> {
+    let mut guard = state.tts_child.lock();
+    match guard.as_mut() {
+        None => Ok(false),
+        Some(child) => match child.try_wait() {
+            Ok(Some(_)) => {
+                *guard = None; // finished — clear the slot
+                Ok(false)
+            }
+            Ok(None) => Ok(true),
+            Err(_) => {
+                *guard = None;
+                Ok(false)
+            }
+        },
+    }
+}
+
+/// Kill any current playback, then start a new one and park the child
+/// in the shared slot.
+async fn start_playback(state: &SharedState, text: &str, voice: &str) -> Result<()> {
+    if let Some(mut old) = state.tts_child.lock().take() {
+        let _ = old.start_kill();
+    }
+    let child = crate::tts::speak_live(text, voice).await.map_err(err)?;
+    *state.tts_child.lock() = Some(child);
+    Ok(())
+}
+
+// ============================================================
 // Telegram
 // ============================================================
 

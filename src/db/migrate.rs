@@ -143,6 +143,13 @@ const STATEMENTS: &[&str] = &[
     ALTER TABLE threads ADD COLUMN active_slot TEXT
     "#,
 
+    // Per-chat voice-reply opt-in (the Telegram /voice toggle). Lives on
+    // telegram_links because chat ↔ peer is 1:1, so "per chat" == "per
+    // peer" — and the pref naturally resets when a user unpairs.
+    r#"
+    ALTER TABLE telegram_links ADD COLUMN voice_replies INTEGER NOT NULL DEFAULT 0
+    "#,
+
     // Persistent per-user facts — the long-term memory layer. Distinct
     // from `memory_notes` (which are extractive thread summaries) in
     // two ways:

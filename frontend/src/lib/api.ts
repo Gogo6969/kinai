@@ -80,6 +80,21 @@ export interface ComfyConfig {
   default_model: string;
 }
 
+/** Voice replies (TTS) — host-side, macOS `say` engine. `enabled`
+ *  is the master switch; family members opt in per Telegram chat
+ *  with /voice, and the host desktop gets a speak button. */
+export interface TtsConfig {
+  enabled: boolean;
+  voice_en: string;
+  voice_de: string;
+}
+
+/** One installed system voice from `say -v '?'`. */
+export interface TtsVoice {
+  name: string;
+  lang: string;
+}
+
 /** Telegram bot integration — host-side. Empty bot_token means
  *  the feature is off (no long-poll loop, no UI for clients). */
 export interface TelegramConfig {
@@ -125,6 +140,7 @@ export interface AppConfig {
   vision: VisionSettings;
   comfyui: ComfyConfig;
   telegram: TelegramConfig;
+  tts: TtsConfig;
   startup: StartupSettings;
 }
 
@@ -310,6 +326,13 @@ export const api = {
     ),
   setComfyConfig: (comfyui: ComfyConfig) =>
     invoke<AppConfig>('set_comfy_config', { comfyui }),
+  setTtsConfig: (tts: TtsConfig) => invoke<AppConfig>('set_tts_config', { tts }),
+  listTtsVoices: () => invoke<TtsVoice[]>('list_tts_voices'),
+  previewTtsVoice: (args: { voice: string; lang: string }) =>
+    invoke<void>('preview_tts_voice', { args }),
+  speakText: (text: string) => invoke<void>('speak_text', { args: { text } }),
+  stopSpeaking: () => invoke<void>('stop_speaking'),
+  isSpeaking: () => invoke<boolean>('is_speaking'),
   testComfyEndpoint: (args: { base_url: string }) =>
     invoke<{ ok: boolean; latency_ms: number; error: string | null }>(
       'test_comfy_endpoint',

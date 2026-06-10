@@ -105,6 +105,10 @@ fn default_command_menu() -> Vec<api::BotCommand> {
             description: "Start a fresh chat — ignore earlier context (memory kept)".into(),
         },
         api::BotCommand {
+            command: "voice".into(),
+            description: "Toggle spoken voice-note replies for this chat".into(),
+        },
+        api::BotCommand {
             command: "fast".into(),
             description: "Switch this chat to the fast model (default)".into(),
         },

@@ -17,6 +17,7 @@ pub mod slash;
 pub mod telegram;
 pub mod tools;
 pub mod tray;
+pub mod tts;
 pub mod update_sync;
 pub mod updater;
 pub mod vision;
@@ -49,6 +50,9 @@ pub struct AppState {
     /// abort a hung turn instead of leaving the user with a perpetual
     /// "typing…" indicator. Cleaned up in send_message's finish path.
     pub pending_turns: Arc<parking_lot::Mutex<HashMap<String, CancellationToken>>>,
+    /// Currently-playing desktop TTS process (the speak button / voice
+    /// previews). One at a time: starting a new playback kills the old.
+    pub tts_child: parking_lot::Mutex<Option<tokio::process::Child>>,
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -123,6 +127,7 @@ pub fn run() {
         stats: RwLock::new(RuntimeStats::default()),
         telegram: Arc::new(telegram::TelegramSupervisor::default()),
         pending_turns: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+        tts_child: parking_lot::Mutex::new(None),
     });
 
     tauri::Builder::default()
@@ -194,6 +199,12 @@ pub fn run() {
             commands::save_user_fact,
             commands::delete_user_fact,
             commands::clear_user_facts,
+            commands::set_tts_config,
+            commands::list_tts_voices,
+            commands::preview_tts_voice,
+            commands::speak_text,
+            commands::stop_speaking,
+            commands::is_speaking,
             commands::send_message,
             commands::regenerate_message,
             commands::edit_and_resend,

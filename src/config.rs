@@ -303,6 +303,40 @@ pub struct ComfyConfig {
     pub default_model: String,
 }
 
+/// Voice replies (text-to-speech). Host-only; the engine is the macOS
+/// `say` command (see src/tts.rs). `enabled` is the master switch —
+/// family members opt in per Telegram chat with /voice, and the host's
+/// desktop chat gets a speak button on replies.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TtsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Voice for English replies. Premium/Enhanced voices sound far
+    /// better and are free one-time downloads in System Settings.
+    #[serde(default = "default_voice_en")]
+    pub voice_en: String,
+    /// Voice for German replies (language auto-detected per reply).
+    #[serde(default = "default_voice_de")]
+    pub voice_de: String,
+}
+
+impl Default for TtsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            voice_en: default_voice_en(),
+            voice_de: default_voice_de(),
+        }
+    }
+}
+
+fn default_voice_en() -> String {
+    "Zoe (Premium)".into()
+}
+fn default_voice_de() -> String {
+    "Anna (Premium)".into()
+}
+
 /// Per-machine startup preferences. Only consulted when the OS
 /// auto-launches KinAI at login (the binary sees `--autostart` in its
 /// argv — see `tauri-plugin-autostart` init in lib.rs). Manual
@@ -354,6 +388,8 @@ pub struct AppConfig {
     pub comfyui: ComfyConfig,
     #[serde(default)]
     pub telegram: TelegramConfig,
+    #[serde(default)]
+    pub tts: TtsConfig,
     /// Per-machine startup behaviour. Empty by default so existing
     /// configs don't change; only takes effect when "Launch at login"
     /// is enabled in Settings.

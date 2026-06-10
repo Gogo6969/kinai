@@ -5,6 +5,26 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.61] — 2026-06-10
+
+### Added
+
+- **🔊 Voice replies.** KinAI can now speak its answers — fully local,
+  powered by macOS speech synthesis on the host, no cloud and no extra
+  installs.
+  - **Telegram:** send `/voice` to the bot and answers arrive as text
+    plus a real voice note (the waveform bubble). `/voice on` /
+    `/voice off` set it explicitly; the opt-in is per family member.
+  - **Desktop (host):** a "speak" button on every reply reads it
+    aloud; click again to stop.
+  - **Settings → Voice replies (host):** master switch, separate
+    English and German voices with ▶ preview buttons, and step-by-step
+    instructions for downloading Apple's free Premium voices (they
+    sound far better than the defaults).
+  - Replies are auto-detected as German or English and use the
+    matching voice; markdown/code is stripped before speaking, and
+    `/pic` photo replies are never read aloud.
+
 ## [0.2.60] — 2026-06-10
 
 ### Added

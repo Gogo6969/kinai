@@ -181,6 +181,29 @@ pub async fn active_thread(pool: &SqlitePool, peer_id: &str) -> Result<Option<St
     Ok(row.map(|r| r.get::<String, _>("thread_id")))
 }
 
+/// Whether this peer opted in to voice replies in their Telegram chat
+/// (the /voice toggle). Missing row / never paired → false.
+pub async fn voice_replies(pool: &SqlitePool, peer_id: &str) -> Result<bool> {
+    let row = sqlx::query("SELECT voice_replies FROM telegram_links WHERE peer_id = ?1")
+        .bind(peer_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row
+        .map(|r| r.get::<i64, _>("voice_replies") != 0)
+        .unwrap_or(false))
+}
+
+/// Flip the per-chat voice-reply opt-in. No-op if the peer isn't paired
+/// (no telegram_links row to update).
+pub async fn set_voice_replies(pool: &SqlitePool, peer_id: &str, enabled: bool) -> Result<()> {
+    sqlx::query("UPDATE telegram_links SET voice_replies = ?1 WHERE peer_id = ?2")
+        .bind(enabled as i64)
+        .bind(peer_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Point this peer's Telegram conversation at `thread_id` (the
 /// `/newchat` rotation). Upsert so re-running `/newchat` just moves the
 /// pointer forward.
