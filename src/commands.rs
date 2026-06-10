@@ -1549,7 +1549,17 @@ async fn run_assistant_turn(
         let outcome =
             crate::telegram::router::voice_command_outcome(&state, db::HOST_PEER, arg).await;
         speak_override = Some(outcome.enabled_now == Some(true));
-        Some(outcome.reply)
+        // /voice only governs Telegram voice notes. If this desktop is
+        // ALSO set to speak replies automatically, say so — otherwise
+        // the very next spoken reply looks like the toggle failed.
+        let mut reply = outcome.reply;
+        if outcome.enabled_now == Some(false) && cfg.tts.auto_speak {
+            reply.push_str(
+                "\n\n_Note: replies on this Mac are still spoken automatically — \
+                 switch to \"Speak on demand\" in Settings → Voice replies to stop that._",
+            );
+        }
+        Some(reply)
     } else {
         crate::slash::handle(&cfg, &llm_route_content).await
     };
