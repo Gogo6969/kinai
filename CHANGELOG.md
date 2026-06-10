@@ -5,6 +5,38 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.60] — 2026-05-30
+
+### Fixed
+
+- **Replies no longer get silently truncated.** The stream parser could
+  slice a buffer at a byte offset landing inside a multi-byte character
+  (emoji / CJK / accented Latin — common in normal output), panicking the
+  pump task and cutting the answer short (or blank) on every chat surface.
+  Now char-boundary-aligned.
+- **A crafted `/pic` no longer crashes the Telegram bot.** `parse_slash`
+  derived a slice index from a lowercased copy; a character whose
+  lowercase has a different byte length (e.g. `İ`) underflowed and
+  panicked, killing the bot's poll loop for the whole family. Fixed.
+- **Overlay no longer spins "Thinking…" forever.** It now handles a
+  dropped host connection and backend errors (clears the busy state),
+  and `/newchat` aborts if the new thread can't be created instead of
+  sending your "fresh" question into the old conversation.
+- Telegram pairing poll is cleared on leaving Settings (was firing for
+  up to 11 minutes); tool-status pills update reliably.
+
+### Performance
+
+- Context trimming on long threads is now O(n) instead of O(n²)
+  (token costs computed once, not re-tokenized every loop iteration);
+  hot-path regexes are compiled once; the fact extractor no longer does
+  a table scan per candidate fact.
+
+### Internal
+
+- Host now prefers the NSIS Windows installer over the MSI when serving
+  updates (the MSI could no-op on a matching version).
+
 ## [0.2.59] — 2026-05-30
 
 ### Fixed
