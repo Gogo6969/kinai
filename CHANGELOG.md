@@ -24,6 +24,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   sending your "fresh" question into the old conversation.
 - Telegram pairing poll is cleared on leaving Settings (was firing for
   up to 11 minutes); tool-status pills update reliably.
+- **Telegram shows an activity indicator while `/pic` generates.** Image
+  generation takes 5-30s, but the slash path returned before the chat
+  typing keep-alive, so the user saw no "working…" signal. Now the bot
+  shows "sending photo…" for the whole generation.
 
 ### Performance
 

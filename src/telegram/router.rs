@@ -290,11 +290,38 @@ async fn run_turn_for_peer<R: Runtime>(
         return Ok(());
     }
 
-    // Bare `/fast` / `/deep` → mode switch confirmation, no LLM turn.
+    // Bare `/fast` / `/deep` → mode switch confirmation (instant, no LLM).
+    // Otherwise run the native slash handler. `/pic` / `/picHQ` route
+    // through ComfyUI and take 5-30s, during which the slash path returns
+    // BEFORE the regular chat-path's typing keep-alive is set up — so the
+    // Telegram user saw no activity indicator at all. Keep an
+    // "uploading photo…" action alive for the duration so they know it's
+    // working. The 800ms initial delay means instant handlers (the /pic
+    // usage hint, the "not configured" message) don't flash an indicator.
     let slash_reply = if route_pick.bare_switch {
         Some(crate::slash::switch_confirmation(&route_pick))
     } else {
-        crate::slash::handle(&cfg, &llm_route_content).await
+        let action_cancel = tokio_util::sync::CancellationToken::new();
+        {
+            let api_clone = api.clone();
+            let cancel_clone = action_cancel.clone();
+            tokio::spawn(async move {
+                tokio::select! {
+                    _ = cancel_clone.cancelled() => return,
+                    _ = tokio::time::sleep(std::time::Duration::from_millis(800)) => {}
+                }
+                loop {
+                    let _ = api_clone.send_chat_action(chat_id, "upload_photo").await;
+                    tokio::select! {
+                        _ = cancel_clone.cancelled() => break,
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(4)) => {}
+                    }
+                }
+            });
+        }
+        let reply = crate::slash::handle(&cfg, &llm_route_content).await;
+        action_cancel.cancel();
+        reply
     };
     if let Some(reply) = slash_reply {
         send_assistant_reply(
