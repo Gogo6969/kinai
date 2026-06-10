@@ -7,6 +7,23 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [0.2.60] — 2026-05-30
 
+### Added
+
+- **Regenerate a reply.** A "regenerate" button on the last assistant
+  message re-rolls the answer — the old reply is replaced by a freshly
+  streamed one. (Host mode)
+- **Edit & resend.** An "edit" button on your own messages opens an
+  inline editor (⌘↩ to save, Esc to cancel); saving rewrites the message,
+  drops everything after it, and re-runs the conversation from there.
+  (Host mode)
+- **Cross-thread search.** A search box at the top of the sidebar finds
+  any message across all your conversations (full-text, ranked); clicking
+  a result jumps straight to that message and highlights it. Each family
+  member can only ever search their own messages. (Host mode)
+- **Telegram replies now stream.** Instead of waiting for the full
+  answer, the bot posts a draft and live-edits it as the model writes —
+  the familiar ChatGPT-style build-up.
+
 ### Fixed
 
 - **Replies no longer get silently truncated.** The stream parser could
