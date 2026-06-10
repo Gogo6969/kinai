@@ -87,6 +87,9 @@ export interface TtsConfig {
   enabled: boolean;
   voice_en: string;
   voice_de: string;
+  /** Host desktop chat: speak finished replies automatically instead of
+   *  waiting for the speak button. Telegram voice notes are unaffected. */
+  auto_speak: boolean;
 }
 
 /** One installed system voice from `say -v '?'`. */

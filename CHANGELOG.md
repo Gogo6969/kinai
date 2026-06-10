@@ -24,6 +24,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - Replies are auto-detected as German or English and use the
     matching voice; markdown/code is stripped before speaking, and
     `/pic` photo replies are never read aloud.
+  - **Speak automatically (optional):** the host can choose between
+    "speak on demand" (the speak button, default) and "speak
+    automatically" — every finished reply in the desktop chat is read
+    aloud, with the reply's stop button to silence it.
+
+### Changed
+
+- **Settings closes itself after saving.** "Save changes" shows ✓ saved,
+  then returns to the chat automatically.
 
 ## [0.2.60] — 2026-06-10
 

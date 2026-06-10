@@ -318,6 +318,11 @@ pub struct TtsConfig {
     /// Voice for German replies (language auto-detected per reply).
     #[serde(default = "default_voice_de")]
     pub voice_de: String,
+    /// Desktop (host) chat: speak every finished reply automatically
+    /// instead of waiting for the speak button. Telegram is unaffected
+    /// (voice notes there are per-member /voice opt-ins).
+    #[serde(default)]
+    pub auto_speak: bool,
 }
 
 impl Default for TtsConfig {
@@ -326,6 +331,7 @@ impl Default for TtsConfig {
             enabled: false,
             voice_en: default_voice_en(),
             voice_de: default_voice_de(),
+            auto_speak: false,
         }
     }
 }

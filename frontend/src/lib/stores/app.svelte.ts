@@ -393,6 +393,67 @@ class AppStore {
     }
   }
 
+  // ---- Voice playback (host desktop) -------------------------------------
+  // Centralized so every speak button — and auto-speak, which starts with
+  // no button press at all — shares ONE source of truth. The bubble whose
+  // message id matches `speakingMsgId` renders as "stop"; everyone else
+  // shows "speak". Backend allows one playback at a time anyway.
+  speakingMsgId = $state<string | null>(null);
+  private speakPoll: ReturnType<typeof setInterval> | null = null;
+
+  /** Start speaking a message (kills any current playback first). */
+  async speakMessage(msgId: string, content: string) {
+    try {
+      await api.speakText(content);
+    } catch (e) {
+      this.speakingMsgId = null;
+      window.dispatchEvent(
+        new CustomEvent('kin-toast', {
+          detail: { msg: `✗ ${String(e).replace(/^Error:\s*/, '')}`, ms: 4000 },
+        })
+      );
+      return;
+    }
+    this.speakingMsgId = msgId;
+    // `say` is a separate process — poll so the button flips back to
+    // "speak" when playback finishes on its own.
+    if (this.speakPoll) clearInterval(this.speakPoll);
+    this.speakPoll = setInterval(async () => {
+      try {
+        const still = await api.isSpeaking();
+        if (!still) this.clearSpeaking();
+      } catch {
+        this.clearSpeaking();
+      }
+    }, 1000);
+  }
+
+  async stopSpeaking() {
+    this.clearSpeaking();
+    try {
+      await api.stopSpeaking();
+    } catch (e) {
+      console.warn('stopSpeaking', e);
+    }
+  }
+
+  /** Speak/stop toggle for a message's speak button. */
+  async toggleSpeak(msgId: string, content: string) {
+    if (this.speakingMsgId === msgId) {
+      await this.stopSpeaking();
+    } else {
+      await this.speakMessage(msgId, content);
+    }
+  }
+
+  private clearSpeaking() {
+    this.speakingMsgId = null;
+    if (this.speakPoll) {
+      clearInterval(this.speakPoll);
+      this.speakPoll = null;
+    }
+  }
+
   /**
    * Abort the current chat turn. Sends a stop_generation IPC at the
    * Rust side (cancels the LLM stream + any pending tool iteration via
@@ -530,6 +591,20 @@ class AppStore {
         }
         this.busy = false;
         this.activeTurnId = null;
+        // Auto-speak (host desktop): read the finished reply aloud
+        // without a button press. Only the MAIN window reacts — the
+        // overlay receives the same broadcast event and would otherwise
+        // start a duplicate playback.
+        if (
+          message?.id &&
+          message.content &&
+          this.config?.mode === 'host' &&
+          this.config?.tts?.enabled &&
+          this.config?.tts?.auto_speak &&
+          getCurrentWindow().label === 'main'
+        ) {
+          void this.speakMessage(message.id, message.content);
+        }
       })
     );
     this.cleanups.push(await events.onStats((s) => (this.stats = s)));

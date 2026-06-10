@@ -4,7 +4,6 @@
   import { app } from '$lib/stores/app.svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { Check, Copy, FileText, Search, RefreshCw, Pencil, Volume2, Square } from '@lucide/svelte';
-  import { api } from '$lib/api';
 
   let {
     message,
@@ -26,45 +25,14 @@
   const isHost = $derived(app.config?.mode === 'host');
 
   // Desktop speak button (host-only: audio plays on the host's
-  // speakers). Click = speak, click again = stop. Since `say` runs as a
-  // separate process, we poll is_speaking to flip the icon back when
-  // playback finishes on its own.
+  // speakers). Click = speak, click again = stop. The speaking state
+  // lives in the app store so a reply started by AUTO-speak still shows
+  // "stop" on its bubble, and only one bubble ever shows it.
   const ttsEnabled = $derived(isHost && (app.config?.tts?.enabled ?? false));
-  let speaking = $state(false);
-  let speakPoll: ReturnType<typeof setInterval> | undefined;
-  async function toggleSpeak() {
-    if (speaking) {
-      speaking = false;
-      if (speakPoll) clearInterval(speakPoll);
-      try {
-        await api.stopSpeaking();
-      } catch (e) {
-        console.warn('stopSpeaking', e);
-      }
-      return;
-    }
-    try {
-      await api.speakText(message.content);
-      speaking = true;
-      if (speakPoll) clearInterval(speakPoll);
-      speakPoll = setInterval(async () => {
-        try {
-          const still = await api.isSpeaking();
-          if (!still) {
-            speaking = false;
-            if (speakPoll) clearInterval(speakPoll);
-          }
-        } catch {
-          speaking = false;
-          if (speakPoll) clearInterval(speakPoll);
-        }
-      }, 1000);
-    } catch (e) {
-      const msg = String(e).replace(/^Error:\s*/, '');
-      window.dispatchEvent(
-        new CustomEvent('kin-toast', { detail: { msg: `✗ ${msg}`, ms: 4000 } })
-      );
-    }
+  const speaking = $derived(message.id != null && app.speakingMsgId === message.id);
+  function toggleSpeak() {
+    if (!message.id) return;
+    void app.toggleSpeak(message.id, message.content);
   }
 
   // Inline edit state for user messages. `editing` swaps the bubble for a

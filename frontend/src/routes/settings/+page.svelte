@@ -95,7 +95,7 @@
   let comfyTestMsg = $state<string>('');
 
   // Voice replies (TTS) — host-only, macOS `say` engine.
-  let tts = $state<TtsConfig>({ enabled: false, voice_en: 'Zoe (Premium)', voice_de: 'Anna (Premium)' });
+  let tts = $state<TtsConfig>({ enabled: false, voice_en: 'Zoe (Premium)', voice_de: 'Anna (Premium)', auto_speak: false });
   let ttsVoices = $state<TtsVoice[]>([]);
   let ttsVoicesLoading = $state(false);
   let ttsPreviewing = $state<'' | 'en' | 'de'>('');
@@ -545,11 +545,11 @@
       }
       await app.load();
       saveStatus = 'saved';
-      // Fade the success indicator after a few seconds so the bar
-      // returns to a neutral state on its own.
+      // Show "saved" briefly, then return to the chat — settings are
+      // done, no reason to leave the user parked here.
       setTimeout(() => {
-        if (saveStatus === 'saved') saveStatus = '';
-      }, 2500);
+        if (saveStatus === 'saved') void goto('/');
+      }, 900);
     } catch (e) {
       saveStatus = 'error';
       saveError = String(e).replace(/^Error:\s*/, '');
@@ -1370,10 +1370,13 @@
         <div class="min-w-0">
           <h2 class="font-semibold text-lg">Voice replies</h2>
           <p class="text-xs text-white/50">
-            Optional. KinAI speaks its answers — on Telegram as voice notes
-            (each family member opts in by sending <code>/voice</code> to the
-            bot), and on this Mac via the speak button on replies. Fully
-            local, powered by macOS speech synthesis.
+            Optional. KinAI speaks its answers. <strong class="text-white/70">Telegram:</strong>
+            every family member switches voice notes on/off for themselves by
+            sending <code>/voice</code> to the bot — from their phone, from
+            anywhere. <strong class="text-white/70">This Mac:</strong> replies
+            in the chat window can be read aloud here (the speakers are on
+            this machine, so this part is host-only). Fully local, powered by
+            macOS speech synthesis.
           </p>
         </div>
         <label class="flex items-center gap-2 shrink-0 cursor-pointer">
@@ -1433,6 +1436,37 @@
           The language of each reply is detected automatically — German
           answers use the German voice, everything else the English one.
         </p>
+
+        <div class="space-y-1.5">
+          <span class="text-sm text-white/70">In the chat window on this Mac</span>
+          <label class="flex items-start gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="tts-desktop-mode"
+              class="accent-teal-400 mt-0.5"
+              checked={!tts.auto_speak}
+              onchange={() => (tts.auto_speak = false)}
+            />
+            <span class="text-xs text-white/60">
+              <strong class="text-white/80">Speak on demand</strong> — replies are
+              read aloud only when you press the speak button.
+            </span>
+          </label>
+          <label class="flex items-start gap-2 cursor-pointer">
+            <input
+              type="radio"
+              name="tts-desktop-mode"
+              class="accent-teal-400 mt-0.5"
+              checked={tts.auto_speak}
+              onchange={() => (tts.auto_speak = true)}
+            />
+            <span class="text-xs text-white/60">
+              <strong class="text-white/80">Speak automatically</strong> — every
+              finished reply is read aloud; press the reply's stop button to
+              silence it.
+            </span>
+          </label>
+        </div>
 
         <details class="text-xs text-white/60">
           <summary class="cursor-pointer text-white/70 hover:text-white select-none">
