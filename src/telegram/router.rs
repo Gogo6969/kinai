@@ -294,15 +294,24 @@ async fn run_turn_for_peer<R: Runtime>(
     // Otherwise run the native slash handler. `/pic` / `/picHQ` route
     // through ComfyUI and take 5-30s, during which the slash path returns
     // BEFORE the regular chat-path's typing keep-alive is set up — so the
-    // Telegram user saw no activity indicator at all. Keep an
-    // "uploading photo…" action alive for the duration so they know it's
-    // working. The 800ms initial delay means instant handlers (the /pic
-    // usage hint, the "not configured" message) don't flash an indicator.
+    // Telegram user saw no activity indicator at all. Telegram's chat
+    // actions only offer fixed client-rendered labels ("sending photo…"),
+    // which reads wrong while the image is still being GENERATED — so we
+    // post a real "creating a picture…" placeholder message instead and
+    // delete it when the result is ready. The 800ms initial delay means
+    // instant handlers (the /pic usage hint, the "not configured"
+    // message) never flash a placeholder.
     let slash_reply = if route_pick.bare_switch {
         Some(crate::slash::switch_confirmation(&route_pick))
     } else {
+        // Only /pic and /picHQ are slow enough to warrant a placeholder;
+        // every other slash handler answers instantly.
+        let is_pic = llm_route_content
+            .trim_start()
+            .to_ascii_lowercase()
+            .starts_with("/pic");
         let action_cancel = tokio_util::sync::CancellationToken::new();
-        {
+        let placeholder_task = is_pic.then(|| {
             let api_clone = api.clone();
             let cancel_clone = action_cancel.clone();
             tokio::spawn(async move {
@@ -310,17 +319,28 @@ async fn run_turn_for_peer<R: Runtime>(
                     _ = cancel_clone.cancelled() => return,
                     _ = tokio::time::sleep(std::time::Duration::from_millis(800)) => {}
                 }
-                loop {
-                    let _ = api_clone.send_chat_action(chat_id, "upload_photo").await;
-                    tokio::select! {
-                        _ = cancel_clone.cancelled() => break,
-                        _ = tokio::time::sleep(std::time::Duration::from_secs(4)) => {}
+                let placeholder_id = api_clone
+                    .send_message(chat_id, "🎨 Creating a picture… this can take a minute.")
+                    .await
+                    .ok();
+                // Hold until the handler finishes, then clean up our own
+                // placeholder — owning deletion here avoids any race over
+                // the message id with the main task.
+                cancel_clone.cancelled().await;
+                if let Some(id) = placeholder_id {
+                    if let Err(e) = api_clone.delete_message(chat_id, id).await {
+                        tracing::debug!("telegram: placeholder delete failed: {e:?}");
                     }
                 }
-            });
-        }
+            })
+        });
         let reply = crate::slash::handle(&cfg, &llm_route_content).await;
         action_cancel.cancel();
+        // Wait for the placeholder cleanup (one bounded HTTP call) so the
+        // "creating…" message is gone before the photo/reply lands.
+        if let Some(task) = placeholder_task {
+            let _ = task.await;
+        }
         reply
     };
     if let Some(reply) = slash_reply {

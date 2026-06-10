@@ -250,6 +250,30 @@ impl BotApi {
         Ok(first_id.unwrap_or(0))
     }
 
+    /// Delete a message the bot previously sent (e.g. the "creating a
+    /// picture…" placeholder once the photo is ready). "message to delete
+    /// not found" is treated as success — the goal state (message gone)
+    /// already holds.
+    pub async fn delete_message(&self, chat_id: i64, message_id: i64) -> Result<()> {
+        let resp = self
+            .http
+            .post(self.endpoint("deleteMessage"))
+            .json(&json!({ "chat_id": chat_id, "message_id": message_id }))
+            .send()
+            .await
+            .context("deleteMessage send")?;
+        match Self::unwrap_response::<Value>(resp).await {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                if e.to_string().contains("message to delete not found") {
+                    Ok(())
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
+
     /// Fire-and-forget typing indicator. Shows "Bot is typing…" in the
     /// chat for ~5 seconds. Used by the KinAI→Telegram echo so phone
     /// users get a heads-up that a reply is being generated. Failures
