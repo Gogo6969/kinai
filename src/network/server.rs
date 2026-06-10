@@ -607,6 +607,12 @@ async fn run_chat_turn(
     // Otherwise the normal slash handlers (/pic, /picHQ, /help, ?).
     let slash_reply = if route_pick.bare_switch {
         Some(crate::slash::switch_confirmation(&route_pick))
+    } else if let Some(arg) = crate::telegram::router::strip_voice(&llm_route_content) {
+        // /voice typed in a family member's KinAI app — toggles THEIR
+        // Telegram voice-note opt-in (context_peer scoping), same as
+        // sending /voice to the bot directly. Intercepted before the
+        // LLM so the model can't roleplay a fake confirmation.
+        Some(crate::telegram::router::voice_command_reply(&s.app, context_peer, arg).await)
     } else {
         crate::slash::handle(&cfg, &llm_route_content).await
     };

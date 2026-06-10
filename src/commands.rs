@@ -1537,6 +1537,11 @@ async fn run_assistant_turn(
     // handler the WebSocket dispatcher uses, so both chat paths match.
     let slash_reply = if route_pick.bare_switch {
         Some(crate::slash::switch_confirmation(&route_pick))
+    } else if let Some(arg) = crate::telegram::router::strip_voice(&llm_route_content) {
+        // /voice typed in the host's desktop chat — toggles the host
+        // user's own Telegram voice-note opt-in. Intercepted before the
+        // LLM so the model can't roleplay a fake confirmation.
+        Some(crate::telegram::router::voice_command_reply(&state, db::HOST_PEER, arg).await)
     } else {
         crate::slash::handle(&cfg, &llm_route_content).await
     };

@@ -269,7 +269,7 @@ pub fn help_markdown(cfg: &AppConfig) -> String {
     out.push_str("\n**Conversation**\n");
     out.push_str("`/newchat` — start a fresh chat so a new question doesn't reuse earlier context (your saved memory is kept). Add a question to ask it right away: `/newchat what's the capital of Japan?`\n");
     if cfg.tts.enabled {
-        out.push_str("`/voice` — toggle spoken voice-note replies for this chat (Telegram only); `/voice on` / `/voice off` set it explicitly\n");
+        out.push_str("`/voice` — toggle spoken voice-note replies for your Telegram chat (works here and in Telegram); `/voice on` / `/voice off` set it explicitly\n");
     }
 
     out.push_str("\n**Info**\n");
@@ -317,7 +317,7 @@ pub fn help_html(cfg: &AppConfig) -> String {
     out.push_str("\n<b>Conversation</b>\n");
     out.push_str("<code>/newchat</code> — start a fresh chat so a new question doesn't reuse earlier context (your saved memory is kept). Add a question to ask it right away: <code>/newchat what's the capital of Japan?</code>\n");
     if cfg.tts.enabled {
-        out.push_str("<code>/voice</code> — toggle spoken voice-note replies for this chat (Telegram only); <code>/voice on</code> / <code>/voice off</code> set it explicitly\n");
+        out.push_str("<code>/voice</code> — toggle spoken voice-note replies for your Telegram chat (works here and in Telegram); <code>/voice on</code> / <code>/voice off</code> set it explicitly\n");
     }
 
     out.push_str("\n<b>Info</b>\n");
