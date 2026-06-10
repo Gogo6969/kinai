@@ -333,6 +333,7 @@ async fn run_turn_for_peer<R: Runtime>(
             chat_id,
             &reply,
             None, // slash replies don't have LLM metrics
+            None, // slash replies aren't streamed
         )
         .await?;
         return Ok(());
@@ -439,13 +440,110 @@ async fn run_turn_for_peer<R: Runtime>(
     // cached state.llm which is always the fast slot.
     let llm = crate::llm::LlmClient::new(active_llm_settings.clone());
     let cancel = CancellationToken::new();
-    // No-op handlers — we discard streaming events. Final content is
-    // captured from run_with_route's return value.
-    let handlers = PipelineHandlers {
-        on_token: Arc::new(|_| {}),
-        on_reasoning: Arc::new(|_| {}),
-        on_tool: Arc::new(|_| {}),
+
+    // Live-streaming reply: accumulate visible tokens into `buf` and let a
+    // throttled editor task edit one Telegram message in place as they
+    // arrive (the ChatGPT-style growing bubble). on_token runs on the SSE
+    // hot path, so it stays non-blocking — it only locks a std Mutex for a
+    // push and pings a watch channel; all rate-limiting lives in the editor.
+    // Reasoning tokens are NOT streamed (they'd be confusing and burn the
+    // edit budget). The final, authoritative text is still written once by
+    // send_assistant_reply (which also persists + fans out).
+    let buf = Arc::new(std::sync::Mutex::new(String::new()));
+    let (buf_tx, buf_rx) = tokio::sync::watch::channel::<()>(());
+    let handlers = {
+        let buf = buf.clone();
+        let buf_tx = buf_tx.clone();
+        PipelineHandlers {
+            on_token: Arc::new(move |t: String| {
+                if let Ok(mut g) = buf.lock() {
+                    g.push_str(&t);
+                }
+                let _ = buf_tx.send(());
+            }),
+            on_reasoning: Arc::new(|_| {}),
+            on_tool: Arc::new(|_| {}),
+        }
     };
+
+    // Editor task: lazily creates one message on the first ≥12 chars of
+    // content, then edits it at most once per 1.2s (≈ Telegram's safe edit
+    // rate). Returns the placeholder message_id (if any) so the final edit
+    // happens in send_assistant_reply. Cancels the typing keep-alive once a
+    // real bubble exists. A reply too short to reach 12 chars never creates
+    // a bubble → None → normal single send, identical to before.
+    let edit_cancel = CancellationToken::new();
+    let editor = {
+        let api = api.clone();
+        let buf = buf.clone();
+        let mut buf_rx = buf_rx;
+        let cancel = edit_cancel.clone();
+        let typing_cancel = typing_cancel.clone();
+        tokio::spawn(async move {
+            const EDIT_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1200);
+            const MIN_FIRST_CHARS: usize = 12;
+            let mut placeholder_id: Option<i64> = None;
+            let mut last_edit = std::time::Instant::now()
+                .checked_sub(EDIT_INTERVAL)
+                .unwrap_or_else(std::time::Instant::now);
+            let mut last_sent = String::new();
+            loop {
+                tokio::select! {
+                    _ = cancel.cancelled() => break,
+                    changed = buf_rx.changed() => {
+                        if changed.is_err() { break; }
+                    }
+                }
+                let snapshot = buf.lock().map(|g| g.clone()).unwrap_or_default();
+                if placeholder_id.is_none() {
+                    if snapshot.chars().count() < MIN_FIRST_CHARS {
+                        continue;
+                    }
+                    match api.send_message(chat_id, &truncate_for_tg(&snapshot)).await {
+                        Ok(id) => {
+                            placeholder_id = Some(id);
+                            last_sent = snapshot.clone();
+                            last_edit = std::time::Instant::now();
+                            typing_cancel.cancel(); // live bubble replaces the dots
+                        }
+                        Err(e) => tracing::warn!("tg stream: first send failed: {e:?}"),
+                    }
+                    continue;
+                }
+                if snapshot == last_sent {
+                    continue;
+                }
+                let since = last_edit.elapsed();
+                if since < EDIT_INTERVAL {
+                    tokio::select! {
+                        _ = cancel.cancelled() => break,
+                        _ = tokio::time::sleep(EDIT_INTERVAL - since) => {}
+                    }
+                }
+                // Re-read after the throttle sleep so we edit with the freshest text.
+                let snapshot = buf.lock().map(|g| g.clone()).unwrap_or_default();
+                if snapshot == last_sent {
+                    continue;
+                }
+                let id = placeholder_id.unwrap();
+                match api.edit_message_text(chat_id, id, &truncate_for_tg(&snapshot)).await {
+                    Ok(()) => {
+                        last_sent = snapshot;
+                        last_edit = std::time::Instant::now();
+                    }
+                    Err(e) => {
+                        if e.to_string().contains("Too Many Requests") {
+                            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                        } else {
+                            tracing::warn!("tg stream edit: {e:?}");
+                        }
+                    }
+                }
+            }
+            placeholder_id
+        })
+    };
+
     let route = crate::vision::decide(&active_llm_settings.model, &attachments, &cfg.vision)?;
     let started = std::time::Instant::now();
     let result = crate::vision::run_with_route(
@@ -460,8 +558,11 @@ async fn run_turn_for_peer<R: Runtime>(
         cancel,
     )
     .await;
-    // Cancel typing keep-alive whether LLM succeeded or failed.
+    // Stop both keep-alives, then join the editor to recover the placeholder
+    // id for the final authoritative edit.
     typing_cancel.cancel();
+    edit_cancel.cancel();
+    let stream_msg_id = editor.await.ok().flatten();
     let result = result?;
     let total_ms = started.elapsed().as_millis() as u64;
     let output_tokens =
@@ -492,6 +593,7 @@ async fn run_turn_for_peer<R: Runtime>(
         chat_id,
         &result.final_content,
         Some((metrics, prompt_debug)),
+        stream_msg_id,
     )
     .await?;
 
@@ -539,6 +641,12 @@ async fn send_assistant_reply<R: Runtime>(
     chat_id: i64,
     reply: &str,
     metrics_with_debug: Option<(crate::network::protocol::TurnMetricsWire, Option<String>)>,
+    // When the reply was live-streamed (the regular LLM path), this is the
+    // message_id of the placeholder bubble the editor task created. We
+    // finalize it with one authoritative edit instead of sending a new
+    // message. `None` for slash replies and for streamed turns too short to
+    // have created a bubble — those fall through to a normal send.
+    stream_msg_id: Option<i64>,
 ) -> Result<()> {
     // Persist the assistant message so it shows up in KinAI clients
     // viewing this peer's Telegram thread.
@@ -572,6 +680,35 @@ async fn send_assistant_reply<R: Runtime>(
             }
         }
         fan_out_message(state, app, peer_id, &msg).await;
+    }
+
+    // Streaming path: finalize the live bubble with the complete text.
+    // (A streamed turn is always the LLM path, never /pic, so we don't run
+    // pic detection here.)
+    if let Some(id) = stream_msg_id {
+        if reply.chars().count() <= 4096 {
+            if let Err(e) = api.edit_message_text(chat_id, id, reply).await {
+                // One retry on a transient rate-limit so we don't lose the
+                // final authoritative text.
+                if e.to_string().contains("Too Many Requests") {
+                    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                    api.edit_message_text(chat_id, id, reply).await?;
+                } else {
+                    return Err(e);
+                }
+            }
+        } else {
+            // Too long for one bubble: edit the placeholder to the first
+            // chunk, send the remaining chunks as new messages.
+            let parts = super::api::split_for_telegram(reply);
+            if let Some(first) = parts.first() {
+                let _ = api.edit_message_text(chat_id, id, first).await;
+            }
+            for part in parts.iter().skip(1) {
+                api.send_message(chat_id, part).await?;
+            }
+        }
+        return Ok(());
     }
 
     // Detect a `![alt](http://host/v1/pic/<uuid>.png)` from ComfyUI
@@ -662,6 +799,23 @@ pub(super) fn strip_inline_image_markdown(reply: &str) -> String {
         regex::Regex::new(r"!\[[^\]]*\]\(http[s]?://[^)]+\)\s*\n*").unwrap()
     });
     RE.replace_all(reply, "").trim().to_string()
+}
+
+/// Cap an in-progress streamed snapshot at ~4000 chars for INTERMEDIATE
+/// edits (a single Telegram message can't exceed 4096). Walks back to a
+/// UTF-8 char boundary before slicing so a multi-byte char at the cut
+/// can't panic. The final, complete reply is handled separately (split
+/// into multiple messages if needed) in send_assistant_reply.
+fn truncate_for_tg(s: &str) -> String {
+    const CAP: usize = 4000;
+    if s.len() <= CAP {
+        return s.to_string();
+    }
+    let mut end = CAP;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}…", &s[..end])
 }
 
 /// Pick the highest-resolution entry Telegram offered for an inbound

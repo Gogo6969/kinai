@@ -161,7 +161,11 @@ impl BotApi {
         Self::unwrap_response(resp).await
     }
 
-    pub async fn send_message(&self, chat_id: i64, text: &str) -> Result<()> {
+    /// Send a plain-text message. Returns the first part's `message_id`
+    /// (a long message split into N parts returns the id of part 1) so the
+    /// streaming reply path can later edit it. Existing callers that `?`
+    /// this just drop the id.
+    pub async fn send_message(&self, chat_id: i64, text: &str) -> Result<i64> {
         self.send_message_with_parse(chat_id, text, None).await
     }
 
@@ -171,8 +175,39 @@ impl BotApi {
     /// for Q&A echoes (blockquote on the user's question, plain text on
     /// the assistant reply). Caller is responsible for escaping `<`,
     /// `>`, `&` in any user-supplied content (`html_escape` helper).
-    pub async fn send_message_html(&self, chat_id: i64, html: &str) -> Result<()> {
+    pub async fn send_message_html(&self, chat_id: i64, html: &str) -> Result<i64> {
         self.send_message_with_parse(chat_id, html, Some("HTML")).await
+    }
+
+    /// Edit the text of a previously-sent message. Used by the streaming
+    /// reply path to live-update a placeholder as tokens arrive. Plain text
+    /// only (no parse_mode) — mid-stream markdown is frequently unbalanced
+    /// (an open `**` or half a code fence) and Telegram rejects unbalanced
+    /// entities with a 400. "message is not modified" (identical text) is
+    /// treated as success, not an error.
+    pub async fn edit_message_text(&self, chat_id: i64, message_id: i64, text: &str) -> Result<()> {
+        let resp = self
+            .http
+            .post(self.endpoint("editMessageText"))
+            .json(&json!({
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": text,
+                "disable_web_page_preview": true,
+            }))
+            .send()
+            .await
+            .context("editMessageText send")?;
+        match Self::unwrap_response::<Value>(resp).await {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                if e.to_string().contains("message is not modified") {
+                    Ok(())
+                } else {
+                    Err(e)
+                }
+            }
+        }
     }
 
     async fn send_message_with_parse(
@@ -180,7 +215,7 @@ impl BotApi {
         chat_id: i64,
         text: &str,
         parse_mode: Option<&str>,
-    ) -> Result<()> {
+    ) -> Result<i64> {
         // Telegram chops messages at 4096 chars; split greedily on
         // paragraph boundaries when over. NOTE: with HTML parse mode an
         // unlucky split could land inside a tag; for our use case the
@@ -188,6 +223,7 @@ impl BotApi {
         // mostly plain text, so split_for_telegram is safe enough. If
         // we ever start emitting heavily-nested HTML this will need a
         // smarter splitter that re-emits open tags on each chunk.
+        let mut first_id: Option<i64> = None;
         for part in split_for_telegram(text) {
             let mut body = json!({
                 "chat_id": chat_id,
@@ -204,9 +240,14 @@ impl BotApi {
                 .send()
                 .await
                 .context("sendMessage send")?;
-            let _: Value = Self::unwrap_response(resp).await?;
+            let sent: TelegramMessage = Self::unwrap_response(resp).await?;
+            if first_id.is_none() {
+                first_id = Some(sent.message_id);
+            }
         }
-        Ok(())
+        // Callers always pass non-empty text, so the loop runs ≥ once; 0 is
+        // a defensive sentinel for the impossible empty case.
+        Ok(first_id.unwrap_or(0))
     }
 
     /// Fire-and-forget typing indicator. Shows "Bot is typing…" in the
@@ -325,7 +366,7 @@ impl BotApi {
 /// Split text into Telegram-sized chunks. The 4096-char limit applies
 /// per message; split on paragraph boundaries when possible to keep
 /// each chunk readable.
-fn split_for_telegram(text: &str) -> Vec<String> {
+pub(crate) fn split_for_telegram(text: &str) -> Vec<String> {
     const LIMIT: usize = 4000; // leave headroom below 4096 for safety
     if text.len() <= LIMIT {
         return vec![text.to_string()];
