@@ -26,7 +26,7 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -34,8 +34,8 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: 'pnpm'
@@ -68,7 +68,7 @@ jobs:
       # sidecars (.msi.zip + .sig / .nsis.zip + .sig).
       #
       # An earlier version of this step listed each filename pattern
-      # explicitly across multiple lines. actions/upload-artifact@v4
+      # explicitly across multiple lines. actions/upload-artifact@v7
       # only matched the first two patterns (`*.msi` and `*.exe`) and
       # silently dropped the four `.zip` / `.sig` patterns — uploading
       # 2 of 6 files even though the CI log shows the .zip/.sig were
@@ -166,7 +166,7 @@ jobs:
           Get-ChildItem -Force -Recurse target\x86_64-pc-windows-msvc\release\bundle\nsis\ | Format-Table FullName, Length
 
       - name: Upload bundle artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kinai-windows-x86_64
           path: target/x86_64-pc-windows-msvc/release/bundle/**

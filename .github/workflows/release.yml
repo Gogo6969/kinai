@@ -53,7 +53,7 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -64,8 +64,8 @@ jobs:
       # No explicit version here — package.json's `packageManager` field
       # ("pnpm@9.15.0") is the single source of truth. Listing it twice
       # makes pnpm/action-setup error out with ERR_PNPM_BAD_PM_VERSION.
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: 'pnpm'
