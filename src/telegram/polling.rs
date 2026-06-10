@@ -28,9 +28,23 @@ pub async fn run<R: Runtime>(api: BotApi, state: SharedState, app: AppHandle<R>)
                     // Advance offset to update_id + 1 so the next poll
                     // doesn't redeliver this one.
                     offset = offset.max(update.update_id + 1);
-                    if let Err(e) = router::handle_update(&api, &state, &app, &update).await {
-                        tracing::warn!("telegram router: {e:?}");
-                    }
+                    // Handle each update in its OWN task instead of awaiting
+                    // it inline. A single slow update — notably `/pic` /
+                    // `/picHQ`, which block on ComfyUI for 5-30s (up to a
+                    // 6-minute poll) — would otherwise freeze the whole poll
+                    // loop: no further getUpdates runs, so every other
+                    // family member's messages pile up unanswered and the
+                    // bot looks dead. Spawning keeps polling responsive and
+                    // also isolates a panic to the one update (it can't tear
+                    // down the loop).
+                    let api = api.clone();
+                    let state = state.clone();
+                    let app = app.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = router::handle_update(&api, &state, &app, &update).await {
+                            tracing::warn!("telegram router: {e:?}");
+                        }
+                    });
                 }
             }
             Err(e) => {

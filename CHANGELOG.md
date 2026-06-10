@@ -28,6 +28,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   generation takes 5-30s, but the slash path returned before the chat
   typing keep-alive, so the user saw no "working…" signal. Now the bot
   shows "sending photo…" for the whole generation.
+- **One slow command no longer freezes the whole Telegram bot.** The poll
+  loop awaited each update inline, so a slow `/picHQ` (ComfyUI generation,
+  up to minutes) blocked `getUpdates` entirely — every other family
+  member's messages piled up unanswered until it finished. Each update is
+  now handled in its own task, so the bot stays responsive (and a panic in
+  one update can't tear down the loop).
 
 ### Performance
 
