@@ -232,6 +232,10 @@ When a thread exceeds 30 unsummarized messages, the oldest are folded into a lon
 | Built-in tools: web search, X/Twitter search, calculator, date/time, image search | ✅ |
 | OpenAI-style function calling with tool execution loop | ✅ |
 | Streaming responses (SSE) with **markdown + LaTeX + code blocks + tables** | ✅ |
+| **Cross-thread search** — find any message across all your conversations as you type | ✅ |
+| **Regenerate & edit-and-resend** — re-roll the last answer, or fix your question and re-run from there | ✅ |
+| **Streaming Telegram replies** — the bot live-edits its message as the model writes | ✅ |
+| **Image generation via ComfyUI** — `/pic` & `/picHQ` on every surface, with a "creating a picture…" progress note on Telegram | ✅ |
 | System tray icon with **live status** (model, peers connected) | ✅ |
 | Customizable hotkey, theme, font size | ✅ |
 | **End-to-end JWT (RS256)** auth on every WebSocket connection | ✅ |
@@ -264,7 +268,7 @@ When a thread exceeds 30 unsummarized messages, the oldest are folded into a lon
 | Version | Focus | Highlights |
 |---|---|---|
 | **v0.1** | MVP | Hotkey overlay, host/client, invite + JWT, tools, mDNS *(macOS)* |
-| **v0.2** ⬅ *current* | Vision, attachments, family-grade updates *(macOS)* | PDFs, image attach + vision routing, image search inline, host-distributed signed updates, per-peer context isolation, reconnect supervisor |
+| **v0.2** ⬅ *current* | Vision, attachments, family-grade updates | PDFs, image attach + vision routing, image search inline, host-distributed signed updates, per-peer context isolation, reconnect supervisor, cross-thread search, regenerate / edit-and-resend, streaming Telegram replies, ComfyUI image generation |
 | **v0.3** | Image generation + web-page ingest | ComfyUI / A1111 routing, page-to-context |
 | **v0.4** | RAG basics | Doc upload + vector search |
 | **v0.5** | Mobile + voice | iOS / Android via Tauri Mobile, Whisper STT + Piper TTS, voice-thread memory |

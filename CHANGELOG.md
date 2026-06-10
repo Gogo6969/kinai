@@ -5,7 +5,7 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.60] — 2026-05-30
+## [0.2.60] — 2026-06-10
 
 ### Added
 
@@ -17,12 +17,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   drops everything after it, and re-runs the conversation from there.
   (Host mode)
 - **Cross-thread search.** A search box at the top of the sidebar finds
-  any message across all your conversations (full-text, ranked); clicking
-  a result jumps straight to that message and highlights it. Each family
-  member can only ever search their own messages. (Host mode)
+  any message across all your conversations — full-text, ranked, and
+  matching as you type ("inve" finds "investment"); clicking a result
+  jumps straight to that message and highlights it. Each family member
+  can only ever search their own messages. (Host mode)
 - **Telegram replies now stream.** Instead of waiting for the full
   answer, the bot posts a draft and live-edits it as the model writes —
   the familiar ChatGPT-style build-up.
+- **Telegram `/pic` shows "🎨 Creating a picture…"** while the image
+  generates (5–110s), and the note disappears the moment the photo
+  lands — replacing the misleading built-in "sending a photo…" label.
 
 ### Fixed
 
@@ -41,10 +45,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   sending your "fresh" question into the old conversation.
 - Telegram pairing poll is cleared on leaving Settings (was firing for
   up to 11 minutes); tool-status pills update reliably.
-- **Telegram shows an activity indicator while `/pic` generates.** Image
-  generation takes 5-30s, but the slash path returned before the chat
-  typing keep-alive, so the user saw no "working…" signal. Now the bot
-  shows "sending photo…" for the whole generation.
+- **Telegram `/pic` no longer goes silent during generation.** The slash
+  path returned before the chat typing keep-alive was set up, so the
+  user saw no "working…" signal at all (superseded by the
+  "creating a picture…" placeholder above).
+- The assistant message footer keeps `prompt · copy · regenerate` together
+  on one line instead of scattering when the metrics row wraps.
 - **One slow command no longer freezes the whole Telegram bot.** The poll
   loop awaited each update inline, so a slow `/picHQ` (ComfyUI generation,
   up to minutes) blocked `getUpdates` entirely — every other family
