@@ -12,7 +12,7 @@
     type VisionSettings,
   } from '$lib/api';
   import { app } from '$lib/stores/app.svelte';
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import QRCode from 'qrcode';
   import { Loader2, RefreshCw } from '@lucide/svelte';
@@ -112,6 +112,9 @@
     telegramStatus?.bot_configured || !!telegramBotUsername
   );
   let telegramPairing = $state(false);
+  // Pairing status poll handle — cleared on unmount so it can't outlive
+  // the component (it runs up to 11 min). Not $state; it's just a timer id.
+  let telegramPoll: ReturnType<typeof setInterval> | null = null;
 
   async function refreshTelegramStatus() {
     try {
@@ -194,15 +197,21 @@
     }
     // Poll the status briefly so when the user finishes scanning + the
     // bot confirms pairing, the card auto-updates without a manual refresh.
+    // Tracked in `telegramPoll` (cleared on unmount + before re-starting)
+    // so navigating away mid-pair doesn't leave an interval firing IPCs at
+    // a dead component for up to 11 minutes.
+    if (telegramPoll) clearInterval(telegramPoll);
     const start = Date.now();
-    const poll = setInterval(async () => {
+    telegramPoll = setInterval(async () => {
       if (Date.now() - start > 11 * 60 * 1000) {
-        clearInterval(poll);
+        clearInterval(telegramPoll!);
+        telegramPoll = null;
         return;
       }
       await refreshTelegramStatus();
       if (telegramStatus?.paired) {
-        clearInterval(poll);
+        clearInterval(telegramPoll!);
+        telegramPoll = null;
         telegramPairUrl = '';
         telegramPairQrDataUrl = '';
       }
@@ -276,6 +285,13 @@
     git_commit: string;
     target: string;
   } | null>(null);
+
+  onDestroy(() => {
+    if (telegramPoll) {
+      clearInterval(telegramPoll);
+      telegramPoll = null;
+    }
+  });
 
   onMount(() => {
     if (app.config) {

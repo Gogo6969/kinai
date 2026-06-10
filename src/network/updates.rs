@@ -57,10 +57,16 @@ use super::server::AxumState;
 /// the wrapper format. It won't work on Tauri 2.10.x clients but
 /// won't break anything either; deploy.sh now writes the raw .msi
 /// so new hosts auto-fix on first redeploy.
+///
+/// PRIORITY: the NSIS `KinAI.exe` is preferred over the `.msi` because
+/// an MSI consults its upgrade table and no-ops when the ProductVersion
+/// already matches what's installed (the "stuck on the update banner"
+/// bug); the NSIS installer always installs over the existing version.
+/// So if both are ever staged in one dir, serve the NSIS one.
 fn bundle_filenames(target: &str) -> &'static [&'static str] {
     match target {
         "darwin-aarch64" | "darwin-x86_64" => &["KinAI.app.tar.gz"],
-        "windows-x86_64" => &["KinAI.msi", "KinAI.exe", "KinAI.msi.zip", "KinAI.nsis.zip"],
+        "windows-x86_64" => &["KinAI.exe", "KinAI.nsis.zip", "KinAI.msi", "KinAI.msi.zip"],
         // Future: linux-x86_64 → &["KinAI.AppImage.tar.gz"]
         _ => &[],
     }

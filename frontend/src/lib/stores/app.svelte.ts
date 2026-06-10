@@ -333,14 +333,25 @@ class AppStore {
     );
     this.cleanups.push(
       await events.onTool(({ client_msg_id, event }) => {
-        const arr = this.toolActivity[client_msg_id] ?? [];
-        if (event.kind === 'Started') arr.push({ name: event.name });
-        if (event.kind === 'Finished') {
-          const last = [...arr].reverse().find((t) => t.name === event.name && t.ok === undefined);
-          if (last) last.ok = event.ok;
+        // Build a NEW array + NEW objects (no in-place mutation of items
+        // already published into $state) so the tool pill's ok/✓/✗ flip
+        // reliably re-renders regardless of how a consumer reads it.
+        const prev = this.toolActivity[client_msg_id] ?? [];
+        let arr;
+        if (event.kind === 'Started') {
+          arr = [...prev, { name: event.name }];
+        } else if (event.kind === 'Finished') {
+          // Flip the LAST not-yet-finished tool of this name (same as the
+          // prior reverse().find), but immutably.
+          let idx = -1;
+          for (let j = prev.length - 1; j >= 0; j--) {
+            if (prev[j].name === event.name && prev[j].ok === undefined) { idx = j; break; }
+          }
+          arr = idx === -1 ? prev : prev.map((t, j) => (j === idx ? { ...t, ok: event.ok } : t));
+        } else {
+          arr = prev;
         }
-        this.toolActivity[client_msg_id] = arr;
-        this.toolActivity = { ...this.toolActivity };
+        this.toolActivity = { ...this.toolActivity, [client_msg_id]: arr };
       })
     );
     this.cleanups.push(

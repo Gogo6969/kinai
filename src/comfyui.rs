@@ -413,18 +413,20 @@ mod summarize_tests {
 pub fn parse_slash(text: &str) -> Option<(Model, u32, u32, String)> {
     let trimmed = text.trim();
     let lower = trimmed.to_lowercase();
-    let (model, rest) = if let Some(r) = lower.strip_prefix("/pichq") {
-        (Model::Hq, r.to_string())
-    } else if let Some(r) = lower.strip_prefix("/pic") {
-        (Model::Turbo, r.to_string())
+    // The command prefixes are ASCII, so their byte length is identical in
+    // the lowercased copy and the original. Slice the ORIGINAL by that
+    // fixed prefix length to get the original-case body. (Deriving the cut
+    // from the lowercased *remainder* length panicked/underflowed when a
+    // body char's lowercase form had a different byte length, e.g. "İ" —
+    // a crafted `/pic İ…` could crash the whole Telegram poll loop.)
+    let (model, prefix_len) = if lower.starts_with("/pichq") {
+        (Model::Hq, "/pichq".len())
+    } else if lower.starts_with("/pic") {
+        (Model::Turbo, "/pic".len())
     } else {
         return None;
     };
-    // The rest captured above is the lowercased remainder — fine for
-    // dimension parsing, but we want the ORIGINAL-case prompt body.
-    // Recompute body length so we can slice the original string.
-    let cut = trimmed.len() - rest.len();
-    let body = trimmed[cut..].trim();
+    let body = trimmed[prefix_len..].trim();
     if body.is_empty() {
         // empty body → usage error, surface as Some with empty prompt so the
         // caller can render a usage hint
@@ -439,8 +441,10 @@ pub fn parse_slash(text: &str) -> Option<(Model, u32, u32, String)> {
         Model::Turbo => 720,
         Model::Hq => 1024,
     };
-    let dim_re = regex::Regex::new(r"^(\d{2,5})\s*[xX×]\s*(\d{2,5})\s+(.+)$").unwrap();
-    let prompt = if let Some(caps) = dim_re.captures(body) {
+    static DIM_RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+        regex::Regex::new(r"^(\d{2,5})\s*[xX×]\s*(\d{2,5})\s+(.+)$").unwrap()
+    });
+    let prompt = if let Some(caps) = DIM_RE.captures(body) {
         let w: u32 = caps[1].parse().unwrap_or(width);
         let h: u32 = caps[2].parse().unwrap_or(height);
         if (64..=2048).contains(&w) && (64..=2048).contains(&h) {
@@ -454,4 +458,37 @@ pub fn parse_slash(text: &str) -> Option<(Model, u32, u32, String)> {
         body.to_string()
     };
     Some((model, width, height, prompt))
+}
+
+#[cfg(test)]
+mod parse_slash_tests {
+    use super::{parse_slash, Model};
+
+    #[test]
+    fn unicode_body_does_not_panic() {
+        // "İ" (U+0130) lowercases to 2 chars / different byte length —
+        // this used to underflow `trimmed.len() - rest.len()` and panic,
+        // killing the Telegram poll loop. Must now parse cleanly.
+        for t in ["/pic İstanbul skyline", "/picHQ İİİ", "/pic 北京", "/pic café"] {
+            let r = parse_slash(t);
+            assert!(r.is_some(), "{t:?} should parse");
+        }
+    }
+
+    #[test]
+    fn preserves_original_case_body_and_dims() {
+        let (m, w, h, p) = parse_slash("/picHQ 1024x768 A Red Barn").unwrap();
+        assert!(matches!(m, Model::Hq));
+        assert_eq!((w, h), (1024, 768));
+        assert_eq!(p, "A Red Barn");
+        let (_, _, _, p2) = parse_slash("/pic Hello World").unwrap();
+        assert_eq!(p2, "Hello World");
+    }
+
+    #[test]
+    fn empty_body_returns_usage_sentinel() {
+        let (_, _, _, p) = parse_slash("/pic").unwrap();
+        assert!(p.is_empty());
+        assert!(parse_slash("/notacommand").is_none());
+    }
 }

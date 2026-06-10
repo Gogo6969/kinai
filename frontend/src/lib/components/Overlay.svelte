@@ -147,17 +147,19 @@
       });
       cleanups.push(unlistenFocus);
 
-      // Refresh prefs each time the overlay re-opens (the user may have
-      // toggled the setting while the overlay was hidden).
+      // One handler per overlay re-open: focus + select the input, refresh
+      // prefs (the user may have toggled them while hidden), and re-check
+      // for updates (throttled) so an overlay-only user still hears about
+      // new versions. (Previously this was two separate onOverlayFocus
+      // subscriptions doing duplicate work.)
       const unlistenOverlay = await events.onOverlayFocus(async () => {
+        inputEl?.focus();
+        inputEl?.select();
         try {
           const fresh = await api.getConfig();
           autoCloseOnBlur = fresh.overlay.auto_close_on_blur;
           alwaysOnTop = fresh.overlay.always_on_top;
         } catch {}
-        // Each time the quick-chat bar opens, re-check for updates so a
-        // user who lives in the overlay still gets told about new
-        // versions (throttled — see maybeCheckUpdate).
         void maybeCheckUpdate();
       });
       cleanups.push(unlistenOverlay);
@@ -165,13 +167,6 @@
       const threads = await api.listThreads();
       activeThreadId = threads[0]?.id ?? (await api.createThread('Quick chat')).id;
       inputEl?.focus();
-
-      cleanups.push(
-        await events.onOverlayFocus(() => {
-          inputEl?.focus();
-          inputEl?.select();
-        })
-      );
       cleanups.push(
         await events.onToken(({ client_msg_id, delta }) => {
           if (client_msg_id === currentClientId) {
@@ -215,6 +210,29 @@
         })
       );
       cleanups.push(
+        await events.onClientStatus((s) => {
+          // If the link to the host drops mid-turn, the AssistantDone that
+          // clears `busy` never arrives — don't spin "Thinking…" forever.
+          if (!s.connected && busy) {
+            busy = false;
+            currentClientId = null;
+            if (!streamingContent) {
+              streamingContent = '⚠️ Lost connection to the host — try again.';
+            }
+          }
+        })
+      );
+      cleanups.push(
+        await events.onError((msg) => {
+          // Backend errors surfaced via the error channel (not the send
+          // promise) would otherwise leave the bar stuck spinning.
+          if (!busy) return;
+          busy = false;
+          currentClientId = null;
+          streamingContent = `Error: ${msg}`;
+        })
+      );
+      cleanups.push(
         await events.onUpdateAvailable((u) => {
           updateInfo = u;
         })
@@ -249,10 +267,19 @@
     // context). Earlier messages won't be used; persistent memory stays.
     const fresh = parseNewchat(text);
     if (fresh !== null) {
+      // Must have a NEW thread before routing the question, otherwise the
+      // "fresh" question would go into the OLD thread (with its context) —
+      // the exact thing /newchat exists to prevent. Abort on failure.
       try {
         const t = await api.createThread('Quick chat');
         activeThreadId = t.id;
-      } catch {}
+      } catch (e) {
+        streamingContent = `Couldn't start a new chat: ${String(e).replace(/^Error:\s*/, '')}`;
+        return;
+      }
+      // Reset the in-flight turn id so a late token/done from the previous
+      // turn can't write into the new (empty) overlay.
+      currentClientId = null;
       reasoningContent = '';
       tools = [];
       pendingAttachments = [];

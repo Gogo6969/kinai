@@ -615,8 +615,10 @@ async fn fan_out_message<R: Runtime>(
 /// return the absolute filesystem path to that image. None if the
 /// reply has no such reference.
 pub(super) fn extract_local_pic_path(state: &SharedState, reply: &str) -> Option<std::path::PathBuf> {
-    let re = regex::Regex::new(r"!\[[^\]]*\]\(http[s]?://[^/]+/v1/pic/([A-Za-z0-9_\-]+\.[a-z]+)\)").ok()?;
-    let caps = re.captures(reply)?;
+    static RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+        regex::Regex::new(r"!\[[^\]]*\]\(http[s]?://[^/]+/v1/pic/([A-Za-z0-9_\-]+\.[a-z]+)\)").unwrap()
+    });
+    let caps = RE.captures(reply)?;
     let filename = caps.get(1)?.as_str();
     let dir = crate::comfyui::pics_dir();
     let path = dir.join(filename);
@@ -629,11 +631,10 @@ pub(super) fn extract_local_pic_path(state: &SharedState, reply: &str) -> Option
 }
 
 pub(super) fn strip_inline_image_markdown(reply: &str) -> String {
-    let re = match regex::Regex::new(r"!\[[^\]]*\]\(http[s]?://[^)]+\)\s*\n*") {
-        Ok(r) => r,
-        Err(_) => return reply.to_string(),
-    };
-    re.replace_all(reply, "").trim().to_string()
+    static RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+        regex::Regex::new(r"!\[[^\]]*\]\(http[s]?://[^)]+\)\s*\n*").unwrap()
+    });
+    RE.replace_all(reply, "").trim().to_string()
 }
 
 /// Pick the highest-resolution entry Telegram offered for an inbound

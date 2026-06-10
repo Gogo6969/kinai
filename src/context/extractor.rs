@@ -138,6 +138,18 @@ User message:
     let response_text = simple_completion(llm_settings, &prompt).await?;
     let parsed = parse_extractor_json(&response_text)?;
 
+    // Fetch existing keys ONCE, not once per candidate fact (this loop
+    // ran up to MAX_FACTS_PER_MESSAGE full-table SELECTs over the same
+    // rows). Keys we write below are added to the set so duplicates within
+    // the same batch are also skipped.
+    let mut existing_keys: std::collections::HashSet<String> = db
+        .list_user_facts(peer_id)
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|f| f.key)
+        .collect();
+
     let mut written = 0;
     for fact in parsed.facts.into_iter().take(MAX_FACTS_PER_MESSAGE) {
         let key = normalize_key(&fact.key);
@@ -148,13 +160,7 @@ User message:
         // Conservative: only add if absent. Explicit remember() calls
         // (source="tool") and user-typed entries (source="manual") win
         // every time over passive extraction.
-        if db
-            .list_user_facts(peer_id)
-            .await
-            .unwrap_or_default()
-            .iter()
-            .any(|existing| existing.key == key)
-        {
+        if existing_keys.contains(&key) {
             continue;
         }
         if let Err(e) = db
@@ -164,6 +170,7 @@ User message:
             tracing::warn!("extractor save failed for {key}: {e}");
             continue;
         }
+        existing_keys.insert(key);
         written += 1;
     }
     Ok(written)

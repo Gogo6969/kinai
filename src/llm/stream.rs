@@ -297,11 +297,43 @@ fn parse_commentary_tool(directive: &str) -> Option<String> {
 fn safe_emit_len(s: &str) -> usize {
     const MAX_MARKER_LEN: usize = 64;
     let len = s.len();
-    let tail_start = len.saturating_sub(MAX_MARKER_LEN);
+    let mut tail_start = len.saturating_sub(MAX_MARKER_LEN);
+    // Align forward to a UTF-8 char boundary. `len - 64` can land inside a
+    // multi-byte character (emoji/CJK/accented Latin — common in normal
+    // model output), and slicing there panics, killing the pump task and
+    // silently truncating the reply. Keeping a few extra tail bytes
+    // buffered is harmless.
+    while tail_start < len && !s.is_char_boundary(tail_start) {
+        tail_start += 1;
+    }
     if let Some(rel) = s[tail_start..].rfind('<') {
         return tail_start + rel;
     }
     len
+}
+
+#[cfg(test)]
+mod safe_emit_tests {
+    use super::safe_emit_len;
+
+    #[test]
+    fn never_slices_inside_a_multibyte_char() {
+        // 40 emoji × 4 bytes = 160 bytes, no '<' — pre-fix this panicked
+        // on the s[len-64..] slice landing mid-character.
+        let s = "🎉".repeat(40);
+        let n = safe_emit_len(&s);
+        assert!(s.is_char_boundary(n), "offset must be a char boundary");
+        let _ = &s[..n]; // must not panic
+    }
+
+    #[test]
+    fn cjk_and_accented_text_is_boundary_safe() {
+        for s in ["日本語のテキストです".repeat(10), "café ".repeat(30)] {
+            let n = safe_emit_len(&s);
+            assert!(s.is_char_boundary(n));
+            let _ = &s[..n];
+        }
+    }
 }
 
 // ---- Stream types ---------------------------------------------------------

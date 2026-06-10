@@ -31,12 +31,26 @@ pub fn estimate_messages(messages: &[ChatMessage]) -> usize {
 pub fn trim_to_fit(messages: &mut Vec<ChatMessage>, budget: usize) {
     let budget = budget.max(512);
 
-    if estimate_messages(messages) <= budget {
+    // Tokenize each message ONCE up front. The previous loop called
+    // `estimate_messages` (a full BPE encode of every message) on every
+    // iteration, so dropping K messages from N re-encoded O(N·K) bodies —
+    // the dominant cost of a long-thread turn. A per-message cost vector
+    // kept in lock-step with `messages` makes the trim O(N): removing a
+    // message just subtracts its precomputed cost. Token cost of a message
+    // is invariant under removal of *other* messages, so the result is
+    // identical (same messages dropped, same order).
+    let mut costs: Vec<usize> = messages
+        .iter()
+        .map(|m| count_tokens(m.content()) + PER_MESSAGE_OVERHEAD)
+        .collect();
+    let mut total: usize = costs.iter().sum::<usize>() + 2;
+
+    if total <= budget {
         return;
     }
 
     let mut i = 0;
-    while estimate_messages(messages) > budget && messages.len() > 2 {
+    while total > budget && messages.len() > 2 {
         let last_idx = messages.len().saturating_sub(1);
         let is_system = matches!(messages.get(i), Some(ChatMessage::System { .. }));
         if i == last_idx || is_system {
@@ -47,9 +61,10 @@ pub fn trim_to_fit(messages: &mut Vec<ChatMessage>, budget: usize) {
             continue;
         }
         messages.remove(i);
+        total -= costs.remove(i);
     }
 
-    if estimate_messages(messages) > budget {
+    if total > budget {
         if let Some(last) = messages.last_mut() {
             let content = match last {
                 ChatMessage::System { content } => content,
