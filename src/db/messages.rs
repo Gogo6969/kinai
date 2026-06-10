@@ -240,9 +240,12 @@ pub async fn search(
     query: &str,
     limit: i64,
 ) -> Result<Vec<SearchHit>> {
-    let fts_query = crate::db::memory::sanitize_fts(query);
+    // Prefix mode ("inves"* matches "investment") — the sidebar searches
+    // live while the user types, so whole-token matching would return
+    // nothing until the word is typed out exactly.
+    let fts_query = crate::db::memory::sanitize_fts_prefix(query);
     if fts_query.is_empty() {
-        return Ok(Vec::new()); // empty / all-stopword query → no results
+        return Ok(Vec::new()); // empty / too-short query → no results
     }
     let rows = sqlx::query(
         "SELECT m.id        AS message_id,
@@ -562,17 +565,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn search_matches_word_prefixes() {
+        let pool = fresh_pool().await;
+        let tid = seed_thread(&pool, HOST_PEER, "t").await;
+        append(&pool, &tid, "user", "me", "what is the best investment right now", &[])
+            .await
+            .unwrap();
+        // The sidebar searches live while typing: every prefix of the
+        // word the user is typing must already match.
+        for q in ["in", "inv", "invest", "investmen", "investment", "INVEST"] {
+            assert_eq!(
+                search(&pool, HOST_PEER, q, 50).await.unwrap().len(),
+                1,
+                "prefix {q:?} should match 'investment'"
+            );
+        }
+        assert!(search(&pool, HOST_PEER, "investmentx", 50).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn search_neutralizes_fts_syntax_and_short_queries() {
         let pool = fresh_pool().await;
         let tid = seed_thread(&pool, HOST_PEER, "t").await;
-        append(&pool, &tid, "user", "me", "ordinary content here", &[]).await.unwrap();
-        // Injection attempt + sub-3-char + whitespace all sanitize to an
-        // empty MATCH → Ok(empty), never a SQL error.
-        for q in ["\") OR 1=1 --", "a", "   ", "*", "OR"] {
+        append(&pool, &tid, "user", "me", "zebra quantum flux", &[]).await.unwrap();
+        // Injection attempts, single chars, bare operators, and
+        // punctuation-only tokens sanitize to an empty or harmless MATCH
+        // → never a SQL error. ("OR" survives as the quoted literal
+        // prefix '"OR"*', not the FTS boolean operator — it just doesn't
+        // match this content.)
+        for q in ["\") OR 1=1 --", "a", "   ", "*", "OR", "--", "_", "...."] {
             assert!(
                 search(&pool, HOST_PEER, q, 50).await.unwrap().is_empty(),
                 "query {q:?} should yield no results and no error"
             );
         }
+        // And the quoted-operator semantics cut the other way too: a
+        // legitimate 2-char prefix that happens to spell an FTS operator
+        // is treated as text. "or" must find "ordinary".
+        append(&pool, &tid, "user", "me", "ordinary content here", &[]).await.unwrap();
+        assert_eq!(search(&pool, HOST_PEER, "OR", 50).await.unwrap().len(), 1);
     }
 }

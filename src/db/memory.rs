@@ -103,6 +103,22 @@ pub async fn search(
 }
 
 pub(crate) fn sanitize_fts(input: &str) -> String {
+    sanitize_fts_inner(input, false)
+}
+
+/// Like `sanitize_fts`, but each token becomes an FTS5 prefix query
+/// (`"inves"*`), so partially-typed words match — essential for the
+/// live sidebar search, where the user sees results WHILE typing and
+/// almost never lands on an exact whole token ("invest" must find
+/// "investment"). Prefix mode also accepts 2-char tokens; whole-token
+/// mode keeps the >2 threshold to avoid stopword noise in memory recall.
+pub(crate) fn sanitize_fts_prefix(input: &str) -> String {
+    sanitize_fts_inner(input, true)
+}
+
+fn sanitize_fts_inner(input: &str, prefix: bool) -> String {
+    let min_len = if prefix { 2 } else { 3 };
+    let star = if prefix { "*" } else { "" };
     let mut tokens: Vec<String> = input
         .split_whitespace()
         .map(|t| {
@@ -110,8 +126,13 @@ pub(crate) fn sanitize_fts(input: &str) -> String {
                 .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
                 .collect::<String>()
         })
-        .filter(|t| t.len() > 2)
-        .map(|t| format!("\"{}\"", t))
+        // Require at least one alphanumeric char: a token like "--" or
+        // "_" survives the char filter but tokenizes to an EMPTY phrase,
+        // which FTS5 rejects as a syntax error.
+        .filter(|t| {
+            t.chars().count() >= min_len && t.chars().any(|c| c.is_alphanumeric())
+        })
+        .map(|t| format!("\"{t}\"{star}"))
         .collect();
     tokens.truncate(8);
     tokens.join(" OR ")
