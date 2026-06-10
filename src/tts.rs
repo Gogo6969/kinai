@@ -230,6 +230,109 @@ pub async fn synthesize_m4a(_text: &str, _voice: &str) -> Result<std::path::Path
     Err(anyhow!("voice replies require a macOS host"))
 }
 
+/// A synthesized audio file ready for Telegram's sendVoice.
+pub struct VoiceNote {
+    pub path: std::path::PathBuf,
+    /// Seconds, when known. Telegram parses OGG/Opus itself, but for the
+    /// m4a fallback it shows 00:00 unless we supply this explicitly.
+    pub duration_secs: Option<u32>,
+}
+
+/// Locate ffmpeg. GUI apps don't inherit the user's shell PATH, so the
+/// standard install locations are checked explicitly before falling back
+/// to a PATH lookup.
+fn find_ffmpeg() -> Option<std::path::PathBuf> {
+    for p in [
+        "/opt/homebrew/bin/ffmpeg",
+        "/usr/local/bin/ffmpeg",
+        "/usr/bin/ffmpeg",
+    ] {
+        if std::path::Path::new(p).is_file() {
+            return Some(p.into());
+        }
+    }
+    let out = std::process::Command::new("which").arg("ffmpeg").output().ok()?;
+    if out.status.success() {
+        let p = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if !p.is_empty() {
+            return Some(p.into());
+        }
+    }
+    None
+}
+
+/// Parse `afinfo` output for "estimated duration: 3.446531 sec".
+pub fn parse_afinfo_duration(afinfo_output: &str) -> Option<u32> {
+    let line = afinfo_output
+        .lines()
+        .find(|l| l.contains("estimated duration:"))?;
+    let secs: f64 = line
+        .split("estimated duration:")
+        .nth(1)?
+        .trim()
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()?;
+    Some(secs.ceil().max(1.0) as u32)
+}
+
+#[cfg(target_os = "macos")]
+async fn audio_duration_secs(path: &std::path::Path) -> Option<u32> {
+    let out = tokio::process::Command::new("afinfo")
+        .arg(path)
+        .output()
+        .await
+        .ok()?;
+    parse_afinfo_duration(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// Synthesize `text` into the best audio Telegram can render as a voice
+/// note. Preferred: OGG/Opus via ffmpeg (the canonical voice-note format
+/// — waveform bubble, duration parsed server-side, plays everywhere).
+/// Fallback when ffmpeg isn't installed: the AAC m4a straight from `say`,
+/// with an explicit duration (without it Telegram shows 00:00 and some
+/// clients refuse to play it). Caller deletes the returned file.
+#[cfg(target_os = "macos")]
+pub async fn synthesize_voice_note(text: &str, voice: &str) -> Result<VoiceNote> {
+    let m4a = synthesize_m4a(text, voice).await?;
+    let duration_secs = audio_duration_secs(&m4a).await;
+
+    if let Some(ffmpeg) = find_ffmpeg() {
+        let ogg = m4a.with_extension("ogg");
+        let out = tokio::process::Command::new(&ffmpeg)
+            .args(["-y", "-loglevel", "error", "-i"])
+            .arg(&m4a)
+            .args(["-c:a", "libopus", "-b:a", "32k", "-application", "voip"])
+            .arg(&ogg)
+            .output()
+            .await;
+        match out {
+            Ok(o) if o.status.success() => {
+                let size = tokio::fs::metadata(&ogg).await.map(|m| m.len()).unwrap_or(0);
+                if size > 512 {
+                    let _ = tokio::fs::remove_file(&m4a).await;
+                    return Ok(VoiceNote { path: ogg, duration_secs });
+                }
+                let _ = tokio::fs::remove_file(&ogg).await;
+            }
+            Ok(o) => {
+                tracing::warn!(
+                    "tts: ffmpeg opus transcode failed ({}), falling back to m4a",
+                    String::from_utf8_lossy(&o.stderr).trim()
+                );
+            }
+            Err(e) => tracing::warn!("tts: ffmpeg spawn failed ({e}), falling back to m4a"),
+        }
+    }
+    Ok(VoiceNote { path: m4a, duration_secs })
+}
+
+#[cfg(not(target_os = "macos"))]
+pub async fn synthesize_voice_note(_text: &str, _voice: &str) -> Result<VoiceNote> {
+    Err(anyhow!("voice replies require a macOS host"))
+}
+
 /// Speak `text` straight to the host's speakers (no output file) and
 /// return the child process so the caller can stop playback. Uses one
 /// fixed temp file for the text, so repeated calls never accumulate
@@ -295,6 +398,14 @@ mod tests {
         assert_eq!(detect_lang("Die Katze ist nicht auf dem Tisch und das ist gut"), "de");
         assert_eq!(detect_lang("Tomorrow will be sunny and warm for you"), "en");
         assert_eq!(detect_lang(""), "en");
+    }
+
+    #[test]
+    fn parses_afinfo_duration() {
+        let out = "File: x.m4a\nestimated duration: 3.446531 sec\naudio bytes: 15323";
+        assert_eq!(parse_afinfo_duration(out), Some(4));
+        assert_eq!(parse_afinfo_duration("estimated duration: 0.2 sec"), Some(1));
+        assert_eq!(parse_afinfo_duration("no duration here"), None);
     }
 
     #[test]

@@ -62,6 +62,15 @@ pub struct TelegramMessage {
     /// Multiple sizes — the largest is the highest quality.
     #[serde(default)]
     pub photo: Vec<PhotoSize>,
+    /// Present when the user sent a recorded voice message. We can't
+    /// transcribe these (no STT yet) — the router answers with a hint
+    /// instead of silently ignoring them. Payload contents unused.
+    #[serde(default)]
+    pub voice: Option<Value>,
+    #[serde(default)]
+    pub audio: Option<Value>,
+    #[serde(default)]
+    pub video_note: Option<Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -346,29 +355,44 @@ impl BotApi {
         Ok(())
     }
 
-    /// Upload an audio file (AAC `.m4a` from the TTS engine) as a
-    /// Telegram VOICE NOTE — the round waveform bubble. Since Bot API
-    /// 7.2 sendVoice accepts .m4a/.mp3 in addition to OGG/Opus, so the
-    /// macOS-native AAC output works directly. No caption: the reply
-    /// text was already delivered as a normal message right before.
-    pub async fn send_voice_file(&self, chat_id: i64, path: &std::path::Path) -> Result<()> {
+    /// Upload an audio file as a Telegram VOICE NOTE — the round
+    /// waveform bubble. OGG/Opus is the canonical format (Telegram
+    /// parses duration + waveform itself); the AAC `.m4a` fallback needs
+    /// `duration` passed explicitly or clients render a dead 00:00
+    /// bubble. No caption: the reply text was already delivered as a
+    /// normal message right before.
+    pub async fn send_voice_file(
+        &self,
+        chat_id: i64,
+        path: &std::path::Path,
+        duration_secs: Option<u32>,
+    ) -> Result<()> {
         let file_bytes = tokio::fs::read(path)
             .await
             .with_context(|| format!("read {}", path.display()))?;
+        let is_ogg = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.eq_ignore_ascii_case("ogg"))
+            .unwrap_or(false);
+        let mime = if is_ogg { "audio/ogg" } else { "audio/mp4" };
         let file_name = path
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or("voice.m4a")
+            .unwrap_or(if is_ogg { "voice.ogg" } else { "voice.m4a" })
             .to_string();
-        let form = reqwest::multipart::Form::new()
+        let mut form = reqwest::multipart::Form::new()
             .text("chat_id", chat_id.to_string())
             .part(
                 "voice",
                 reqwest::multipart::Part::bytes(file_bytes)
                     .file_name(file_name)
-                    .mime_str("audio/mp4")
+                    .mime_str(mime)
                     .unwrap_or_else(|_| reqwest::multipart::Part::bytes(vec![])),
             );
+        if let Some(d) = duration_secs {
+            form = form.text("duration", d.to_string());
+        }
         let resp = self
             .http
             .post(self.endpoint("sendVoice"))

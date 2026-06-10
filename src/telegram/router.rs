@@ -61,6 +61,20 @@ pub async fn handle_update<R: Runtime>(
         return Ok(());
     };
 
+    // No readable content? Say so instead of silently dropping the
+    // update — a voice message especially feels broken when the bot
+    // (which SPEAKS via /voice!) doesn't even react to it.
+    if text_or_caption.trim().is_empty() && msg.photo.is_empty() {
+        let reply = if msg.voice.is_some() || msg.audio.is_some() || msg.video_note.is_some() {
+            "🎙 I can't listen to voice messages yet — please type your question. \
+             (I can talk back though: send /voice and my answers arrive as spoken voice notes.)"
+        } else {
+            "I can only read text and photos for now."
+        };
+        api.send_message(chat_id, reply).await?;
+        return Ok(());
+    }
+
     // Routed — run the chat turn.
     if let Err(e) = run_turn_for_peer(api, state, app, chat_id, &peer_id, &text_or_caption, msg)
         .await
@@ -822,12 +836,15 @@ async fn maybe_send_voice_note(
     let voice = crate::tts::voice_for_text(&tts_cfg, &text);
     let api = api.clone();
     tokio::spawn(async move {
-        match crate::tts::synthesize_m4a(&text, &voice).await {
-            Ok(path) => {
-                if let Err(e) = api.send_voice_file(chat_id, &path).await {
+        match crate::tts::synthesize_voice_note(&text, &voice).await {
+            Ok(note) => {
+                if let Err(e) = api
+                    .send_voice_file(chat_id, &note.path, note.duration_secs)
+                    .await
+                {
                     tracing::warn!("telegram: voice note upload failed: {e:?}");
                 }
-                let _ = tokio::fs::remove_file(&path).await;
+                let _ = tokio::fs::remove_file(&note.path).await;
             }
             Err(e) => tracing::warn!("telegram: voice synthesis failed: {e:?}"),
         }
