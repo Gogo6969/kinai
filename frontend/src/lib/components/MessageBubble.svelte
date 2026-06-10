@@ -328,51 +328,57 @@
           title="LLM model that produced this reply{metrics?.slot ? ` (${metrics.slot} slot)` : ''} — full id: {metrics?.model}"
         >{slotIcon ? slotIcon + ' ' : ''}{modelAbbrev}</span>
       {/if}
-      {#if promptSnapshot}
-        <button
-          type="button"
-          class="ml-1 inline-flex items-center gap-1 text-white/40 hover:text-teal-300 transition-colors cursor-pointer disabled:opacity-50"
-          onclick={openPromptSnapshot}
-          disabled={opening}
-          title="Open the exact prompt KinAI sent to the LLM in your default editor"
-        >
-          <Search size={11} />
-          <span>{opening ? 'opening…' : 'prompt'}</span>
-        </button>
-      {/if}
-      <button
-        type="button"
-        class="ml-auto inline-flex items-center gap-1 text-white/40 hover:text-teal-300 transition-colors cursor-pointer"
-        onclick={copyMessage}
-        title={copyState === 'failed'
-          ? 'Copy failed — try again'
-          : 'Copy reply (with formatting) to clipboard'}
-        aria-label="Copy reply"
-      >
-        {#if copyState === 'copied'}
-          <Check size={11} />
-          <span>copied</span>
-        {:else if copyState === 'failed'}
-          <Copy size={11} />
-          <span>failed</span>
-        {:else}
-          <Copy size={11} />
-          <span>copy</span>
+      <!-- Action cluster: kept in ONE non-wrapping group so the buttons
+           never scatter across two lines when the metrics row is long
+           enough to force a flex wrap — the whole cluster moves to the
+           next line together instead. -->
+      <span class="ml-auto inline-flex items-center gap-2 whitespace-nowrap">
+        {#if promptSnapshot}
+          <button
+            type="button"
+            class="inline-flex items-center gap-1 text-white/40 hover:text-teal-300 transition-colors cursor-pointer disabled:opacity-50"
+            onclick={openPromptSnapshot}
+            disabled={opening}
+            title="Open the exact prompt KinAI sent to the LLM in your default editor"
+          >
+            <Search size={11} />
+            <span>{opening ? 'opening…' : 'prompt'}</span>
+          </button>
         {/if}
-      </button>
-      {#if canRegenerate && isHost}
         <button
           type="button"
-          class="inline-flex items-center gap-1 text-white/40 hover:text-teal-300 transition-colors cursor-pointer disabled:opacity-50"
-          onclick={() => message.id && app.regenerateLast(message.id)}
-          disabled={app.busy}
-          title="Re-run this reply"
-          aria-label="Regenerate reply"
+          class="inline-flex items-center gap-1 text-white/40 hover:text-teal-300 transition-colors cursor-pointer"
+          onclick={copyMessage}
+          title={copyState === 'failed'
+            ? 'Copy failed — try again'
+            : 'Copy reply (with formatting) to clipboard'}
+          aria-label="Copy reply"
         >
-          <RefreshCw size={11} />
-          <span>regenerate</span>
+          {#if copyState === 'copied'}
+            <Check size={11} />
+            <span>copied</span>
+          {:else if copyState === 'failed'}
+            <Copy size={11} />
+            <span>failed</span>
+          {:else}
+            <Copy size={11} />
+            <span>copy</span>
+          {/if}
         </button>
-      {/if}
+        {#if canRegenerate && isHost}
+          <button
+            type="button"
+            class="inline-flex items-center gap-1 text-white/40 hover:text-teal-300 transition-colors cursor-pointer disabled:opacity-50"
+            onclick={() => message.id && app.regenerateLast(message.id)}
+            disabled={app.busy}
+            title="Re-run this reply"
+            aria-label="Regenerate reply"
+          >
+            <RefreshCw size={11} />
+            <span>regenerate</span>
+          </button>
+        {/if}
+      </span>
     </div>
   {/if}
 </div>
