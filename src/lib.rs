@@ -17,6 +17,7 @@ pub mod slash;
 pub mod telegram;
 pub mod tools;
 pub mod tray;
+pub mod stt;
 pub mod tts;
 pub mod update_sync;
 pub mod updater;
@@ -200,6 +201,9 @@ pub fn run() {
             commands::delete_user_fact,
             commands::clear_user_facts,
             commands::set_tts_config,
+            commands::set_stt_config,
+            commands::stt_status,
+            commands::download_stt_model,
             commands::list_tts_voices,
             commands::preview_tts_voice,
             commands::speak_text,

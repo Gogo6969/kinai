@@ -517,6 +517,110 @@ async fn start_playback(state: &SharedState, text: &str, voice: &str) -> Result<
 }
 
 // ============================================================
+// Voice input (STT)
+// ============================================================
+
+#[tauri::command]
+pub async fn set_stt_config(
+    state: tauri::State<'_, SharedState>,
+    stt: crate::config::SttConfig,
+) -> Result<AppConfig> {
+    let new_cfg = {
+        let mut cfg = state.config.write();
+        cfg.stt = stt;
+        cfg.save().map_err(err)?;
+        cfg.clone()
+    };
+    Ok(new_cfg)
+}
+
+/// Settings UI snapshot: which models exist locally, which is selected,
+/// whether voice input is usable right now.
+#[tauri::command]
+pub async fn stt_status(state: tauri::State<'_, SharedState>) -> Result<crate::stt::SttStatus> {
+    let cfg = state.config.read().stt.clone();
+    Ok(crate::stt::status(&cfg))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DownloadSttModelArgs {
+    pub model_id: String,
+}
+
+/// Stream a Whisper model from Hugging Face to ~/.kinai/models with
+/// progress events (kinai://stt-download-progress, 0-100). Downloads to
+/// a .part file and renames on completion so an aborted fetch never
+/// looks like a usable model. On success the model is selected and
+/// voice input enabled — the "one click" promise.
+#[tauri::command]
+pub async fn download_stt_model(
+    app: AppHandle,
+    state: tauri::State<'_, SharedState>,
+    args: DownloadSttModelArgs,
+) -> Result<AppConfig> {
+    use futures_util::StreamExt;
+    let model = crate::stt::model_by_id(&args.model_id)
+        .ok_or_else(|| format!("unknown model {:?}", args.model_id))?;
+    let dir = crate::stt::models_dir();
+    std::fs::create_dir_all(&dir).map_err(err)?;
+    let dest = dir.join(model.filename);
+    let part = dir.join(format!("{}.part", model.filename));
+
+    if !crate::stt::model_downloaded(&args.model_id) {
+        // No overall timeout: this is a multi-hundred-MB file on home
+        // internet. Per-chunk stalls surface as stream errors instead.
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .build()
+            .map_err(err)?;
+        let resp = client
+            .get(model.url)
+            .send()
+            .await
+            .map_err(err)?
+            .error_for_status()
+            .map_err(err)?;
+        let total = resp.content_length().unwrap_or(0);
+        let mut file = tokio::fs::File::create(&part).await.map_err(err)?;
+        let mut stream = resp.bytes_stream();
+        let mut done: u64 = 0;
+        let mut last_emit = 0u64;
+        use tokio::io::AsyncWriteExt;
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(err)?;
+            file.write_all(&chunk).await.map_err(err)?;
+            done += chunk.len() as u64;
+            // Emit at most every ~1 MB so the event channel isn't spammed.
+            if total > 0 && done - last_emit > 1_000_000 {
+                last_emit = done;
+                let progress = (done as f64 / total as f64) * 100.0;
+                let _ = app.emit(
+                    "kinai://stt-download-progress",
+                    serde_json::json!({ "model_id": model.id, "progress": progress }),
+                );
+            }
+        }
+        file.flush().await.map_err(err)?;
+        drop(file);
+        tokio::fs::rename(&part, &dest).await.map_err(err)?;
+        let _ = app.emit(
+            "kinai://stt-download-progress",
+            serde_json::json!({ "model_id": model.id, "progress": 100.0 }),
+        );
+    }
+
+    // Select + enable — downloading IS opting in.
+    let new_cfg = {
+        let mut cfg = state.config.write();
+        cfg.stt.model = model.id.to_string();
+        cfg.stt.enabled = true;
+        cfg.save().map_err(err)?;
+        cfg.clone()
+    };
+    Ok(new_cfg)
+}
+
+// ============================================================
 // Telegram
 // ============================================================
 

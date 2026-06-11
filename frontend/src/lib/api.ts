@@ -98,6 +98,27 @@ export interface TtsVoice {
   lang: string;
 }
 
+/** Voice input (speech-to-text) for Telegram voice messages — host-side
+ *  Whisper. Disabled until a model is downloaded. */
+export interface SttConfig {
+  enabled: boolean;
+  model: string;
+}
+
+export interface SttModelStatus {
+  id: string;
+  label: string;
+  size_mb: number;
+  downloaded: boolean;
+}
+
+export interface SttStatus {
+  enabled: boolean;
+  model: string;
+  ready: boolean;
+  models: SttModelStatus[];
+}
+
 /** Telegram bot integration — host-side. Empty bot_token means
  *  the feature is off (no long-poll loop, no UI for clients). */
 export interface TelegramConfig {
@@ -144,6 +165,7 @@ export interface AppConfig {
   comfyui: ComfyConfig;
   telegram: TelegramConfig;
   tts: TtsConfig;
+  stt: SttConfig;
   startup: StartupSettings;
 }
 
@@ -337,6 +359,10 @@ export const api = {
   setComfyConfig: (comfyui: ComfyConfig) =>
     invoke<AppConfig>('set_comfy_config', { comfyui }),
   setTtsConfig: (tts: TtsConfig) => invoke<AppConfig>('set_tts_config', { tts }),
+  setSttConfig: (stt: SttConfig) => invoke<AppConfig>('set_stt_config', { stt }),
+  sttStatus: () => invoke<SttStatus>('stt_status'),
+  downloadSttModel: (modelId: string) =>
+    invoke<AppConfig>('download_stt_model', { args: { model_id: modelId } }),
   listTtsVoices: () => invoke<TtsVoice[]>('list_tts_voices'),
   previewTtsVoice: (args: { voice: string; lang: string }) =>
     invoke<void>('preview_tts_voice', { args }),
@@ -522,6 +548,12 @@ export const events = {
     cb: (u: { version: string; current: string; body?: string; source: 'host' | 'github' }) => void
   ): Promise<UnlistenFn> =>
     listen('kinai://update-available', (e) => cb(e.payload as any)),
+  onSttDownloadProgress: (
+    cb: (p: { model_id: string; progress: number }) => void
+  ): Promise<UnlistenFn> =>
+    listen<{ model_id: string; progress: number }>('kinai://stt-download-progress', (e) =>
+      cb(e.payload)
+    ),
   onUpdateProgress: (cb: (p: { progress: number }) => void): Promise<UnlistenFn> =>
     listen('kinai://update-progress', (e) => cb(e.payload as any)),
   /** Fired after the passive fact-extractor stores one or more new

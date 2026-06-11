@@ -7,6 +7,22 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [0.2.62] — 2026-06-10
 
+### Added
+
+- **🎙 Voice input — talk to KinAI on Telegram.** Send the bot a voice
+  message and it answers like a typed question: the audio is
+  transcribed **on the host Mac** with Whisper (fully local, German and
+  English auto-detected, Metal-accelerated on Apple Silicon). The bot
+  echoes what it understood («…»), the exchange lands in the KinAI
+  thread, and with `/voice` on, the answer comes back as a voice note —
+  a complete spoken conversation with your own local AI.
+  - Setup is one click: Settings → Voice replies → Voice input →
+    **Download** (Standard ~190 MB or High-accuracy ~574 MB; switch
+    anytime). Nothing else to install — audio decoding uses macOS
+    built-ins.
+  - Family members need nothing: they just hold the mic button in
+    Telegram and talk.
+
 ### Fixed
 
 - **Slash commands can be sent with the keyboard again.** The

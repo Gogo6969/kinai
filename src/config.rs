@@ -343,6 +343,31 @@ fn default_voice_de() -> String {
     "Anna (Premium)".into()
 }
 
+/// Voice input (speech-to-text) for inbound Telegram voice messages.
+/// Host-only; whisper.cpp embedded (see src/stt.rs). Disabled until the
+/// host downloads a model in Settings → Voice replies.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SttConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Which downloaded model to use — an id from stt::MODELS.
+    #[serde(default = "default_stt_model")]
+    pub model: String,
+}
+
+impl Default for SttConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            model: default_stt_model(),
+        }
+    }
+}
+
+fn default_stt_model() -> String {
+    "small-q5_1".into()
+}
+
 /// Per-machine startup preferences. Only consulted when the OS
 /// auto-launches KinAI at login (the binary sees `--autostart` in its
 /// argv — see `tauri-plugin-autostart` init in lib.rs). Manual
@@ -396,6 +421,8 @@ pub struct AppConfig {
     pub telegram: TelegramConfig,
     #[serde(default)]
     pub tts: TtsConfig,
+    #[serde(default)]
+    pub stt: SttConfig,
     /// Per-machine startup behaviour. Empty by default so existing
     /// configs don't change; only takes effect when "Launch at login"
     /// is enabled in Settings.

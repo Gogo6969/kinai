@@ -122,6 +122,13 @@ custom-protocol = ["tauri/custom-protocol"]
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+# Speech-to-text for inbound Telegram voice notes — whisper.cpp embedded
+# via whisper-rs, Metal-accelerated. macOS-only (the host is always a
+# Mac); Windows client builds skip the cmake-heavy native compile.
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.16", features = ["metal"] }
+hound = "3.5"
+
 [dev-dependencies]
 # Sandbox HOME during JWT roundtrip tests so they don't touch the
 # user's real ~/.kinai/keys/ directory.

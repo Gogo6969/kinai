@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     api,
+    events,
     type ClientSettings,
     type ComfyConfig,
     type LlmSettings,
@@ -8,6 +9,7 @@
     type TelegramLinkStatus,
     type Theme,
     type ToolSettings,
+    type SttStatus,
     type TtsConfig,
     type TtsVoice,
     type VisionEndpoint,
@@ -125,6 +127,63 @@
     } finally {
       // The sample is ~4s; release the button shortly after.
       setTimeout(() => (ttsPreviewing = ''), 4000);
+    }
+  }
+
+  // Voice input (STT) — Whisper model download + status.
+  let stt = $state<SttStatus | null>(null);
+  let sttDownloading = $state<string | null>(null); // model id mid-download
+  let sttProgress = $state(0);
+  let sttError = $state('');
+  let sttUnlisten: (() => void) | null = null;
+
+  async function refreshStt() {
+    try {
+      stt = await api.sttStatus();
+    } catch (e) {
+      console.warn('sttStatus failed', e);
+    }
+  }
+
+  async function downloadStt(modelId: string) {
+    sttError = '';
+    sttDownloading = modelId;
+    sttProgress = 0;
+    try {
+      sttUnlisten = await events.onSttDownloadProgress((p) => {
+        if (p.model_id === modelId) sttProgress = p.progress;
+      });
+      await api.downloadSttModel(modelId);
+      await app.load();
+      await refreshStt();
+    } catch (e) {
+      sttError = String(e).replace(/^Error:\s*/, '');
+    } finally {
+      sttUnlisten?.();
+      sttUnlisten = null;
+      sttDownloading = null;
+    }
+  }
+
+  async function setSttEnabled(enabled: boolean) {
+    if (!app.config) return;
+    try {
+      await api.setSttConfig({ ...app.config.stt, enabled });
+      await app.load();
+      await refreshStt();
+    } catch (e) {
+      sttError = String(e).replace(/^Error:\s*/, '');
+    }
+  }
+
+  async function selectSttModel(model: string) {
+    if (!app.config) return;
+    try {
+      await api.setSttConfig({ ...app.config.stt, model });
+      await app.load();
+      await refreshStt();
+    } catch (e) {
+      sttError = String(e).replace(/^Error:\s*/, '');
     }
   }
 
@@ -359,6 +418,7 @@
     }
     if (app.config?.mode === 'host') {
       void refreshTtsVoices();
+      void refreshStt();
     }
     // Pull current Telegram pairing state regardless of mode — host
     // sees the bot-token card + their own pair status; client peers
@@ -1527,6 +1587,77 @@
           <span class="text-xs text-white/40">
             {ttsVoicesEn.length} English · {ttsVoicesDe.length} German voices installed
           </span>
+        </div>
+
+        <div class="border-t border-white/10 pt-4 space-y-3">
+          <div class="flex items-center justify-between gap-3">
+            <div class="min-w-0">
+              <span class="text-sm font-medium text-white/80">🎙 Voice input (Telegram voice messages)</span>
+              <p class="text-xs text-white/50 mt-0.5">
+                Family members can <em>speak</em> to the bot: voice messages are
+                transcribed on this Mac (Whisper, fully local — German and
+                English auto-detected) and answered like typed questions.
+                One-time model download, nothing else to install.
+              </p>
+            </div>
+            {#if stt?.ready}
+              <label class="flex items-center gap-2 shrink-0 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={stt.enabled}
+                  onchange={(e) => setSttEnabled(e.currentTarget.checked)}
+                  class="accent-teal-400"
+                />
+                <span class="text-sm text-white/70">Enabled</span>
+              </label>
+            {/if}
+          </div>
+
+          {#if stt}
+            <div class="space-y-2">
+              {#each stt.models as m (m.id)}
+                <div class="flex items-center gap-3 text-sm">
+                  <label class="flex items-center gap-2 flex-1 min-w-0 {m.downloaded ? 'cursor-pointer' : 'opacity-80'}">
+                    <input
+                      type="radio"
+                      name="stt-model"
+                      class="accent-teal-400"
+                      checked={stt.model === m.id}
+                      disabled={!m.downloaded}
+                      onchange={() => selectSttModel(m.id)}
+                    />
+                    <span class="truncate text-white/75">{m.label}</span>
+                    <span class="text-xs text-white/40 shrink-0">{m.size_mb} MB</span>
+                  </label>
+                  {#if m.downloaded}
+                    <span class="text-xs text-emerald-300 shrink-0">✓ downloaded</span>
+                  {:else if sttDownloading === m.id}
+                    <span class="text-xs text-teal-300 shrink-0 font-mono">
+                      ↓ {sttProgress.toFixed(0)}%
+                    </span>
+                  {:else}
+                    <button
+                      class="kin-btn !py-1 !px-2.5 text-xs shrink-0"
+                      type="button"
+                      onclick={() => downloadStt(m.id)}
+                      disabled={sttDownloading !== null}
+                    >
+                      Download
+                    </button>
+                  {/if}
+                </div>
+              {/each}
+              {#if sttError}
+                <p class="text-xs text-red-300">✗ {sttError}</p>
+              {/if}
+              {#if stt.ready}
+                <p class="text-xs text-white/40">
+                  Voice input is active — anyone in the family can hold the mic
+                  button in Telegram and just talk.
+                </p>
+              {/if}
+            </div>
+          {/if}
         </div>
       {/if}
     </div>

@@ -61,6 +61,46 @@ pub async fn handle_update<R: Runtime>(
         return Ok(());
     };
 
+    // Voice message + voice input enabled → transcribe locally and run
+    // it as a normal chat turn. The transcript (🎙-prefixed) flows
+    // through the standard pipeline, so it lands in the KinAI thread,
+    // slash commands spoken aloud work, and the reply comes back as
+    // text (+ voice note if /voice is on).
+    let mut text_or_caption = text_or_caption;
+    if text_or_caption.trim().is_empty() && msg.voice.is_some() {
+        let stt_cfg = state.config.read().stt.clone();
+        if crate::stt::is_ready(&stt_cfg) {
+            // Show activity immediately — transcription takes a moment.
+            let _ = api.send_chat_action(chat_id, "typing").await;
+            match transcribe_voice_message(api, &stt_cfg, msg).await {
+                Ok(t) if !t.trim().is_empty() => {
+                    let transcript = t.trim().to_string();
+                    // Echo what was understood — builds trust in the
+                    // transcription and explains an off answer.
+                    let _ = api.send_message(chat_id, &format!("🎙 «{transcript}»")).await;
+                    text_or_caption = format!("🎙 {transcript}");
+                }
+                Ok(_) => {
+                    api.send_message(
+                        chat_id,
+                        "🎙 I couldn't hear any words in that voice message — please try again.",
+                    )
+                    .await?;
+                    return Ok(());
+                }
+                Err(e) => {
+                    tracing::warn!("telegram stt failed: {e:?}");
+                    api.send_message(
+                        chat_id,
+                        "🎙 I couldn't transcribe that voice message — please try again or type it.",
+                    )
+                    .await?;
+                    return Ok(());
+                }
+            }
+        }
+    }
+
     // No readable content? Say so instead of silently dropping the
     // update — a voice message especially feels broken when the bot
     // (which SPEAKS via /voice!) doesn't even react to it. The exchange
@@ -71,7 +111,8 @@ pub async fn handle_update<R: Runtime>(
             (
                 "🎙 (voice message)",
                 "🎙 I can't listen to voice messages yet — please type your question. \
-                 (I can talk back though: send /voice and my answers arrive as spoken voice notes.)",
+                 (The host can enable voice input in KinAI → Settings → Voice replies. \
+                 I can already talk back: send /voice and my answers arrive as voice notes.)",
             )
         } else {
             (
@@ -1122,6 +1163,28 @@ pub(crate) async fn voice_command_outcome(
             enabled_now: Some(false),
         }
     }
+}
+
+/// Download a Telegram voice note (OGG/Opus) and transcribe it with the
+/// local Whisper model. Mirrors the photo download flow: getFile →
+/// download by file_path.
+async fn transcribe_voice_message(
+    api: &BotApi,
+    stt_cfg: &crate::config::SttConfig,
+    msg: &TelegramMessage,
+) -> Result<String> {
+    let file_id = msg
+        .voice
+        .as_ref()
+        .and_then(|v| v.get("file_id"))
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow::anyhow!("voice message without file_id"))?;
+    let file = api.get_file(file_id).await?;
+    let file_path = file
+        .file_path
+        .ok_or_else(|| anyhow::anyhow!("telegram getFile returned no file_path"))?;
+    let bytes = api.download_file(&file_path).await?;
+    crate::stt::transcribe_ogg(stt_cfg, &bytes).await
 }
 
 /// If `content` is the `/voice` command, return the remainder (e.g.
