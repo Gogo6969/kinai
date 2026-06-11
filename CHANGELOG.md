@@ -5,6 +5,19 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.63] — 2026-06-11
+
+### Added
+
+- **🔊 Voice replies on family Macs (clients).** The speak button,
+  auto-speak, and the `/voice` toggle now work in every Mac client's
+  chat window — replies are synthesized and played locally with that
+  Mac's own voices (each member picks theirs in Settings → Voice
+  replies, with previews). Nothing routes through the host; it's
+  fully private to the machine. Telegram voice notes are unchanged
+  (toggle with `/voice` in Telegram). Windows clients: not yet — the
+  Windows speech engine is a future addition.
+
 ## [0.2.62] — 2026-06-10
 
 ### Added

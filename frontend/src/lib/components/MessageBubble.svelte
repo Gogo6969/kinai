@@ -24,11 +24,12 @@
   // rather than surface a failure toast.
   const isHost = $derived(app.config?.mode === 'host');
 
-  // Desktop speak button (host-only: audio plays on the host's
-  // speakers). Click = speak, click again = stop. The speaking state
-  // lives in the app store so a reply started by AUTO-speak still shows
-  // "stop" on its bubble, and only one bubble ever shows it.
-  const ttsEnabled = $derived(isHost && (app.config?.tts?.enabled ?? false));
+  // Desktop speak button — any Mac (host OR client): audio plays on
+  // THIS machine with its own voices. Click = speak, click again =
+  // stop. The speaking state lives in the app store so a reply started
+  // by AUTO-speak still shows "stop" on its bubble, and only one bubble
+  // ever shows it.
+  const ttsEnabled = $derived(app.ttsSupported && (app.config?.tts?.enabled ?? false));
   const speaking = $derived(message.id != null && app.speakingMsgId === message.id);
   function toggleSpeak() {
     if (!message.id) return;

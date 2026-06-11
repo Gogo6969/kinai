@@ -353,15 +353,24 @@ pub async fn set_comfy_config(
 // Voice replies (TTS)
 // ============================================================
 
-/// `/voice` typed in the HOST's desktop chat: toggles whether replies on
-/// this Mac are read aloud automatically — the same flag as Settings →
-/// Voice replies → "Speak automatically", persisted. Returns the reply
-/// text plus `Some(new_state)` on a successful toggle (None for the
+/// Whether THIS machine can synthesize speech (macOS `say` engine).
+/// Drives the speak-button / Voice-replies-card visibility on clients —
+/// Mac clients speak locally with their own voices; Windows can't yet.
+#[tauri::command]
+pub async fn tts_supported() -> Result<bool> {
+    Ok(cfg!(target_os = "macos"))
+}
+
+/// `/voice` typed in the desktop chat (host or Mac client): toggles
+/// whether replies on THIS Mac are read aloud automatically — the same
+/// flag as Settings → Voice replies → "Speak automatically", persisted
+/// to this machine's own config. Returns the reply text plus
+/// `Some(new_state)` on a successful toggle (None for the
 /// disabled/usage/error replies).
 fn toggle_desktop_voice(state: &SharedState, arg: &str) -> (String, Option<bool>) {
     if !state.config.read().tts.enabled {
         return (
-            "🔇 Voice replies are switched off on the host. Enable them in \
+            "🔇 Voice replies are switched off on this Mac. Enable them in \
              Settings → Voice replies first."
                 .into(),
             None,
@@ -463,9 +472,6 @@ pub async fn speak_text(
     state: tauri::State<'_, SharedState>,
     args: SpeakTextArgs,
 ) -> Result<()> {
-    if matches!(state.config.read().mode, Mode::Client) {
-        return Err("Voice playback runs on the host only.".into());
-    }
     let tts_cfg = state.config.read().tts.clone();
     let text = crate::tts::speakable_text(&args.text);
     if text.is_empty() {
@@ -1553,6 +1559,64 @@ pub async fn send_message(
     // then the host's echo would arrive with a different id and the UI
     // store (which dedups by id) would display the user's message twice.
     if matches!(state.config.read().mode, Mode::Client) {
+        // /voice on a Mac CLIENT controls speech on THIS machine (same
+        // per-surface rule as the host): toggle the local auto-speak
+        // flag and answer synthetically — no host round-trip. The
+        // exchange is shown live but not persisted (client threads live
+        // on the host); a settings toggle isn't conversation history.
+        if cfg!(target_os = "macos") {
+            if let Some(arg) = crate::telegram::router::strip_voice(args.content.trim()) {
+                let (reply, enabled_now) = toggle_desktop_voice(&state, arg);
+                let now = chrono::Utc::now().to_rfc3339();
+                let user_msg = db::Message {
+                    id: format!("local-voice-u-{}", args.client_msg_id),
+                    thread_id: args.thread_id.clone(),
+                    role: "user".into(),
+                    sender: sender.clone(),
+                    content: args.content.clone(),
+                    attachments: vec![],
+                    created_at: now.clone(),
+                    summarized_into: None,
+                    metrics: None,
+                };
+                let assistant_msg = db::Message {
+                    id: format!("local-voice-a-{}", args.client_msg_id),
+                    thread_id: args.thread_id.clone(),
+                    role: "assistant".into(),
+                    sender: "KinAI".into(),
+                    content: reply,
+                    attachments: vec![],
+                    created_at: now,
+                    summarized_into: None,
+                    metrics: None,
+                };
+                let _ = app.emit("kinai://message", &user_msg);
+                let _ = app.emit("kinai://message", &assistant_msg);
+                let metrics = TurnMetrics {
+                    first_token_ms: 0,
+                    total_ms: 0,
+                    output_tokens: 0,
+                    tps: 0.0,
+                    model: String::new(),
+                    slot: String::new(),
+                };
+                let _ = app.emit(
+                    "kinai://assistant-done",
+                    serde_json::json!({
+                        "client_msg_id": args.client_msg_id,
+                        "message": &assistant_msg,
+                        "metrics": &metrics,
+                        "speak": enabled_now == Some(true),
+                        "config_changed": enabled_now.is_some(),
+                    }),
+                );
+                return Ok(SendMessageResult {
+                    user_message: user_msg,
+                    assistant_message: assistant_msg,
+                    metrics,
+                });
+            }
+        }
         let tx = {
             let net = state.net.lock().await;
             net.client_tx.clone()

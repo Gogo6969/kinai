@@ -419,6 +419,8 @@
     if (app.config?.mode === 'host') {
       void refreshTtsVoices();
       void refreshStt();
+    } else if (app.ttsSupported) {
+      void refreshTtsVoices();
     }
     // Pull current Telegram pairing state regardless of mode — host
     // sees the bot-token card + their own pair status; client peers
@@ -588,6 +590,10 @@
           base_url: comfyui.base_url.trim(),
           default_model: comfyui.default_model || 'zimage',
         });
+        await api.setTtsConfig({ ...tts });
+      }
+      if (!isHost && app.ttsSupported) {
+        // Mac client: voice replies are a local-machine preference.
         await api.setTtsConfig({ ...tts });
       }
       // Always-applicable settings.
@@ -1424,20 +1430,29 @@
     </div>
     {/if}
 
-    {#if isHost}
+    {#if isHost || (isClient && app.ttsSupported)}
     <div class="kin-card space-y-4">
       <div class="flex items-center justify-between gap-3">
         <div class="min-w-0">
           <h2 class="font-semibold text-lg">Voice replies</h2>
-          <p class="text-xs text-white/50">
-            Optional. KinAI speaks its answers. <strong class="text-white/70">Telegram:</strong>
-            every family member switches voice notes on/off for themselves by
-            sending <code>/voice</code> to the bot — from their phone, from
-            anywhere. <strong class="text-white/70">This Mac:</strong> replies
-            in the chat window can be read aloud here (the speakers are on
-            this machine, so this part is host-only). Fully local, powered by
-            macOS speech synthesis.
-          </p>
+          {#if isHost}
+            <p class="text-xs text-white/50">
+              Optional. KinAI speaks its answers. <strong class="text-white/70">Telegram:</strong>
+              every family member switches voice notes on/off for themselves by
+              sending <code>/voice</code> to the bot — from their phone, from
+              anywhere. <strong class="text-white/70">This Mac:</strong> replies
+              in the chat window can be read aloud here. Fully local, powered by
+              macOS speech synthesis.
+            </p>
+          {:else}
+            <p class="text-xs text-white/50">
+              Optional. KinAI reads its replies aloud <strong class="text-white/70">on this
+              Mac</strong>, with the voices installed here — type <code>/voice</code> in the
+              chat or use the options below. (Telegram voice notes are separate:
+              send <code>/voice</code> to the family bot.) Fully local, powered by
+              macOS speech synthesis.
+            </p>
+          {/if}
         </div>
         <label class="flex items-center gap-2 shrink-0 cursor-pointer">
           <input type="checkbox" bind:checked={tts.enabled} class="accent-teal-400" />

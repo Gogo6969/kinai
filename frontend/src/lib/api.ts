@@ -359,6 +359,7 @@ export const api = {
   setComfyConfig: (comfyui: ComfyConfig) =>
     invoke<AppConfig>('set_comfy_config', { comfyui }),
   setTtsConfig: (tts: TtsConfig) => invoke<AppConfig>('set_tts_config', { tts }),
+  ttsSupported: () => invoke<boolean>('tts_supported'),
   setSttConfig: (stt: SttConfig) => invoke<AppConfig>('set_stt_config', { stt }),
   sttStatus: () => invoke<SttStatus>('stt_status'),
   downloadSttModel: (modelId: string) =>

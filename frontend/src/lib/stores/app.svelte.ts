@@ -14,6 +14,9 @@ import { getCurrentWindow } from '@tauri-apps/api/window';
 
 class AppStore {
   config = $state<AppConfig | null>(null);
+  /** This machine can synthesize speech (macOS). Mac CLIENTS speak
+   *  locally with their own voices; hosts are always Macs today. */
+  ttsSupported = $state(false);
   threads = $state<ThreadMeta[]>([]);
   activeThreadId = $state<string | null>(null);
   messages = $state<Record<string, Message[]>>({});
@@ -78,6 +81,7 @@ class AppStore {
 
   async load() {
     this.config = await api.getConfig();
+    this.ttsSupported = await api.ttsSupported().catch(() => false);
     if (this.config.mode !== 'unconfigured') {
       this.threads = await api.listThreads();
       if (this.threads.length === 0) {
@@ -596,17 +600,25 @@ class AppStore {
         if (config_changed) {
           void api.getConfig().then((c) => (this.config = c));
         }
-        // Auto-speak (host desktop): read the finished reply aloud
-        // without a button press. The HOST BACKEND decides per reply
-        // (`speak`: setting + /voice overrides folded in); client-mode
-        // events carry no flag → silent. Only the MAIN window reacts —
-        // the overlay receives the same broadcast and would otherwise
-        // start a duplicate playback.
+        // Auto-speak: read the finished reply aloud without a button
+        // press. On the HOST the backend decides per reply (`speak`:
+        // setting + /voice overrides folded in). On a Mac CLIENT the
+        // WS events carry no flag (except synthetic /voice
+        // confirmations), so the client's own local setting decides.
+        // Only the MAIN window reacts — the overlay receives the same
+        // broadcast and would otherwise start a duplicate playback.
+        const localAuto =
+          this.ttsSupported &&
+          !!this.config?.tts?.enabled &&
+          !!this.config?.tts?.auto_speak;
+        const wantSpeak =
+          this.config?.mode === 'host'
+            ? speak === true
+            : this.ttsSupported && (speak ?? localAuto) === true;
         if (
-          speak === true &&
+          wantSpeak &&
           message?.id &&
           message.content &&
-          this.config?.mode === 'host' &&
           getCurrentWindow().label === 'main'
         ) {
           void this.speakMessage(message.id, message.content);

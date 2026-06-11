@@ -201,6 +201,7 @@ pub fn run() {
             commands::delete_user_fact,
             commands::clear_user_facts,
             commands::set_tts_config,
+            commands::tts_supported,
             commands::set_stt_config,
             commands::stt_status,
             commands::download_stt_model,
