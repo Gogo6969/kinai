@@ -39,6 +39,11 @@
       desc: 'Start a fresh chat — no prior context (memory kept)',
       hint: 'Add a question to ask right away: /newchat what is rust?',
     },
+    {
+      cmd: '/voice',
+      desc: 'Toggle spoken replies',
+      hint: 'KinAI app: replies read aloud · Telegram: voice notes. /voice on | off',
+    },
     { cmd: '/help', desc: 'List slash commands' },
   ];
 
@@ -73,8 +78,12 @@
   });
   let slashIndex = $state(0);
   const slashFiltered = $derived.by(() => {
-    const t = input.trim();
-    if (!t.startsWith('/') || t.includes(' ') || t.includes('\n')) return [];
+    // trimStart only — a TRAILING space means the command is complete
+    // (applySlash appends one), and the menu must close so the next
+    // Return submits. With trim() the menu re-captured Return forever,
+    // making bare slash commands unsendable by keyboard.
+    const t = input.trimStart();
+    if (!t.startsWith('/') || /\s/.test(t)) return [];
     const q = t.toLowerCase();
     return SLASH_COMMANDS.filter((c) => c.cmd.toLowerCase().startsWith(q));
   });

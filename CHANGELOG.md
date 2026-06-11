@@ -5,6 +5,20 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.62] — 2026-06-10
+
+### Fixed
+
+- **Slash commands can be sent with the keyboard again.** The
+  autocomplete menu kept re-completing the command on every Return, so
+  bare commands (`/help`, `/newchat`, `/voice`, …) could only be sent
+  by clicking SEND. Now the first Return completes the command and the
+  second Return sends it.
+
+### Added
+
+- `/voice` appears in the slash autocomplete menu.
+
 ## [0.2.61] — 2026-06-10
 
 ### Added
