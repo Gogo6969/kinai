@@ -108,6 +108,12 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # whisper.cpp (voice input) uses std::filesystem → needs a
+          # macOS 10.15+ deployment target; we pin 11.0 to match the
+          # bundle's minimumSystemVersion. Without this the runner
+          # builds against Tauri's 10.13 default and the C++ compile
+          # fails with "'path' is unavailable".
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # macOS signing + notarization. tauri-action imports the .p12
