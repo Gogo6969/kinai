@@ -236,6 +236,7 @@ When a thread exceeds 30 unsummarized messages, the oldest are folded into a lon
 | **Regenerate & edit-and-resend** — re-roll the last answer, or fix your question and re-run from there | ✅ |
 | **Streaming Telegram replies** — the bot live-edits its message as the model writes | ✅ |
 | **Image generation via ComfyUI** — `/pic` & `/picHQ` on every surface, with a "creating a picture…" progress note on Telegram | ✅ |
+| **🔊 Voice replies** — `/voice` makes KinAI speak: Telegram voice notes per family member, auto-read-aloud replies on the host Mac. Fully local (macOS speech synthesis) | ✅ |
 | System tray icon with **live status** (model, peers connected) | ✅ |
 | Customizable hotkey, theme, font size | ✅ |
 | **End-to-end JWT (RS256)** auth on every WebSocket connection | ✅ |
@@ -268,7 +269,7 @@ When a thread exceeds 30 unsummarized messages, the oldest are folded into a lon
 | Version | Focus | Highlights |
 |---|---|---|
 | **v0.1** | MVP | Hotkey overlay, host/client, invite + JWT, tools, mDNS *(macOS)* |
-| **v0.2** ⬅ *current* | Vision, attachments, family-grade updates | PDFs, image attach + vision routing, image search inline, host-distributed signed updates, per-peer context isolation, reconnect supervisor, cross-thread search, regenerate / edit-and-resend, streaming Telegram replies, ComfyUI image generation |
+| **v0.2** ⬅ *current* | Vision, attachments, family-grade updates | PDFs, image attach + vision routing, image search inline, host-distributed signed updates, per-peer context isolation, reconnect supervisor, cross-thread search, regenerate / edit-and-resend, streaming Telegram replies, ComfyUI image generation, voice replies (TTS) |
 | **v0.3** | Image generation + web-page ingest | ComfyUI / A1111 routing, page-to-context |
 | **v0.4** | RAG basics | Doc upload + vector search |
 | **v0.5** | Mobile + voice | iOS / Android via Tauri Mobile, Whisper STT + Piper TTS, voice-thread memory |

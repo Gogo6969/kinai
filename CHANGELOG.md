@@ -11,12 +11,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - **🔊 Voice replies.** KinAI can now speak its answers — fully local,
   powered by macOS speech synthesis on the host, no cloud and no extra
-  installs.
+  installs. `/voice` toggles spoken replies **for the chat you're in**:
   - **Telegram:** send `/voice` to the bot and answers arrive as text
-    plus a real voice note (the waveform bubble). `/voice on` /
-    `/voice off` set it explicitly; the opt-in is per family member.
-  - **Desktop (host):** a "speak" button on every reply reads it
-    aloud; click again to stop.
+    plus a real voice note (OGG/Opus waveform bubble; per family
+    member, from any phone). Turning it on confirms with a spoken
+    voice note. `/voice on` / `/voice off` set it explicitly.
+  - **KinAI chat (host Mac):** type `/voice` and replies are read
+    aloud automatically from then on — the ON confirmation speaks
+    itself, the OFF one stays silent. A "speak/stop" button on every
+    reply plays any answer on demand either way. Same switch as
+    Settings → Voice replies → "Speak automatically".
   - **Settings → Voice replies (host):** master switch, separate
     English and German voices with ▶ preview buttons, and step-by-step
     instructions for downloading Apple's free Premium voices (they
@@ -24,10 +28,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - Replies are auto-detected as German or English and use the
     matching voice; markdown/code is stripped before speaking, and
     `/pic` photo replies are never read aloud.
-  - **Speak automatically (optional):** the host can choose between
-    "speak on demand" (the speak button, default) and "speak
-    automatically" — every finished reply in the desktop chat is read
-    aloud, with the reply's stop button to silence it.
+- **Voice messages get a real answer.** Sending a recorded voice
+  message no longer disappears into silence — the bot explains it
+  can't transcribe yet, and the exchange shows up in the KinAI app's
+  thread like everything else. (Speech-to-text is on the roadmap.)
 
 ### Changed
 
