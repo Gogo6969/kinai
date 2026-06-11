@@ -1438,7 +1438,8 @@
         </p>
 
         <div class="space-y-1.5">
-          <span class="text-sm text-white/70">In the chat window on this Mac</span>
+          <span class="text-sm text-white/70">In the chat window on this Mac
+            <span class="text-white/40">(shortcut: type <code>/voice</code> in the chat)</span></span>
           <label class="flex items-start gap-2 cursor-pointer">
             <input
               type="radio"

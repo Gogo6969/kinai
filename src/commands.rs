@@ -353,6 +353,58 @@ pub async fn set_comfy_config(
 // Voice replies (TTS)
 // ============================================================
 
+/// `/voice` typed in the HOST's desktop chat: toggles whether replies on
+/// this Mac are read aloud automatically — the same flag as Settings →
+/// Voice replies → "Speak automatically", persisted. Returns the reply
+/// text plus `Some(new_state)` on a successful toggle (None for the
+/// disabled/usage/error replies).
+fn toggle_desktop_voice(state: &SharedState, arg: &str) -> (String, Option<bool>) {
+    if !state.config.read().tts.enabled {
+        return (
+            "🔇 Voice replies are switched off on the host. Enable them in \
+             Settings → Voice replies first."
+                .into(),
+            None,
+        );
+    }
+    let current = state.config.read().tts.auto_speak;
+    let new_state = match arg.to_ascii_lowercase().as_str() {
+        "" => !current,
+        "on" => true,
+        "off" => false,
+        _ => {
+            return (
+                "Usage: /voice — toggle spoken replies here, or /voice on / /voice off."
+                    .into(),
+                None,
+            )
+        }
+    };
+    {
+        let mut cfg = state.config.write();
+        cfg.tts.auto_speak = new_state;
+        if let Err(e) = cfg.save() {
+            return (format!("Couldn't save the voice setting: {e}"), None);
+        }
+    }
+    if new_state {
+        (
+            "🔊 Voice is ON — I'll read my replies aloud in this chat from now on. \
+             Type /voice to turn it off. (Telegram voice notes are separate — send \
+             /voice to the bot there.)"
+                .into(),
+            Some(true),
+        )
+    } else {
+        (
+            "🔇 Voice is OFF — replies here are text only. Press the speak button \
+             under any reply to hear it."
+                .into(),
+            Some(false),
+        )
+    }
+}
+
 #[tauri::command]
 pub async fn set_tts_config(
     state: tauri::State<'_, SharedState>,
@@ -1535,30 +1587,25 @@ async fn run_assistant_turn(
     // turn to the model (which produced junk/nothing). Falls through to
     // the normal slash handler (/pic, /picHQ, /help, ?) otherwise — same
     // handler the WebSocket dispatcher uses, so both chat paths match.
-    // Some(true)/Some(false) force/suppress desktop auto-speak for this
-    // reply; None = follow the user's auto-speak setting. /voice sets it:
-    // the ON confirmation is always spoken (audible proof it works), the
-    // OFF confirmation never is — a voice saying "voice is off" is absurd.
+    // Per-reply speak decision for the desktop auto-speak hook.
+    // Some(true)/Some(false) force/suppress; None = follow the (fresh)
+    // auto-speak setting. /voice sets it: the ON confirmation is always
+    // spoken (audible proof it works), the OFF one never is — a voice
+    // saying "voice is off" out loud is absurd.
     let mut speak_override: Option<bool> = None;
+    let mut config_changed = false;
     let slash_reply = if route_pick.bare_switch {
         Some(crate::slash::switch_confirmation(&route_pick))
     } else if let Some(arg) = crate::telegram::router::strip_voice(&llm_route_content) {
-        // /voice typed in the host's desktop chat — toggles the host
-        // user's own Telegram voice-note opt-in. Intercepted before the
-        // LLM so the model can't roleplay a fake confirmation.
-        let outcome =
-            crate::telegram::router::voice_command_outcome(&state, db::HOST_PEER, arg).await;
-        speak_override = Some(outcome.enabled_now == Some(true));
-        // /voice only governs Telegram voice notes. If this desktop is
-        // ALSO set to speak replies automatically, say so — otherwise
-        // the very next spoken reply looks like the toggle failed.
-        let mut reply = outcome.reply;
-        if outcome.enabled_now == Some(false) && cfg.tts.auto_speak {
-            reply.push_str(
-                "\n\n_Note: replies on this Mac are still spoken automatically — \
-                 switch to \"Speak on demand\" in Settings → Voice replies to stop that._",
-            );
-        }
+        // /voice typed in the KinAI desktop chat controls voice ON THIS
+        // SURFACE: replies are read aloud automatically (same flag as
+        // Settings → Voice replies → "Speak automatically"). Telegram
+        // voice notes stay a separate per-member /voice inside Telegram.
+        // Intercepted before the LLM so the model can't roleplay a fake
+        // confirmation.
+        let (reply, enabled_now) = toggle_desktop_voice(&state, arg);
+        speak_override = Some(enabled_now == Some(true));
+        config_changed = enabled_now.is_some();
         Some(reply)
     } else {
         crate::slash::handle(&cfg, &llm_route_content).await
@@ -1591,13 +1638,18 @@ async fn run_assistant_turn(
         let _ = app.emit("kinai://message", &assistant_msg);
         // Same final emit shape the LLM path uses below, so the UI's
         // assistant-done listener treats this turn identically.
+        let speak = speak_override.unwrap_or_else(|| {
+            let c = state.config.read();
+            c.tts.enabled && c.tts.auto_speak
+        });
         let _ = app.emit(
             "kinai://assistant-done",
             serde_json::json!({
                 "client_msg_id": client_msg_id,
                 "message": &assistant_msg,
                 "metrics": &metrics,
-                "speak": speak_override,
+                "speak": speak,
+                "config_changed": config_changed,
             }),
         );
         // Bidirectional Telegram sync: mirror the full Q&A turn (the
@@ -1820,12 +1872,17 @@ async fn run_assistant_turn(
         }
     });
 
+    let speak = {
+        let c = state.config.read();
+        c.tts.enabled && c.tts.auto_speak
+    };
     let _ = app.emit(
         "kinai://assistant-done",
         serde_json::json!({
             "client_msg_id": client_msg_id,
             "message": assistant_msg,
             "metrics": metrics,
+            "speak": speak,
         }),
     );
 

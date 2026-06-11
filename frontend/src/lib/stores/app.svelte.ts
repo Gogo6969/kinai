@@ -563,7 +563,7 @@ class AppStore {
       })
     );
     this.cleanups.push(
-      await events.onAssistantDone(({ client_msg_id, message, metrics, speak }) => {
+      await events.onAssistantDone(({ client_msg_id, message, metrics, speak, config_changed }) => {
         // Finalize the assistant turn. In Host mode the local pipeline
         // also emits `kinai://message` for the assistant, so this push
         // would be a no-op dedup. In Client mode the host's wire protocol
@@ -591,20 +591,22 @@ class AppStore {
         }
         this.busy = false;
         this.activeTurnId = null;
+        // The turn may have changed config (/voice toggles auto-speak) —
+        // refetch quietly so Settings and future decisions stay fresh.
+        if (config_changed) {
+          void api.getConfig().then((c) => (this.config = c));
+        }
         // Auto-speak (host desktop): read the finished reply aloud
-        // without a button press. Only the MAIN window reacts — the
-        // overlay receives the same broadcast event and would otherwise
-        // start a duplicate playback. `speak` overrides the setting per
-        // reply: /voice ON confirmation always speaks (audible proof),
-        // /voice OFF stays silent even in auto-speak mode.
-        const wantSpeak =
-          speak === false ? false : speak === true ? true : !!this.config?.tts?.auto_speak;
+        // without a button press. The HOST BACKEND decides per reply
+        // (`speak`: setting + /voice overrides folded in); client-mode
+        // events carry no flag → silent. Only the MAIN window reacts —
+        // the overlay receives the same broadcast and would otherwise
+        // start a duplicate playback.
         if (
+          speak === true &&
           message?.id &&
           message.content &&
           this.config?.mode === 'host' &&
-          this.config?.tts?.enabled &&
-          wantSpeak &&
           getCurrentWindow().label === 'main'
         ) {
           void this.speakMessage(message.id, message.content);

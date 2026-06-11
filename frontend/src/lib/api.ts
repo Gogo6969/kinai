@@ -299,10 +299,13 @@ export interface AssistantDone {
   client_msg_id: string;
   message: Message;
   metrics: TurnMetrics;
-  /** Desktop auto-speak override for this reply: true = always speak,
-   *  false = never speak, absent/null = follow the auto-speak setting.
-   *  Set by /voice so its OFF confirmation isn't spoken out loud. */
+  /** Desktop auto-speak decision for this reply, computed by the host
+   *  backend (auto-speak setting folded in; /voice confirmations force
+   *  it). Absent on client-mode events → no playback. */
   speak?: boolean | null;
+  /** True when this turn changed the config (e.g. /voice toggled
+   *  auto-speak) — the store refetches config so Settings stays fresh. */
+  config_changed?: boolean;
 }
 
 export const api = {
