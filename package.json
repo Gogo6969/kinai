@@ -16,5 +16,10 @@
   "workspaces": [
     "frontend"
   ],
-  "packageManager": "pnpm@9.15.0"
+  "packageManager": "pnpm@9.15.0",
+  "pnpm": {
+    "overrides": {
+      "esbuild": "^0.28.1"
+    }
+  }
 }
