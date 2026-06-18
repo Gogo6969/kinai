@@ -20,7 +20,7 @@
 </div>
 
 > [!NOTE]
-> macOS (host + client) and Windows (client) are both available. Linux host support is coming. Phones / tablets connect through the family's Telegram bot — no native iOS / Android app yet.
+> macOS (host + client), Windows (client), and **Linux (client, beta)** are available. A Linux *host* isn't supported yet (the bridge runs on a Mac; your LLM can already live on Linux). Phones / tablets connect through the family's Telegram bot — no native iOS / Android app yet.
 
 ---
 
@@ -166,6 +166,32 @@ For a Windows PC on the same home network as your host Mac:
 > (you ask, the Mac mini's local LLM answers), but the host machine
 > stays Mac for now.
 
+## 🐧 Linux client (beta)
+
+For a Linux PC on the same network as your host Mac:
+
+1. Download **`KinAI_*_amd64.AppImage`** from the
+   **[Releases page](https://github.com/Gogo6969/kinai/releases/latest)**
+   (or the `.deb` / `.rpm` if you prefer a native package).
+2. Make it executable and run it:
+
+   ```bash
+   chmod +x KinAI_*_amd64.AppImage
+   ./KinAI_*_amd64.AppImage
+   ```
+
+3. Click **👋 Join an existing host**, enter your name, pick the host
+   from the discovered list (or paste the 6-char code / invite link),
+   and **Connect**.
+
+> **Beta — known limitations.** Core chat works. KinAI renders emoji in
+> **monochrome** on Linux to dodge a WebKitGTK/Skia color-font crash.
+> The global-hotkey **overlay** (`Ctrl+Space`) and the **tray icon** may
+> not work under Wayland (a platform restriction on global key grabs /
+> tray protocol) — the main window is unaffected. Voice replies / voice
+> input are host-only (macOS). Tested on Fedora KDE (Wayland); other
+> distros/desktops may vary.
+
 ### Daily use (both platforms)
 
 Press **`Cmd+Space`** (macOS) / **`Ctrl+Space`** (Windows) anywhere to
@@ -274,7 +300,7 @@ When a thread exceeds 30 unsummarized messages, the oldest are folded into a lon
 | **v0.4** | RAG basics | Doc upload + vector search |
 | **v0.5** | Mobile + voice | iOS / Android via Tauri Mobile, Whisper STT + Piper TTS, voice-thread memory |
 
-*Windows and Linux clients are coming.*
+*Windows and Linux clients are available; a Linux host is not yet supported.*
 | **v1.0** | Plugins & polish | Custom-tool marketplace, multi-host switcher, admin dashboard, Olares One deep integration |
 | **v2.0+** | Family knowledge | Advanced RAG over photos / PDFs / recipes, real-time translation |
 
