@@ -4,6 +4,18 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>KinAI</title>
+    <script>
+      // Tag Linux BEFORE first paint. WebKitGTK's Skia renderer crashes
+      // (colrv1_configure_skpaint assert) when rasterizing COLRv1 color
+      // emoji from the system font; the `.os-linux` class (see app.css)
+      // forces text-presentation emoji so that code path is never hit.
+      // Inline + pre-render so even the first frame is emoji-safe.
+      try {
+        if (/Linux/.test(navigator.userAgent)) {
+          document.documentElement.classList.add('os-linux');
+        }
+      } catch (_) {}
+    </script>
     %sveltekit.head%
   </head>
   <body

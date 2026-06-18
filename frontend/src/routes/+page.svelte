@@ -5,6 +5,7 @@
   import Logo from '$lib/components/Logo.svelte';
   import UpdateBanner from '$lib/components/UpdateBanner.svelte';
   import { goto } from '$app/navigation';
+  import { Home, LogIn } from '@lucide/svelte';
 </script>
 
 {#if app.config === null}
@@ -29,7 +30,7 @@
           class="kin-glass rounded-2xl p-7 text-left hover:bg-white/10 transition-colors group"
           onclick={() => goto('/host')}
         >
-          <div class="text-4xl mb-3 group-hover:scale-110 transition-transform">🏠</div>
+          <div class="mb-3 text-teal-300 group-hover:scale-110 transition-transform"><Home size={40} strokeWidth={1.5} /></div>
           <h2 class="font-semibold text-lg mb-2">Host KinAI here</h2>
           <p class="text-sm text-white/60 leading-relaxed">
             This machine becomes the family's KinAI server. Auto-detects Ollama,
@@ -43,7 +44,7 @@
           class="kin-glass rounded-2xl p-7 text-left hover:bg-white/10 transition-colors group"
           onclick={() => goto('/client')}
         >
-          <div class="text-4xl mb-3 group-hover:scale-110 transition-transform">👋</div>
+          <div class="mb-3 text-teal-300 group-hover:scale-110 transition-transform"><LogIn size={40} strokeWidth={1.5} /></div>
           <h2 class="font-semibold text-lg mb-2">Join an existing host</h2>
           <p class="text-sm text-white/60 leading-relaxed">
             Already have a KinAI host at home? Paste the invite link, type the

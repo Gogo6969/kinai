@@ -10,6 +10,19 @@
   --kin-overlay-font-size: 14px;
 }
 
+/* Linux/WebKitGTK crash guard: the Skia renderer aborts the web-content
+ * process (colrv1_configure_skpaint assertion) when it rasterizes a
+ * COLRv1 color-emoji glyph. Forcing text (monochrome) presentation makes
+ * the engine pick non-color glyphs, so that code path is never entered.
+ * Scoped to Linux (class set in app.html before first paint) so macOS /
+ * Windows keep full-color emoji. Applies to dynamic chat content too. */
+html.os-linux,
+html.os-linux *,
+html.os-linux *::before,
+html.os-linux *::after {
+  font-variant-emoji: text !important;
+}
+
 html.light {
   color-scheme: light;
 }
