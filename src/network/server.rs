@@ -447,18 +447,36 @@ async fn dispatch(
             } else {
                 sender
             };
-            run_chat_turn(
-                s,
-                tx,
-                context_peer,
-                &thread_id,
-                &content,
-                &actual_sender,
-                &client_msg_id,
-                peer_id,
-                &attachments,
-            )
-            .await?;
+            // Spawn the turn instead of awaiting it inline. The connection's
+            // read loop dispatches envelopes sequentially, so awaiting here
+            // would block reads until the (possibly runaway) turn finished —
+            // and the client's StopGeneration would never be seen in time.
+            // Spawning frees the loop to receive StopGeneration mid-turn and
+            // cancel the token run_chat_turn registers. Errors are surfaced
+            // over the same writer channel from inside the task.
+            let s2 = s.clone();
+            let tx2 = tx.clone();
+            let context_peer2 = context_peer.to_string();
+            let peer_id2 = peer_id.to_string();
+            tokio::spawn(async move {
+                if let Err(e) = run_chat_turn(
+                    &s2,
+                    &tx2,
+                    &context_peer2,
+                    &thread_id,
+                    &content,
+                    &actual_sender,
+                    &client_msg_id,
+                    &peer_id2,
+                    &attachments,
+                )
+                .await
+                {
+                    let _ = tx2.send(Envelope::Error {
+                        message: e.to_string(),
+                    });
+                }
+            });
         }
         // Client pressed Stop: cancel the matching in-flight turn's token
         // (registered in run_chat_turn). Breaks runaway tool/token loops
