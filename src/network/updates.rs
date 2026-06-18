@@ -67,7 +67,8 @@ fn bundle_filenames(target: &str) -> &'static [&'static str] {
     match target {
         "darwin-aarch64" | "darwin-x86_64" => &["KinAI.app.tar.gz"],
         "windows-x86_64" => &["KinAI.exe", "KinAI.nsis.zip", "KinAI.msi", "KinAI.msi.zip"],
-        // Future: linux-x86_64 → &["KinAI.AppImage.tar.gz"]
+        // Tauri's Linux updater consumes the gzipped AppImage.
+        "linux-x86_64" => &["KinAI.AppImage.tar.gz"],
         _ => &[],
     }
 }
@@ -92,7 +93,7 @@ const SUPPORTED_TARGETS: &[&str] = &[
     "darwin-aarch64",
     "darwin-x86_64",
     "windows-x86_64",
-    // "linux-x86_64",
+    "linux-x86_64",
 ];
 
 #[derive(Serialize)]

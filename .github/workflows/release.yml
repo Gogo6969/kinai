@@ -49,11 +49,34 @@ jobs:
             args: '--target x86_64-apple-darwin'
           - os: windows-latest
             args: ''
+          # Linux client. Pinned to 22.04 (not ubuntu-latest/24.04) so the
+          # AppImage links against an older glibc + webkit2gtk and runs on
+          # the widest range of distros — apps built on older Ubuntu run on
+          # newer, not the reverse.
+          - os: ubuntu-22.04
+            args: ''
 
     runs-on: ${{ matrix.os }}
 
     steps:
       - uses: actions/checkout@v6
+
+      # Tauri's Linux system deps (webview + tray + AppImage tooling).
+      # No-op on macOS/Windows runners.
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            build-essential \
+            libxdo-dev \
+            libssl-dev \
+            file \
+            wget
 
       - uses: dtolnay/rust-toolchain@stable
         with:

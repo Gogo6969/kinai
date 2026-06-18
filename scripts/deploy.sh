@@ -211,6 +211,58 @@ stage_windows_update() {
   echo "    ($(ls -lh "$DEST" | awk '{print $5}') raw $DEST_NAME + signature)"
 }
 
+# Pull the Linux updater bundle (gzipped AppImage) from the matching
+# GitHub Release and stage it so the macOS host serves Linux clients
+# their updates over the LAN — same model + same matching-tag-only trust
+# rule as stage_windows_update. Run after the release CI publishes:
+#   ./scripts/deploy.sh stage-linux
+stage_linux_update() {
+  local TARGET=linux-x86_64
+  local STAGE_DIR="$HOME/.kinai/updates/${NEW_VERSION}/${TARGET}"
+
+  if ! command -v gh >/dev/null 2>&1; then
+    echo "ℹ skipping Linux update stage (gh CLI not installed)"
+    return
+  fi
+
+  local REPO="${KINAI_REPO:-Gogo6969/kinai}"
+  local TMP
+  TMP=$(mktemp -d)
+
+  echo "→ staging Linux updater bundle from $REPO"
+  # Tauri's Linux updater artifact is the gzipped AppImage + its minisig:
+  #   *.AppImage.tar.gz  +  *.AppImage.tar.gz.sig
+  if gh release download "v${NEW_VERSION}" -R "$REPO" \
+       --pattern '*.AppImage.tar.gz' --pattern '*.AppImage.tar.gz.sig' \
+       --dir "$TMP" 2>/dev/null
+  then
+    echo "  ↳ pulled Linux AppImage updater bundle from Release v${NEW_VERSION}"
+  else
+    echo "  ⚠ Release v${NEW_VERSION} has no Linux updater bundle yet."
+    echo "    (re-run './scripts/deploy.sh stage-linux' after the release CI publishes it)"
+    rm -rf "$TMP"
+    return
+  fi
+
+  local SRC SRC_SIG
+  SRC=$(find "$TMP" -name '*.AppImage.tar.gz' -type f 2>/dev/null | head -1)
+  SRC_SIG=$(find "$TMP" -name '*.AppImage.tar.gz.sig' -type f 2>/dev/null | head -1)
+  if [[ -z "$SRC" || -z "$SRC_SIG" ]]; then
+    echo "  ⚠ Linux artifacts don't contain an AppImage.tar.gz + .sig pair. Skipping."
+    rm -rf "$TMP"
+    return
+  fi
+
+  mkdir -p "$STAGE_DIR"
+  cp "$SRC" "$STAGE_DIR/KinAI.AppImage.tar.gz"
+  cp "$SRC_SIG" "$STAGE_DIR/KinAI.AppImage.tar.gz.sig"
+  ln -sfn "${NEW_VERSION}" "$HOME/.kinai/updates/latest-${TARGET}"
+  rm -rf "$TMP"
+
+  echo "  ✓ staged Linux update at $STAGE_DIR"
+  echo "    ($(ls -lh "$STAGE_DIR/KinAI.AppImage.tar.gz" | awk '{print $5}') + signature)"
+}
+
 install_linux() {
   echo "→ bundle output:"
   ls -lh target/release/bundle/deb/*.deb 2>/dev/null || true
@@ -244,6 +296,14 @@ if [[ "$bump" == "stage-windows" ]]; then
   NEW_VERSION=$(grep -E '^version = "' Cargo.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
   echo "→ re-staging Windows update for v$NEW_VERSION"
   stage_windows_update
+  echo "✓ done"
+  exit 0
+fi
+
+if [[ "$bump" == "stage-linux" ]]; then
+  NEW_VERSION=$(grep -E '^version = "' Cargo.toml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+  echo "→ re-staging Linux update for v$NEW_VERSION"
+  stage_linux_update
   echo "✓ done"
   exit 0
 fi
