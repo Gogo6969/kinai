@@ -91,7 +91,12 @@ install_macos() {
   ls -lh /Applications/KinAI.app/Contents/MacOS/kinai "$DMG"
   echo "✓ done — open /Applications/KinAI.app"
 
+  # Pull the other platforms' updater bundles from the matching GitHub
+  # release so the host serves every client (Mac/Windows/Linux) the same
+  # version over the LAN. No-ops with a hint if the release CI hasn't
+  # published yet — re-run `stage-windows` / `stage-linux` afterward.
   stage_windows_update
+  stage_linux_update
 }
 
 # Pull the latest Windows updater bundle from GitHub and stage it
@@ -230,10 +235,11 @@ stage_linux_update() {
   TMP=$(mktemp -d)
 
   echo "→ staging Linux updater bundle from $REPO"
-  # Tauri's Linux updater artifact is the gzipped AppImage + its minisig:
-  #   *.AppImage.tar.gz  +  *.AppImage.tar.gz.sig
+  # Tauri's Linux updater artifact is the raw AppImage + its minisig:
+  #   *_amd64.AppImage  +  *_amd64.AppImage.sig
+  # (.deb/.rpm are install-only, not used by the in-app updater.)
   if gh release download "v${NEW_VERSION}" -R "$REPO" \
-       --pattern '*.AppImage.tar.gz' --pattern '*.AppImage.tar.gz.sig' \
+       --pattern '*.AppImage' --pattern '*.AppImage.sig' \
        --dir "$TMP" 2>/dev/null
   then
     echo "  ↳ pulled Linux AppImage updater bundle from Release v${NEW_VERSION}"
@@ -245,22 +251,22 @@ stage_linux_update() {
   fi
 
   local SRC SRC_SIG
-  SRC=$(find "$TMP" -name '*.AppImage.tar.gz' -type f 2>/dev/null | head -1)
-  SRC_SIG=$(find "$TMP" -name '*.AppImage.tar.gz.sig' -type f 2>/dev/null | head -1)
+  SRC=$(find "$TMP" -name '*.AppImage' -type f 2>/dev/null | head -1)
+  SRC_SIG=$(find "$TMP" -name '*.AppImage.sig' -type f 2>/dev/null | head -1)
   if [[ -z "$SRC" || -z "$SRC_SIG" ]]; then
-    echo "  ⚠ Linux artifacts don't contain an AppImage.tar.gz + .sig pair. Skipping."
+    echo "  ⚠ Linux artifacts don't contain an AppImage + .sig pair. Skipping."
     rm -rf "$TMP"
     return
   fi
 
   mkdir -p "$STAGE_DIR"
-  cp "$SRC" "$STAGE_DIR/KinAI.AppImage.tar.gz"
-  cp "$SRC_SIG" "$STAGE_DIR/KinAI.AppImage.tar.gz.sig"
+  cp "$SRC" "$STAGE_DIR/KinAI.AppImage"
+  cp "$SRC_SIG" "$STAGE_DIR/KinAI.AppImage.sig"
   ln -sfn "${NEW_VERSION}" "$HOME/.kinai/updates/latest-${TARGET}"
   rm -rf "$TMP"
 
   echo "  ✓ staged Linux update at $STAGE_DIR"
-  echo "    ($(ls -lh "$STAGE_DIR/KinAI.AppImage.tar.gz" | awk '{print $5}') + signature)"
+  echo "    ($(ls -lh "$STAGE_DIR/KinAI.AppImage" | awk '{print $5}') + signature)"
 }
 
 install_linux() {

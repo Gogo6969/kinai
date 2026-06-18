@@ -67,8 +67,10 @@ fn bundle_filenames(target: &str) -> &'static [&'static str] {
     match target {
         "darwin-aarch64" | "darwin-x86_64" => &["KinAI.app.tar.gz"],
         "windows-x86_64" => &["KinAI.exe", "KinAI.nsis.zip", "KinAI.msi", "KinAI.msi.zip"],
-        // Tauri's Linux updater consumes the gzipped AppImage.
-        "linux-x86_64" => &["KinAI.AppImage.tar.gz"],
+        // Tauri's Linux updater downloads the raw AppImage (signed via
+        // its sidecar .sig) and swaps the running one — there's no
+        // .tar.gz wrapper like macOS uses for the .app.
+        "linux-x86_64" => &["KinAI.AppImage"],
         _ => &[],
     }
 }
