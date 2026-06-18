@@ -5,6 +5,27 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.64] — 2026-06-18
+
+### Added
+
+- **🐧 Linux client (beta).** KinAI now builds a Linux client
+  (AppImage / .deb / .rpm) that joins a host and chats like the Mac and
+  Windows clients. The host can serve Linux clients their updates over
+  the LAN, same as the others. Voice input/replies remain host-only
+  (macOS). Beta: the global-hotkey overlay may not summon under Wayland
+  (a platform restriction on global key grabs), and GNOME needs the
+  AppIndicator extension for the tray — the main window is unaffected.
+- On Linux, the WebKitGTK DMABUF renderer is disabled by default
+  (`WEBKIT_DISABLE_DMABUF_RENDERER=1`) to avoid the common blank-window
+  issue; override the env var to re-enable hardware acceleration.
+
+### Security
+
+- Build toolchain: forced esbuild ≥ 0.28.1 and bumped Vite to 6.4.3,
+  clearing three Dependabot advisories (all dev-tooling only — none
+  present in the shipped binary). Build target raised to safari16.
+
 ## [0.2.63] — 2026-06-11
 
 ### Added

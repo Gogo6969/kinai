@@ -96,6 +96,18 @@ pub type SharedState = Arc<AppState>;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Linux/WebKitGTK: the DMABUF renderer leaves a blank white window on
+    // many setups (Nvidia, some Wayland compositors, newer webkit). The
+    // standard Tauri workaround is to disable it before the webview
+    // initializes. Only set it if the user hasn't chosen otherwise, so a
+    // working machine can opt back into hardware accel.
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
