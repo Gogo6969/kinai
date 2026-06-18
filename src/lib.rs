@@ -106,6 +106,45 @@ pub fn run() {
         if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
             std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
         }
+
+        // WebKitGTK's Skia renderer aborts the web-content process
+        // (colrv1_configure_skpaint vector-OOB assertion) the moment it
+        // rasterizes a COLRv1 color-emoji glyph — so any color emoji in
+        // a reply crashes the page to a blank window. The CSS
+        // `font-variant-emoji: text` hint isn't enough: it falls back to
+        // the color glyph when no monochrome one exists.
+        //
+        // Reject ALL color fonts at the font-selection layer via a
+        // per-process fontconfig (the FC_COLOR property catches every
+        // COLR/CBDT/sbix face by capability, not by name), so Skia never
+        // receives a color face and the crashing path is unreachable.
+        // Emoji fall back to monochrome (or tofu) — degraded but stable.
+        //
+        // Guarded: only override when the user hasn't set their own
+        // FONTCONFIG_FILE AND the standard system config exists, so a
+        // missing include can't leave the process with no fonts at all.
+        let system_fc = std::path::Path::new("/etc/fonts/fonts.conf");
+        if std::env::var_os("FONTCONFIG_FILE").is_none() && system_fc.exists() {
+            let dir = dirs::home_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join(".kinai");
+            let _ = std::fs::create_dir_all(&dir);
+            let conf = dir.join("fonts-no-color.conf");
+            let xml = r#"<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<fontconfig>
+  <include ignore_missing="yes">/etc/fonts/fonts.conf</include>
+  <selectfont>
+    <rejectfont>
+      <pattern><patelt name="color"><bool>true</bool></patelt></pattern>
+    </rejectfont>
+  </selectfont>
+</fontconfig>
+"#;
+            if std::fs::write(&conf, xml).is_ok() {
+                std::env::set_var("FONTCONFIG_FILE", &conf);
+            }
+        }
     }
 
     tracing_subscriber::fmt()
