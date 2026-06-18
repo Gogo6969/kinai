@@ -2252,6 +2252,19 @@ pub async fn stop_generation(
     for t in tokens {
         t.cancel();
     }
+    // Client mode: the LLM turn actually runs on the HOST, so cancelling
+    // the (empty) local map does nothing — forward a StopGeneration over
+    // the WebSocket so the host aborts the turn. Without this a client
+    // (incl. the Linux client) could only escape a runaway loop by
+    // restarting the app.
+    if matches!(state.config.read().mode, Mode::Client) {
+        if let Some(id) = target {
+            let tx = { state.net.lock().await.client_tx.clone() };
+            if let Some(tx) = tx {
+                let _ = tx.send(network::protocol::Envelope::StopGeneration { client_msg_id: id });
+            }
+        }
+    }
     Ok(())
 }
 

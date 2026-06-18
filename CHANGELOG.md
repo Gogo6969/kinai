@@ -5,6 +5,21 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.65] — 2026-06-18
+
+### Added
+
+- **⏹ Stop button everywhere.** You can now halt a running reply — and
+  break a runaway/looping generation — without restarting the app.
+  Previously Stop only worked in the host's main window; now:
+  - The **overlay** (Cmd/Ctrl-Space quick chat) has a Stop button.
+  - **Client apps** (Mac, Windows, Linux) can stop too: Stop now
+    forwards a cancel to the host over the WebSocket, which aborts the
+    in-flight turn (the host registers a cancel token per client turn).
+    Before, a client's Stop did nothing to a host-side loop.
+  - Cancellation aborts mid-stream — including a degenerate token loop —
+    not just between tool rounds.
+
 ## [0.2.64] — 2026-06-18
 
 ### Added

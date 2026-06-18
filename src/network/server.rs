@@ -460,6 +460,16 @@ async fn dispatch(
             )
             .await?;
         }
+        // Client pressed Stop: cancel the matching in-flight turn's token
+        // (registered in run_chat_turn). Breaks runaway tool/token loops
+        // without the client having to disconnect. No-op if the turn
+        // already finished.
+        Envelope::StopGeneration { client_msg_id } => {
+            if let Some(tok) = s.app.pending_turns.lock().get(&client_msg_id).cloned() {
+                tracing::info!("client requested stop for turn {client_msg_id}");
+                tok.cancel();
+            }
+        }
         // ---- Telegram pairing for client peers ----
         //
         // The handshake mirrors the host-mode Tauri commands, but the
@@ -692,6 +702,31 @@ async fn run_chat_turn(
     let active_llm_settings = route_pick.settings.clone();
     let llm = crate::llm::LlmClient::new(active_llm_settings.clone());
     let cancel = CancellationToken::new();
+
+    // Register THIS turn's cancel token keyed by the client's msg id so an
+    // inbound `Envelope::StopGeneration { client_msg_id }` (the client's
+    // Stop button) can abort it — including a runaway tool/token loop. The
+    // RAII guard removes it on every exit path (success, `?`-error, panic)
+    // so a later turn reusing the same id can't be cancelled by accident.
+    s.app
+        .pending_turns
+        .lock()
+        .insert(client_msg_id.to_string(), cancel.clone());
+    struct TurnGuard {
+        id: String,
+        pending: std::sync::Arc<
+            parking_lot::Mutex<std::collections::HashMap<String, CancellationToken>>,
+        >,
+    }
+    impl Drop for TurnGuard {
+        fn drop(&mut self) {
+            self.pending.lock().remove(&self.id);
+        }
+    }
+    let _turn_guard = TurnGuard {
+        id: client_msg_id.to_string(),
+        pending: s.app.pending_turns.clone(),
+    };
 
     let tx_token = tx.clone();
     let client_msg_id_token = client_msg_id.to_string();

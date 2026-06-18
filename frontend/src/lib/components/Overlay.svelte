@@ -9,7 +9,7 @@
   import ThinkingDots from './ThinkingDots.svelte';
   import ThinkingPanel from './ThinkingPanel.svelte';
   import ToolPill from './ToolPill.svelte';
-  import { Download, X } from '@lucide/svelte';
+  import { Download, X, Square } from '@lucide/svelte';
 
   let input = $state('');
   let busy = $state(false);
@@ -321,6 +321,21 @@
     }
   }
 
+  // Stop the in-flight turn (Stop button). Clears the local busy state
+  // immediately so the overlay is responsive, and tells the backend to
+  // cancel — which, in client mode, forwards a StopGeneration to the
+  // host so a runaway loop is actually aborted (not just visually).
+  async function stop() {
+    const id = currentClientId;
+    busy = false;
+    currentClientId = null;
+    try {
+      await api.stopGeneration(id ?? undefined);
+    } catch (e) {
+      console.warn('overlay stop failed', e);
+    }
+  }
+
   // Ask the backend to re-check for updates, at most once a minute so
   // rapid open/close of the overlay doesn't spam the host/GitHub. A hit
   // re-emits `kinai://update-available`, which our listener turns into
@@ -393,9 +408,21 @@
         onsend={(t) => send(t)}
       />
       {#if busy}
-        <ThinkingDots
-          label={tools.length > 0 ? tools[tools.length - 1].name.replace('_', ' ') : 'Thinking'}
-        />
+        <div class="flex items-center justify-between gap-3">
+          <ThinkingDots
+            label={tools.length > 0 ? tools[tools.length - 1].name.replace('_', ' ') : 'Thinking'}
+          />
+          <button
+            type="button"
+            onclick={stop}
+            class="inline-flex items-center gap-1.5 shrink-0 rounded-md px-2.5 py-1 text-xs
+                   text-white/70 hover:text-white bg-white/5 hover:bg-white/10 transition-colors"
+            title="Stop generating"
+            aria-label="Stop generating"
+          >
+            <Square size={12} /> Stop
+          </button>
+        </div>
       {/if}
     </form>
     {#if updateInfo}
