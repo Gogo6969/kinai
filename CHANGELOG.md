@@ -20,6 +20,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - Cancellation aborts mid-stream — including a degenerate token loop —
     not just between tool rounds.
 
+### Fixed
+
+- **Linux clients update from the host over the LAN**, like Mac and
+  Windows (raw AppImage served + auto-staged); GitHub remains the
+  off-LAN fallback. All three platforms now share one update model.
+- Release CI builds the platform jobs serially so they can't clobber
+  each other's uploads (which had left past releases missing assets /
+  an incomplete update manifest).
+
 ## [0.2.64] — 2026-06-18
 
 ### Added

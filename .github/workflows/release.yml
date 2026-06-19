@@ -41,6 +41,13 @@ jobs:
     # release so the updater serves every platform from a single manifest.
     strategy:
       fail-fast: false
+      # Serialize the matrix. tauri-action does a read-modify-write on the
+      # shared draft release (upload assets + merge latest.json); running
+      # the platform jobs concurrently made them clobber each other —
+      # dropping assets and leaving latest.json missing platforms (hit on
+      # 0.2.60 and 0.2.64). One job at a time = no races. Slower, but a
+      # release that's whole every time beats a fast one we hand-repair.
+      max-parallel: 1
       matrix:
         include:
           - os: macos-latest
