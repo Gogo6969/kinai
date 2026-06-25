@@ -259,6 +259,9 @@ When a thread exceeds 30 unsummarized messages, the oldest are folded into a lon
 | OpenAI-style function calling with tool execution loop | ✅ |
 | Streaming responses (SSE) with **markdown + LaTeX + code blocks + tables** | ✅ |
 | **Cross-thread search** — find any message across all your conversations as you type | ✅ |
+| **Ask-while-busy queue** — fire a follow-up while a reply is still streaming; it queues and sends in order (per-thread, with a ⏹ Stop that clears the queue) | ✅ |
+| **↑ / ↓ prompt history** — recall earlier prompts in the message box, terminal-style | ✅ |
+| **⏹ Stop** — halt a running reply (or a runaway loop) from any surface, including clients over the LAN | ✅ |
 | **Regenerate & edit-and-resend** — re-roll the last answer, or fix your question and re-run from there | ✅ |
 | **Streaming Telegram replies** — the bot live-edits its message as the model writes | ✅ |
 | **Image generation via ComfyUI** — `/pic` & `/picHQ` on every surface, with a "creating a picture…" progress note on Telegram | ✅ |

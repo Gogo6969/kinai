@@ -32,6 +32,16 @@ class AppStore {
    *  cancel. The Stop button uses this to address its cancel call at
    *  the correct turn rather than a global "cancel everything." */
   activeTurnId = $state<string | null>(null);
+  /** Messages the user typed while a turn was already in flight. They send
+   *  automatically — one at a time — as each prior turn finishes (or is
+   *  stopped), so a follow-up can be fired off without waiting. The × on a
+   *  chip drops it; hitting Stop lets the next one through. */
+  queued = $state<
+    { id: string; threadId: string | null; content: string; attachments: Attachment[] }[]
+  >([]);
+  /** Recently-sent prompts, oldest → newest, for ↑/↓ recall in the composer
+   *  (shell / Claude-Code style). Capped; not persisted across restarts. */
+  inputHistory = $state<string[]>([]);
   /** Live status of the client → host WebSocket. `null` until the first
    *  status event arrives so the UI can avoid flashing "Disconnected"
    *  during the dial. */
@@ -236,79 +246,162 @@ class AppStore {
     }
   }
 
-  async send(content: string, attachments: Attachment[] = []) {
+  async send(
+    content: string,
+    attachments: Attachment[] = [],
+    opts: { threadId?: string } = {}
+  ) {
     if (!content.trim() && attachments.length === 0) return;
-    // Self-heal: if there's no active thread (e.g. user deleted all of
-    // them, or the welcome thread never got created), spin one up now so
-    // the message has somewhere to land.
-    if (!this.activeThreadId) {
-      const t = await api.createThread('New conversation');
-      this.threads = [t, ...this.threads];
-      this.activeThreadId = t.id;
-      this.messages[t.id] = [];
+    this.rememberPrompt(content);
+    // Latch busy + seed placeholders synchronously, BEFORE the first await
+    // below. A queued message can drain straight into here, and the user
+    // might fire another (a second Enter, or voice input) during the thread
+    // self-heal's createThread round-trip — latching busy now makes that
+    // second message queue behind this turn instead of racing a parallel
+    // send. The thinking-dots bubble also shows instantly as a bonus.
+    const clientMsgId = crypto.randomUUID();
+    this.busy = true;
+    this.activeTurnId = clientMsgId;
+    // We deliberately DO NOT delete these in a `finally` — in Client mode
+    // `api.sendMessage` returns instantly (the real work is on the host) and
+    // clearing the maps here would race the inbound event stream. The
+    // AssistantDone listener finalizes and cleans them up.
+    this.streaming[clientMsgId] = '';
+    this.reasoning[clientMsgId] = '';
+    this.toolActivity[clientMsgId] = [];
+
+    // Resolve the destination thread. A queued message carries the thread it
+    // was typed in (opts.threadId) so it still lands there even if the user
+    // has since switched threads. Fall back to the active thread, and
+    // self-heal a fresh one only if there's genuinely none.
+    let targetThreadId = opts.threadId ?? this.activeThreadId;
+    if (targetThreadId && !this.threads.some((t) => t.id === targetThreadId)) {
+      // The captured thread was deleted while the message waited in queue.
+      targetThreadId = this.activeThreadId;
     }
-    // Auto-name the thread from this first user message if the title is
-    // still one of the system-assigned placeholders. We deliberately do
-    // NOT rename "Telegram" threads (those carry a meaningful label that
-    // tells the user which thread is bound to the bot) or any title the
-    // user has already customised. Fires before sendMessage so the
-    // sidebar updates in the same tick the message goes out — no flash
-    // of "New conversation" → real title.
+    if (!targetThreadId) {
+      try {
+        const t = await api.createThread('New conversation');
+        this.threads = [t, ...this.threads];
+        this.messages[t.id] = [];
+        this.activeThreadId = t.id;
+        targetThreadId = t.id;
+      } catch (e) {
+        console.error(e);
+        delete this.streaming[clientMsgId];
+        delete this.reasoning[clientMsgId];
+        delete this.toolActivity[clientMsgId];
+        this.busy = false;
+        this.activeTurnId = null;
+        return;
+      }
+    }
+
+    // Auto-name the destination thread from this first user message if the
+    // title is still a system-assigned placeholder. We deliberately do NOT
+    // rename "Telegram" threads or any title the user has customised. Fires
+    // before sendMessage so the sidebar updates in the same tick.
     const PLACEHOLDER_TITLES = new Set([
       'New conversation',
       'Welcome',
       'Quick chat',
     ]);
-    const activeThread = this.threads.find((t) => t.id === this.activeThreadId);
-    const hasNoPriorMessages = !this.messages[this.activeThreadId]?.length;
+    const targetThread = this.threads.find((t) => t.id === targetThreadId);
+    const hasNoPriorMessages = !this.messages[targetThreadId]?.length;
     if (
-      activeThread &&
+      targetThread &&
       hasNoPriorMessages &&
-      PLACEHOLDER_TITLES.has(activeThread.title) &&
+      PLACEHOLDER_TITLES.has(targetThread.title) &&
       content.trim()
     ) {
       const newTitle = this.deriveThreadTitle(content);
-      if (newTitle !== activeThread.title) {
-        // Fire-and-forget — we don't want a slow renameThread IPC to
-        // block sending the actual message. If it fails the user can
-        // still rename manually via the sidebar edit affordance.
-        void this.renameThread(this.activeThreadId, newTitle).catch((e) =>
+      if (newTitle !== targetThread.title) {
+        // Fire-and-forget — a slow renameThread IPC shouldn't block sending.
+        void this.renameThread(targetThreadId, newTitle).catch((e) =>
           console.warn('auto-rename failed', e)
         );
       }
     }
-    const clientMsgId = crypto.randomUUID();
-    this.busy = true;
-    this.activeTurnId = clientMsgId;
-    // Pre-seed the placeholders so the thinking-dots bubble renders
-    // immediately, even before the first reasoning/tool/token event
-    // arrives. We deliberately DO NOT delete them in `finally` — in
-    // Client mode `api.sendMessage` returns instantly with placeholders
-    // (the real work is happening on the host) and clearing the maps
-    // here would race the inbound event stream, leaving the user with
-    // no live feedback during tool calls or long reasoning phases.
-    // The AssistantDone listener finalizes and cleans up the entries
-    // when the turn actually completes.
-    this.streaming[clientMsgId] = '';
-    this.reasoning[clientMsgId] = '';
-    this.toolActivity[clientMsgId] = [];
+
     try {
       await api.sendMessage({
-        thread_id: this.activeThreadId,
+        thread_id: targetThreadId,
         content,
         client_msg_id: clientMsgId,
         attachments,
       });
     } catch (e) {
       console.error(e);
-      // On a hard failure to even reach the host, drop the placeholders
-      // so the user doesn't see a permanently-spinning bubble.
+      // Drop this turn's placeholders so the user doesn't see a
+      // permanently-spinning bubble.
       delete this.streaming[clientMsgId];
       delete this.reasoning[clientMsgId];
       delete this.toolActivity[clientMsgId];
       this.busy = false;
       this.activeTurnId = null;
+      // In HOST mode a pipeline/tool error rejects right here (there's no
+      // kinai://error event for local turns), so surface it — otherwise the
+      // turn just produces no answer with no explanation.
+      window.dispatchEvent(
+        new CustomEvent('kin-toast', {
+          detail: { msg: `✗ ${String(e).replace(/^Error:\s*/, '')}`, ms: 5000 },
+        })
+      );
+      // Don't CLEAR the queue (a transient error mustn't discard the user's
+      // other messages — a real disconnect does that). But DO advance it, so
+      // an errored turn doesn't leave the next message stranded as "Queued".
+      this.drainQueue();
     }
+  }
+
+  // ---- Send queue + prompt history --------------------------------------
+
+  /** Send now if idle, otherwise line the message up to go out when the
+   *  current turn finishes. Used by the composer so the user never has to
+   *  wait on a long answer before asking the next thing. */
+  enqueue(content: string, attachments: Attachment[] = []) {
+    if (!content.trim() && attachments.length === 0) return;
+    if (!this.busy) {
+      void this.send(content, attachments);
+      return;
+    }
+    // Capture the thread this was typed in so it still lands here even if
+    // the user switches threads before the queue drains.
+    this.queued = [
+      ...this.queued,
+      {
+        id: crypto.randomUUID(),
+        threadId: this.activeThreadId,
+        content,
+        attachments,
+      },
+    ];
+  }
+
+  /** Drop a still-pending queued message (the × on its chip). */
+  removeQueued(id: string) {
+    this.queued = this.queued.filter((q) => q.id !== id);
+  }
+
+  /** Fire the next queued message if one's waiting and nothing's in flight.
+   *  Called on every turn completion (success or Stop) so the queue drains
+   *  one turn at a time, in order. */
+  private drainQueue() {
+    if (this.busy || this.queued.length === 0) return;
+    const [next, ...rest] = this.queued;
+    this.queued = rest;
+    void this.send(next.content, next.attachments, {
+      threadId: next.threadId ?? undefined,
+    });
+  }
+
+  /** Record a prompt for ↑/↓ recall, skipping consecutive duplicates and
+   *  capping the buffer so a long session can't grow it unbounded. */
+  private rememberPrompt(content: string) {
+    const text = content.trim();
+    if (!text) return;
+    if (this.inputHistory[this.inputHistory.length - 1] === text) return;
+    this.inputHistory = [...this.inputHistory, text].slice(-200);
   }
 
   // ---- Regenerate / edit-and-resend (host-only) -------------------------
@@ -337,6 +430,7 @@ class AppStore {
     this.toolActivity = { ...this.toolActivity };
     this.busy = false;
     this.activeTurnId = null;
+    this.queued = [];
     await this.loadActive();
   }
 
@@ -493,6 +587,10 @@ class AppStore {
     }
     this.busy = false;
     this.activeTurnId = null;
+    // Stop abandons anything queued behind this turn too — a Stop that
+    // silently kicked off the next question would surprise. (Each chip has
+    // its own × for removing queued items individually without stopping.)
+    this.queued = [];
   }
 
   pushMessage(m: Message) {
@@ -595,6 +693,8 @@ class AppStore {
         }
         this.busy = false;
         this.activeTurnId = null;
+        // A queued follow-up (typed while this turn was running) goes out now.
+        this.drainQueue();
         // The turn may have changed config (/voice toggles auto-speak) —
         // refetch quietly so Settings and future decisions stay fresh.
         if (config_changed) {
@@ -625,6 +725,33 @@ class AppStore {
         }
       })
     );
+    this.cleanups.push(
+      await events.onError((msg) => {
+        // CLIENT mode surfaces a failed turn via this event (the host emits
+        // kinai://error over the WS). Without a handler the spinner would
+        // stick forever. (HOST-mode local turns reject api.sendMessage and
+        // are handled in send()'s catch instead.) Release the turn, show the
+        // error, and advance the queue so it isn't stranded.
+        if (!this.busy && !this.activeTurnId) return;
+        const id = this.activeTurnId;
+        if (id) {
+          delete this.streaming[id];
+          delete this.reasoning[id];
+          delete this.toolActivity[id];
+          this.streaming = { ...this.streaming };
+          this.reasoning = { ...this.reasoning };
+          this.toolActivity = { ...this.toolActivity };
+        }
+        this.busy = false;
+        this.activeTurnId = null;
+        window.dispatchEvent(
+          new CustomEvent('kin-toast', {
+            detail: { msg: `✗ ${String(msg).replace(/^Error:\s*/, '')}`, ms: 5000 },
+          })
+        );
+        this.drainQueue();
+      })
+    );
     this.cleanups.push(await events.onStats((s) => (this.stats = s)));
     this.cleanups.push(
       await events.onClientStatus((s) => {
@@ -633,8 +760,21 @@ class AppStore {
         // AssistantDone — release the Send button so the user can retry
         // instead of being stuck on the Stop icon forever.
         if (!s.connected) {
+          // Drop the in-flight turn's placeholders too — otherwise the
+          // thinking-dots bubble for the interrupted turn lingers forever
+          // (we won't get an AssistantDone to clean it up).
+          const id = this.activeTurnId;
+          if (id) {
+            delete this.streaming[id];
+            delete this.reasoning[id];
+            delete this.toolActivity[id];
+            this.streaming = { ...this.streaming };
+            this.reasoning = { ...this.reasoning };
+            this.toolActivity = { ...this.toolActivity };
+          }
           this.busy = false;
           this.activeTurnId = null;
+          this.queued = [];
         }
       })
     );

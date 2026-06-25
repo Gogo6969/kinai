@@ -26,6 +26,15 @@
    *  have it ride along with the prompt, same as in the main window. */
   let pendingAttachments = $state<Attachment[]>([]);
   let attachmentError = $state('');
+  // Quick-chat send queue + ↑/↓ prompt recall, mirroring the main window so
+  // a follow-up typed mid-answer isn't silently dropped and earlier prompts
+  // can be recalled. The overlay is its own window with its own state, so
+  // this is a local copy of the app store's behavior (not shared).
+  let queued = $state<{ text: string; attachments: Attachment[] }[]>([]);
+  let inputHistory = $state<string[]>([]);
+  let historyIndex = $state<number | null>(null);
+  let draftStash = '';
+  let recallingHistory = false;
   // Update affordance. The main update banner lives only in the main
   // window — someone who only ever uses this quick-chat bar would never
   // be told about (or able to install) a new version. So the overlay
@@ -207,6 +216,8 @@
             streamingContent = message.content;
           }
           busy = false;
+          // A follow-up typed while this turn ran goes out now.
+          drainQueue();
         })
       );
       cleanups.push(
@@ -216,6 +227,7 @@
           if (!s.connected && busy) {
             busy = false;
             currentClientId = null;
+            queued = [];
             if (!streamingContent) {
               streamingContent = '⚠️ Lost connection to the host — try again.';
             }
@@ -229,6 +241,7 @@
           if (!busy) return;
           busy = false;
           currentClientId = null;
+          queued = [];
           streamingContent = `Error: ${msg}`;
         })
       );
@@ -262,11 +275,89 @@
     return m ? (m[1] ?? '').trim() : null;
   }
 
+  function rememberPrompt(text: string) {
+    const t = text.trim();
+    if (!t) return;
+    if (inputHistory[inputHistory.length - 1] === t) return;
+    inputHistory = [...inputHistory, t].slice(-200);
+  }
+
+  function recallHistory(dir: -1 | 1, el: HTMLTextAreaElement) {
+    const hist = inputHistory;
+    if (hist.length === 0) return;
+    recallingHistory = true;
+    if (dir === -1) {
+      if (historyIndex === null) {
+        draftStash = input;
+        historyIndex = hist.length;
+      }
+      if (historyIndex > 0) historyIndex -= 1;
+      input = hist[historyIndex];
+    } else {
+      if (historyIndex === null) {
+        recallingHistory = false;
+        return;
+      }
+      if (historyIndex < hist.length - 1) {
+        historyIndex += 1;
+        input = hist[historyIndex];
+      } else {
+        historyIndex = null;
+        input = draftStash;
+      }
+    }
+    recallingHistory = false;
+    queueMicrotask(() => {
+      el.style.height = 'auto';
+      el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+      el.selectionStart = el.selectionEnd = input.length;
+    });
+  }
+
+  /** Fire the next queued message if one's waiting and nothing's in flight. */
+  function drainQueue() {
+    if (busy || queued.length === 0) return;
+    const [next, ...rest] = queued;
+    queued = rest;
+    void dispatch(next.text, next.attachments);
+  }
+
+  /** Actually send a turn to the host (no /newchat parsing — queued items
+   *  are literal, matching the main window). */
+  async function dispatch(text: string, attachments: Attachment[]) {
+    if (!activeThreadId) return;
+    rememberPrompt(text);
+    busy = true;
+    streamingContent = '';
+    reasoningContent = '';
+    tools = [];
+    currentClientId = crypto.randomUUID();
+    try {
+      await api.sendMessage({
+        thread_id: activeThreadId,
+        content: text,
+        client_msg_id: currentClientId,
+        attachments,
+      });
+    } catch (err) {
+      streamingContent = `Error: ${err}`;
+      busy = false;
+      currentClientId = null;
+      // The overlay shows a SINGLE reply, so we can't drain the next queued
+      // message here — dispatch() would immediately wipe this error
+      // off-screen. Clear the queue instead so it doesn't strand as
+      // "N queued" with nothing able to advance it. (The main window, which
+      // has a message list + toasts, drains on error instead.)
+      queued = [];
+    }
+  }
+
   async function send(text: string) {
     // /newchat — start a fresh conversation (new thread, no prior
     // context). Earlier messages won't be used; persistent memory stays.
+    // Only honored when idle; typed mid-answer it's queued as literal text.
     const fresh = parseNewchat(text);
-    if (fresh !== null) {
+    if (fresh !== null && !busy) {
       // Must have a NEW thread before routing the question, otherwise the
       // "fresh" question would go into the OLD thread (with its context) —
       // the exact thing /newchat exists to prevent. Abort on failure.
@@ -297,28 +388,20 @@
     // Allow sending an attachment with no text (e.g. "what's in this
     // image?" UX where the user just drags / pastes a screenshot and
     // hits Enter without typing).
-    if (!activeThreadId || busy) return;
+    if (!activeThreadId) return;
     if (!text.trim() && pendingAttachments.length === 0) return;
-    busy = true;
-    streamingContent = '';
-    reasoningContent = '';
-    tools = [];
-    currentClientId = crypto.randomUUID();
-    const attachmentsForTurn = pendingAttachments;
+    historyIndex = null;
+    const atts = pendingAttachments;
     input = '';
     pendingAttachments = [];
     attachmentError = '';
-    try {
-      await api.sendMessage({
-        thread_id: activeThreadId,
-        content: text,
-        client_msg_id: currentClientId,
-        attachments: attachmentsForTurn,
-      });
-    } catch (err) {
-      streamingContent = `Error: ${err}`;
-      busy = false;
+    if (busy) {
+      // A turn is already running — line this one up to go out when it
+      // finishes instead of dropping it. (Stop abandons the queue.)
+      queued = [...queued, { text, attachments: atts }];
+      return;
     }
+    await dispatch(text, atts);
   }
 
   // Stop the in-flight turn (Stop button). Clears the local busy state
@@ -329,6 +412,9 @@
     const id = currentClientId;
     busy = false;
     currentClientId = null;
+    // Stop abandons anything queued behind this turn — Stop should never
+    // kick off a new generation on its own.
+    queued = [];
     try {
       await api.stopGeneration(id ?? undefined);
     } catch (e) {
@@ -387,11 +473,30 @@
         class="kin-input resize-none overflow-y-auto text-base leading-snug py-1"
         style="max-height: 200px;"
         oninput={(e) => {
+          // Manual edits drop out of history recall; a programmatic recall
+          // write (guarded) must not count as an edit.
+          if (!recallingHistory) historyIndex = null;
           const el = e.currentTarget as HTMLTextAreaElement;
           el.style.height = 'auto';
           el.style.height = Math.min(el.scrollHeight, 200) + 'px';
         }}
         onkeydown={(e) => {
+          // ↑/↓ recall earlier prompts. ↑ only triggers when the caret is at
+          // the very start so it still moves between lines mid-message.
+          const el = e.currentTarget as HTMLTextAreaElement;
+          if (e.key === 'ArrowUp') {
+            const atStart = el.selectionStart === 0 && el.selectionEnd === 0;
+            if (historyIndex !== null || atStart) {
+              e.preventDefault();
+              recallHistory(-1, el);
+              return;
+            }
+          }
+          if (e.key === 'ArrowDown' && historyIndex !== null) {
+            e.preventDefault();
+            recallHistory(1, el);
+            return;
+          }
           if (e.key === 'Enter' && !e.shiftKey) submit(e);
         }}
         onpaste={onPaste}
@@ -412,6 +517,14 @@
           <ThinkingDots
             label={tools.length > 0 ? tools[tools.length - 1].name.replace('_', ' ') : 'Thinking'}
           />
+          {#if queued.length > 0}
+            <span
+              class="shrink-0 text-xs text-teal-200/70"
+              title="Sends when the current reply finishes"
+            >
+              {queued.length} queued
+            </span>
+          {/if}
           <button
             type="button"
             onclick={stop}

@@ -5,9 +5,24 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.65] — 2026-06-18
+## [0.2.66] — 2026-06-25
 
 ### Added
+
+- **⌨ Ask while it's thinking — messages queue.** Typing a second question
+  while a reply is still streaming no longer does nothing. The follow-up is
+  shown as a "Queued · sends next" chip and goes out automatically the
+  moment the current turn finishes; queue as many as you like and they send
+  in order. Each chip has an × to drop it, and pressing **Stop** clears the
+  queue (Stop never kicks off a new turn on its own). Works in the main
+  window and the Cmd/Ctrl-Space quick-chat overlay. Queued messages remember
+  which conversation they were typed in, so switching threads while one
+  waits still delivers it to the right place.
+- **↑ / ↓ recalls earlier prompts.** Press ↑ in the message box to step back
+  through prompts you've sent this session and ↓ to come forward — the same
+  history navigation you get in a terminal or Claude Code. ↑ only triggers
+  when the cursor is at the start of the box, so multi-line editing still
+  works. Available in both the main composer and the overlay.
 
 - **⏹ Stop button everywhere.** You can now halt a running reply — and
   break a runaway/looping generation — without restarting the app.

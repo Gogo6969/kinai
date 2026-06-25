@@ -16,6 +16,45 @@
   let pendingAttachments = $state<Attachment[]>([]);
   let dragging = $state(false);
   let attachmentError = $state('');
+  // ↑/↓ prompt recall. `historyIndex === null` means we're editing the live
+  // draft; once recall starts it indexes into app.inputHistory and
+  // `draftStash` holds whatever the user was typing so ↓ can restore it.
+  let historyIndex = $state<number | null>(null);
+  let draftStash = '';
+  // Guards the programmatic `input = …` assignment below so that if writing
+  // it ever does trip the textarea's oninput handler, that handler won't
+  // mistake a recall for a manual edit and reset historyIndex mid-recall.
+  let recallingHistory = false;
+
+  function recallHistory(dir: -1 | 1, el: HTMLTextAreaElement) {
+    const hist = app.inputHistory;
+    if (hist.length === 0) return;
+    recallingHistory = true;
+    if (dir === -1) {
+      // Older. Enter recall from the live draft on the first ↑.
+      if (historyIndex === null) {
+        draftStash = input;
+        historyIndex = hist.length;
+      }
+      if (historyIndex > 0) historyIndex -= 1;
+      input = hist[historyIndex];
+    } else {
+      // Newer. Walk back toward — and finally restore — the live draft.
+      if (historyIndex === null) return;
+      if (historyIndex < hist.length - 1) {
+        historyIndex += 1;
+        input = hist[historyIndex];
+      } else {
+        historyIndex = null;
+        input = draftStash;
+      }
+    }
+    recallingHistory = false;
+    queueMicrotask(() => {
+      autoGrowTextarea(el);
+      el.selectionStart = el.selectionEnd = input.length;
+    });
+  }
 
   // Slash-command autocomplete. Always shows the full list when the
   // input is exactly "/" or matches "/<partial>"; the menu disappears as
@@ -243,15 +282,19 @@
   async function submit(e: Event) {
     e.preventDefault();
     const text = input.trim();
-    if ((!text && pendingAttachments.length === 0) || app.busy) return;
+    if (!text && pendingAttachments.length === 0) return;
+    historyIndex = null;
     // /newchat — open a fresh thread so a new question doesn't reuse the
     // current conversation's context (persistent memory is kept). Any
-    // trailing question is asked in the new thread.
+    // trailing question is asked in the new thread. Only honored when idle;
+    // a /newchat typed mid-turn is queued as plain text instead of forking
+    // the thread out from under the running answer.
     const fresh = parseNewchat(text);
-    if (fresh !== null) {
+    if (fresh !== null && !app.busy) {
       input = '';
       pendingAttachments = [];
       attachmentError = '';
+      queueMicrotask(() => autoGrowTextarea(inputEl));
       await app.newThread();
       if (fresh) await app.send(fresh, []);
       return;
@@ -260,7 +303,10 @@
     input = '';
     pendingAttachments = [];
     attachmentError = '';
-    await app.send(text, atts);
+    queueMicrotask(() => autoGrowTextarea(inputEl));
+    // enqueue() sends right away when idle, or lines the message up to go
+    // out as soon as the in-flight turn finishes.
+    app.enqueue(text, atts);
   }
 </script>
 
@@ -345,6 +391,46 @@
           <div class="flex gap-2 text-xs text-white/40 px-1.5">
             <span>KinAI</span>
           </div>
+        </div>
+      {/each}
+      {#each app.queued as q (q.id)}
+        <!-- Messages typed while the turn above is still running. They send
+             automatically, in order, as each prior answer finishes. -->
+        <div class="flex flex-col gap-1 items-end">
+          <div
+            class="max-w-[85%] rounded-2xl rounded-br-md px-4 py-2.5 bg-teal-500/10
+                   border border-dashed border-teal-300/25 text-ink-50/80
+                   flex items-start gap-2"
+          >
+            <div class="min-w-0">
+              {#if q.content}
+                <span class="whitespace-pre-wrap break-words">{q.content}</span>
+              {/if}
+              {#if q.attachments.length > 0}
+                <div
+                  class="flex items-center gap-1 text-xs text-teal-200/70 {q.content
+                    ? 'mt-1'
+                    : ''}"
+                >
+                  <Paperclip size={12} class="flex-shrink-0" />
+                  <span
+                    >{q.attachments.length}
+                    {q.attachments.length === 1 ? 'attachment' : 'attachments'}</span
+                  >
+                </div>
+              {/if}
+            </div>
+            <button
+              type="button"
+              class="shrink-0 mt-0.5 text-white/40 hover:text-white/80 transition-colors"
+              onclick={() => app.removeQueued(q.id)}
+              aria-label="Remove queued message"
+              title="Remove from queue"
+            >
+              <X size={13} />
+            </button>
+          </div>
+          <div class="text-xs text-teal-200/60 px-1.5">Queued · sends next</div>
         </div>
       {/each}
     {/if}
@@ -453,7 +539,13 @@
         placeholder="Message KinAI…"
         class="kin-input resize-none overflow-y-auto leading-relaxed"
         style="max-height: 200px;"
-        oninput={(e) => autoGrowTextarea(e.currentTarget as HTMLTextAreaElement)}
+        oninput={(e) => {
+          // Any real edit drops us out of history recall so the next ↑
+          // starts again from the newest prompt — but a programmatic recall
+          // write (guarded by recallingHistory) must not count as an edit.
+          if (!recallingHistory) historyIndex = null;
+          autoGrowTextarea(e.currentTarget as HTMLTextAreaElement);
+        }}
         onpaste={onPaste}
         onkeydown={(e) => {
           // Slash-command menu navigation takes precedence when it's open.
@@ -480,6 +572,25 @@
               return;
             }
           }
+          // ↑/↓ recall earlier prompts (shell / Claude-Code style). ↑ only
+          // kicks in when the caret is at the very start (so it still moves
+          // between lines mid-message); once recalling, ↓ walks back to the
+          // draft. Skipped while a recall isn't active and there's nothing
+          // to recall.
+          const el = e.currentTarget as HTMLTextAreaElement;
+          if (e.key === 'ArrowUp') {
+            const atStart = el.selectionStart === 0 && el.selectionEnd === 0;
+            if (historyIndex !== null || atStart) {
+              e.preventDefault();
+              recallHistory(-1, el);
+              return;
+            }
+          }
+          if (e.key === 'ArrowDown' && historyIndex !== null) {
+            e.preventDefault();
+            recallHistory(1, el);
+            return;
+          }
           if (e.key === 'Enter' && !e.shiftKey) submit(e);
         }}
       ></textarea>
@@ -489,13 +600,15 @@
           input = t;
           queueMicrotask(() => autoGrowTextarea(inputEl));
         }}
-        onsend={async (t) => {
-          if ((!t.trim() && pendingAttachments.length === 0) || app.busy) return;
+        onsend={(t) => {
+          if (!t.trim() && pendingAttachments.length === 0) return;
           const atts = pendingAttachments;
           input = '';
           pendingAttachments = [];
+          historyIndex = null;
           queueMicrotask(() => autoGrowTextarea(inputEl));
-          await app.send(t, atts);
+          // Queue behind an in-flight turn just like the typed path.
+          app.enqueue(t, atts);
         }}
       />
       {#if app.busy}
