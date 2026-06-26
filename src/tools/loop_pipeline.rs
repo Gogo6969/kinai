@@ -87,7 +87,24 @@ pub async fn run_pipeline(
                     break;
                 }
                 ChatDelta::Error(e) => {
-                    return Err(anyhow::anyhow!("llm stream: {e}"));
+                    // Don't discard a partial answer the model already
+                    // streamed before the connection broke — common on the
+                    // slow deep slot when a stream hiccups mid-generation.
+                    // Keep what we have and flag that it was cut short; only
+                    // surface a hard error when nothing usable arrived.
+                    let partial = accumulated.lock().await.clone();
+                    if partial.trim().is_empty() {
+                        return Err(anyhow::anyhow!("llm stream: {e}"));
+                    }
+                    tracing::warn!(
+                        "stream error after {} chars of partial answer: {e}",
+                        partial.len()
+                    );
+                    return Ok(PipelineResult {
+                        final_content: format!(
+                            "{partial}\n\n_(⚠️ reply cut off — the model stopped responding mid-answer)_"
+                        ),
+                    });
                 }
             }
         }

@@ -411,13 +411,29 @@ async fn pump(
     let mut saw_thought_only = false;
     let mut harmony_tool_index: usize = 0;
 
+    // Per-chunk inactivity ceiling. We no longer cap total request time (a
+    // deep-slot reasoning model can stream for many minutes), but if the
+    // server goes silent for this long we treat the connection as dead so the
+    // turn doesn't hang forever. Generous enough to cover prompt prefill on a
+    // large model + long context before the first token arrives.
+    const INACTIVITY: std::time::Duration = std::time::Duration::from_secs(300);
+
     loop {
         tokio::select! {
             _ = cancel.cancelled() => {
                 let _ = tx.send(ChatDelta::Done { reason: "cancelled".into() });
                 return Ok(());
             }
-            next = events.next() => {
+            next = tokio::time::timeout(INACTIVITY, events.next()) => {
+                let next = match next {
+                    Ok(n) => n,
+                    Err(_elapsed) => {
+                        let _ = tx.send(ChatDelta::Error(
+                            "the model server went silent for 5 minutes — connection treated as stalled".into(),
+                        ));
+                        return Ok(());
+                    }
+                };
                 let Some(item) = next else {
                     let _ = tx.send(ChatDelta::Done { reason: "stream-end".into() });
                     return Ok(());

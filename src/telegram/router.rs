@@ -140,7 +140,7 @@ pub async fn handle_update<R: Runtime>(
         {
             fan_out_message(state, app, &peer_id, &m).await;
         }
-        api.send_message(chat_id, reply).await?;
+        api.send_message(chat_id, &truncate_for_tg(reply)).await?;
         return Ok(());
     }
 
@@ -819,15 +819,19 @@ async fn send_assistant_reply<R: Runtime>(
     // runs after the text has landed, whichever path delivered it.
     let mut sent_photo = false;
     if let Some(id) = stream_msg_id {
-        // Streaming path: finalize the live bubble with the complete
-        // text. (A streamed turn is always the LLM path, never /pic.)
-        if reply.chars().count() <= 4096 {
-            if let Err(e) = api.edit_message_text(chat_id, id, reply).await {
+        // Streaming path: finalize the live bubble with the complete text.
+        // Flatten markdown the SAME way the intermediate edits did (they go
+        // through truncate_for_tg) — otherwise a table would snap from clean
+        // bullet lists back to raw `|` pipes on THIS final, authoritative
+        // edit. (A streamed turn is always the LLM path, never /pic.)
+        let final_text = super::format::markdown_to_telegram(reply);
+        if final_text.chars().count() <= 4096 {
+            if let Err(e) = api.edit_message_text(chat_id, id, &final_text).await {
                 // One retry on a transient rate-limit so we don't lose the
                 // final authoritative text.
                 if e.to_string().contains("Too Many Requests") {
                     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
-                    api.edit_message_text(chat_id, id, reply).await?;
+                    api.edit_message_text(chat_id, id, &final_text).await?;
                 } else {
                     return Err(e);
                 }
@@ -835,7 +839,7 @@ async fn send_assistant_reply<R: Runtime>(
         } else {
             // Too long for one bubble: edit the placeholder to the first
             // chunk, send the remaining chunks as new messages.
-            let parts = super::api::split_for_telegram(reply);
+            let parts = super::api::split_for_telegram(&final_text);
             if let Some(first) = parts.first() {
                 let _ = api.edit_message_text(chat_id, id, first).await;
             }
@@ -853,7 +857,7 @@ async fn send_assistant_reply<R: Runtime>(
         api.send_photo_file(chat_id, &local_path, caption_opt, None).await?;
         sent_photo = true;
     } else {
-        api.send_message(chat_id, reply).await?;
+        api.send_message(chat_id, &truncate_for_tg(reply)).await?;
     }
 
     // --- Voice note (opt-in per chat via /voice, host master switch in
@@ -990,8 +994,12 @@ pub(super) fn strip_inline_image_markdown(reply: &str) -> String {
 /// into multiple messages if needed) in send_assistant_reply.
 fn truncate_for_tg(s: &str) -> String {
     const CAP: usize = 4000;
+    // Flatten markdown (tables → bullet lists, drop heading/bold/etc. markers)
+    // first — Telegram renders no markdown on a parse_mode-less send, so raw
+    // tables show up as unreadable `|`/`-` soup. Then cap the length.
+    let s = super::format::markdown_to_telegram(s);
     if s.len() <= CAP {
-        return s.to_string();
+        return s;
     }
     let mut end = CAP;
     while end > 0 && !s.is_char_boundary(end) {

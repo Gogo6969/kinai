@@ -55,7 +55,16 @@ pub struct ToolCallOutFn {
 impl LlmClient {
     pub fn new(settings: LlmSettings) -> Self {
         let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(180))
+            // No OVERALL request timeout. A streaming generation on the deep
+            // slot (a large reasoning model on llama.cpp) routinely runs
+            // longer than a few minutes, and a total-request cap (was 180s)
+            // killed it mid-stream — surfacing as
+            // "sse: Transport error: error decoding response body". Streaming
+            // liveness is instead enforced by a per-chunk inactivity timeout
+            // in the pump (src/llm/stream.rs); a runaway request is bounded by
+            // the user's Stop (CancellationToken). Non-streaming `complete()`
+            // calls set their own per-request ceiling below.
+            .connect_timeout(std::time::Duration::from_secs(20))
             .build()
             .expect("reqwest client");
         Self { settings, http }
@@ -125,7 +134,13 @@ impl LlmClient {
             tool_choice,
             max_tokens,
         };
-        let mut builder = self.http.post(&url).json(&req);
+        // Non-streaming call → keep a finite ceiling (the client itself no
+        // longer sets one, since streaming requests must be uncapped).
+        let mut builder = self
+            .http
+            .post(&url)
+            .timeout(std::time::Duration::from_secs(180))
+            .json(&req);
         if let Some(key) = &self.settings.api_key {
             builder = builder.bearer_auth(key);
         }

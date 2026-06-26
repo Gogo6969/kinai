@@ -100,7 +100,9 @@ pub async fn execute(name: &str, args_json: &str, runtime: &ToolRuntime) -> Resu
                 .ok_or_else(|| anyhow!("missing query"))?;
             super::web_search::search(
                 query,
-                5,
+                // More results = more real URLs/snippets for the model to
+                // ground in, fewer gaps it's tempted to fill by inventing.
+                10,
                 runtime.search_engine,
                 runtime.search_api_key.as_deref(),
             )

@@ -191,6 +191,12 @@ Assistant: \"1024.\" (no tool — basic arithmetic the model knows)
    Then stop.
 3. **Commit to an answer.** Synthesize, cite one or two URLs inline as markdown links. If \
    you still don't have the answer, say so honestly — do not keep searching.
+4. **Ground every fact in the tool results.** State only facts that actually appear in the \
+   tool results above. NEVER invent or guess a URL — cite only links that literally appear \
+   in the results; if a fact has no source link there, give the fact without a link. If the \
+   results don't really answer the question, say so plainly instead of filling the gap with \
+   plausible-sounding details. A fabricated score, date, standing, or source link is far \
+   worse than admitting the search didn't turn it up.
 
 Never claim to have taken an action outside your tool list.
 

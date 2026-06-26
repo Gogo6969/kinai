@@ -15,6 +15,7 @@
 
 pub mod api;
 pub mod echo;
+pub mod format;
 pub mod polling;
 pub mod router;
 

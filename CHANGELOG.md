@@ -5,6 +5,35 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.67] — 2026-06-26
+
+### Fixed
+
+- **Deep model no longer dies mid-answer on long replies.** The LLM client
+  had a 180-second total-request cap, so a slow reasoning model (the deep
+  slot) that ran past three minutes got its stream killed —
+  `error decoding response body`. Streaming requests are now uncapped;
+  liveness is enforced by a per-chunk inactivity timeout (5 min of silence =
+  treated as a stalled connection) and the Stop button. Non-streaming calls
+  keep a finite ceiling.
+- **A reply that's cut off mid-stream is kept, not thrown away.** If the
+  connection breaks after the model already streamed part of an answer, KinAI
+  now shows that partial answer with a "reply cut off" note instead of
+  replacing the whole turn with an error.
+
+### Changed
+
+- **Readable Telegram replies.** Telegram renders no markdown on our sends,
+  so tables came through as unreadable walls of `|` and `-`. KinAI now
+  flattens markdown for Telegram: tables become `• Header: value` bullet
+  lists, headings/bold/italic markers are dropped, and `[text](url)` becomes
+  `text (url)` so sources stay tappable.
+- **Less made-up information.** Web search now pulls 10 results (was 5), and
+  the system prompt explicitly tells the model to ground every fact in the
+  tool results, never invent URLs, and say so plainly when the search didn't
+  answer the question — rather than filling gaps with plausible-sounding
+  (fabricated) scores, dates, and sources.
+
 ## [0.2.66] — 2026-06-25
 
 ### Added
