@@ -333,6 +333,15 @@
   // local-first ethos means we never ship credentials.
   const VISION_PRESETS = [
     {
+      label: 'Groq Llama 4 Scout',
+      // Host + `/openai` only — KinAI appends `/v1/chat/completions`, giving
+      // https://api.groq.com/openai/v1/chat/completions. Adding `/v1` here
+      // would double it into a 404.
+      base_url: 'https://api.groq.com/openai',
+      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      hint: 'Free + multimodal — get a key at console.groq.com/keys.',
+    },
+    {
       label: 'Gemini 2.5 Flash',
       base_url: 'https://generativelanguage.googleapis.com/v1beta/openai',
       model: 'gemini-2.5-flash',
@@ -340,7 +349,10 @@
     },
     {
       label: 'Claude 3.5 Haiku',
-      base_url: 'https://api.anthropic.com/v1',
+      // Host only — KinAI appends `/v1/chat/completions`, so the OpenAI-compat
+      // endpoint is https://api.anthropic.com/v1/chat/completions. A base of
+      // `…/v1` or `…/v1/openai` double-paths it into a 404.
+      base_url: 'https://api.anthropic.com',
       model: 'claude-3-5-haiku-latest',
       hint: 'Anthropic OpenAI-compat shim. Paste your Anthropic API key.',
     },
@@ -1314,7 +1326,7 @@
         </div>
         <label class="block">
           <span class="text-sm text-white/70">Base URL</span>
-          <input class="kin-field mt-1 font-mono" bind:value={vision.failover.base_url} placeholder="https://api.anthropic.com/v1" />
+          <input class="kin-field mt-1 font-mono" bind:value={vision.failover.base_url} placeholder="https://api.anthropic.com" />
         </label>
         <label class="block">
           <span class="text-sm text-white/70">API key</span>

@@ -224,6 +224,14 @@ pub async fn run_with_route(
             .map_err(Into::into)
         }
         Route::Vision { primary, failover } => {
+            // Hosted vision endpoints have their own (often small) OUTPUT
+            // ceiling — e.g. Groq's Llama-4 vision rejects `max_tokens` over
+            // 8192 — whereas the chat-derived `max_tokens` here can be tens of
+            // thousands (from a 32k local chat context window). An image Q&A
+            // reply never needs that much, so cap it to a value every provider
+            // accepts. (`None` already means "let the server decide".)
+            const VISION_MAX_TOKENS: usize = 4096;
+            let vision_max_tokens = max_tokens.map(|m| m.min(VISION_MAX_TOKENS));
             let primary_client =
                 crate::llm::LlmClient::new(endpoint_to_llm_settings(&primary, chat_cfg));
             // Vision turns skip tools — see function doc comment for why.
@@ -233,7 +241,7 @@ pub async fn run_with_route(
                 primary_client,
                 messages.clone(),
                 no_tools.clone(),
-                max_tokens,
+                vision_max_tokens,
                 no_runtime.clone(),
                 handlers.clone(),
                 cancel.clone(),
@@ -259,7 +267,7 @@ pub async fn run_with_route(
                         fo_client,
                         messages,
                         no_tools,
-                        max_tokens,
+                        vision_max_tokens,
                         no_runtime,
                         handlers,
                         cancel,

@@ -5,7 +5,7 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.68] — 2026-06-26
+## [0.2.69] — 2026-06-27
 
 ### Added
 
@@ -13,6 +13,24 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   The primary vision endpoint had one; the failover didn't, so there was no
   way to verify your backup vision model (key + URL + model) without actually
   triggering a failover. Each slot now shows its own independent ✓/✗ result.
+- **Groq Llama-4 Scout vision preset** — free, multimodal, OpenAI-compatible.
+  One tap fills in the right base URL (`https://api.groq.com/openai`) + model
+  (`meta-llama/llama-4-scout-17b-16e-instruct`); just paste a free key from
+  console.groq.com/keys.
+
+### Fixed
+
+- **Vision via Groq now works in chat.** KinAI was passing the chat model's
+  large `max_tokens` (derived from a 32k context) to the vision endpoint;
+  Groq's Llama-4 vision caps output at 8192 and rejected it
+  (`max_tokens must be less than or equal to 8192`). Vision turns now cap
+  output at 4096 — ample for image Q&A, and under every provider's ceiling.
+- **Vision test probe** uses an 8×8 image instead of 1×1 — Groq rejects a
+  1-pixel image (`Image must have at least 2 pixels in each dimension`), which
+  made the new test button report a false ✗ even on a working endpoint.
+- **"Claude 3.5 Haiku" vision preset** base URL corrected to
+  `https://api.anthropic.com` — the old `…/v1` double-pathed into a 404 once
+  KinAI appended `/v1/chat/completions`.
 
 ## [0.2.67] — 2026-06-26
 

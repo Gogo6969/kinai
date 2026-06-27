@@ -215,11 +215,14 @@ pub struct TestVisionResult {
 pub async fn test_vision_endpoint(args: TestVisionArgs) -> Result<TestVisionResult> {
     use crate::context::ChatMessage;
     let started = std::time::Instant::now();
-    // A 1×1 transparent PNG, base64-encoded. Big enough to be a valid
-    // image payload, small enough that no provider rejects it on size.
-    const ONE_PX_PNG: &str =
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
-    let data_url = format!("data:image/png;base64,{}", ONE_PX_PNG);
+    // An 8×8 solid-red PNG, base64-encoded. Used to be 1×1, but some
+    // providers reject that — Groq's Llama-4 vision returns
+    // "Image must have at least 2 pixels in each dimension". 8×8 is still
+    // tiny but safely above any min-size check, and a recognizable color
+    // means a working endpoint replies "red".
+    const TEST_PNG: &str =
+        "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR4nGO4o6CAFTEMLQkA7V1HAanXCXkAAAAASUVORK5CYII=";
+    let data_url = format!("data:image/png;base64,{}", TEST_PNG);
     let settings = crate::config::LlmSettings {
         provider: "openai-compat".into(),
         base_url: args.base_url,
