@@ -88,8 +88,15 @@
     primary: emptyEndpoint(),
     failover: emptyEndpoint(),
   });
-  let visionTestState = $state<'idle' | 'testing' | 'ok' | 'fail'>('idle');
-  let visionTestMsg = $state<string>('');
+  // Per-slot so the primary and failover test results show independently
+  // (testing one must not overwrite the other's ✓/✗ line).
+  let visionTestState = $state<
+    Record<'primary' | 'failover', 'idle' | 'testing' | 'ok' | 'fail'>
+  >({ primary: 'idle', failover: 'idle' });
+  let visionTestMsg = $state<Record<'primary' | 'failover', string>>({
+    primary: '',
+    failover: '',
+  });
 
   // Image generation (ComfyUI) — empty base_url means feature disabled.
   let comfyui = $state<ComfyConfig>({ base_url: '', default_model: 'zimage' });
@@ -659,12 +666,12 @@
   async function testVision(slot: 'primary' | 'failover') {
     const ep = vision[slot];
     if (!ep.base_url || !ep.model) {
-      visionTestState = 'fail';
-      visionTestMsg = 'Set base URL and model first.';
+      visionTestState[slot] = 'fail';
+      visionTestMsg[slot] = 'Set base URL and model first.';
       return;
     }
-    visionTestState = 'testing';
-    visionTestMsg = '';
+    visionTestState[slot] = 'testing';
+    visionTestMsg[slot] = '';
     try {
       const res = await api.testVisionEndpoint({
         base_url: ep.base_url,
@@ -672,15 +679,15 @@
         api_key: ep.api_key,
       });
       if (res.ok) {
-        visionTestState = 'ok';
-        visionTestMsg = `${ep.label || ep.model} replied in ${res.latency_ms}ms: "${res.reply.slice(0, 80)}"`;
+        visionTestState[slot] = 'ok';
+        visionTestMsg[slot] = `${ep.label || ep.model} replied in ${res.latency_ms}ms: "${res.reply.slice(0, 80)}"`;
       } else {
-        visionTestState = 'fail';
-        visionTestMsg = res.error ?? 'Test failed.';
+        visionTestState[slot] = 'fail';
+        visionTestMsg[slot] = res.error ?? 'Test failed.';
       }
     } catch (e) {
-      visionTestState = 'fail';
-      visionTestMsg = String(e).replace(/^Error:\s*/, '');
+      visionTestState[slot] = 'fail';
+      visionTestMsg[slot] = String(e).replace(/^Error:\s*/, '');
     }
   }
 
@@ -1264,17 +1271,17 @@
           />
         </label>
         <div class="flex items-center gap-2">
-          <button class="kin-btn" type="button" onclick={() => testVision('primary')} disabled={visionTestState === 'testing'}>
-            {#if visionTestState === 'testing'}
+          <button class="kin-btn" type="button" onclick={() => testVision('primary')} disabled={visionTestState.primary === 'testing'}>
+            {#if visionTestState.primary === 'testing'}
               <Loader2 size={14} class="animate-spin" /> Testing…
             {:else}
               Test vision
             {/if}
           </button>
-          {#if visionTestState === 'ok'}
-            <span class="text-xs text-teal-300 truncate">✓ {visionTestMsg}</span>
-          {:else if visionTestState === 'fail'}
-            <span class="text-xs text-red-300 truncate">✗ {visionTestMsg}</span>
+          {#if visionTestState.primary === 'ok'}
+            <span class="text-xs text-teal-300 truncate">✓ {visionTestMsg.primary}</span>
+          {:else if visionTestState.primary === 'fail'}
+            <span class="text-xs text-red-300 truncate">✗ {visionTestMsg.primary}</span>
           {/if}
         </div>
       </div>
@@ -1320,6 +1327,20 @@
             spellcheck="false"
           />
         </label>
+        <div class="flex items-center gap-2">
+          <button class="kin-btn" type="button" onclick={() => testVision('failover')} disabled={visionTestState.failover === 'testing'}>
+            {#if visionTestState.failover === 'testing'}
+              <Loader2 size={14} class="animate-spin" /> Testing…
+            {:else}
+              Test vision
+            {/if}
+          </button>
+          {#if visionTestState.failover === 'ok'}
+            <span class="text-xs text-teal-300 truncate">✓ {visionTestMsg.failover}</span>
+          {:else if visionTestState.failover === 'fail'}
+            <span class="text-xs text-red-300 truncate">✗ {visionTestMsg.failover}</span>
+          {/if}
+        </div>
       </div>
     </div>
     {/if}

@@ -5,6 +5,15 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.68] — 2026-06-26
+
+### Added
+
+- **"Test vision" button for the failover endpoint** in Settings → Vision.
+  The primary vision endpoint had one; the failover didn't, so there was no
+  way to verify your backup vision model (key + URL + model) without actually
+  triggering a failover. Each slot now shows its own independent ✓/✗ result.
+
 ## [0.2.67] — 2026-06-26
 
 ### Fixed
