@@ -5,6 +5,22 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.72] — 2026-06-30
+
+### Fixed
+
+- **"Show me a picture of X" now sends a real photo on Telegram.** A web
+  `image_search` result is embedded as `![](url)` markdown — the app renders it
+  inline, but Telegram strips image markdown, so you only got the caption text.
+  The bridge now downloads the image on the host and sends it as an actual
+  Telegram photo (validating it's really an image first, trying a few hits if
+  some are page URLs). `/pic` already worked; web image results now match it.
+- **Voice input turns on when you download the model.** Downloading a Whisper
+  voice model now auto-enables voice input (and selects that model), instead of
+  leaving it downloaded-but-disabled — which silently rejected Telegram voice
+  messages. The bot's "I can't listen yet" message also now points to the
+  correct place (Settings → **Voice input**, not Voice replies).
+
 ## [0.2.71] — 2026-06-30
 
 ### Fixed

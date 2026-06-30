@@ -162,6 +162,13 @@
         if (p.model_id === modelId) sttProgress = p.progress;
       });
       await api.downloadSttModel(modelId);
+      // Downloading a voice model IS the intent to use voice input — flip it
+      // on (and select the model just downloaded) so the user doesn't have to
+      // hunt for a separate enable toggle. Without this, the model sat
+      // downloaded-but-disabled and Telegram voice messages were rejected.
+      if (app.config) {
+        await api.setSttConfig({ ...app.config.stt, model: modelId, enabled: true });
+      }
       await app.load();
       await refreshStt();
     } catch (e) {

@@ -111,8 +111,9 @@ pub async fn handle_update<R: Runtime>(
             (
                 "🎙 (voice message)",
                 "🎙 I can't listen to voice messages yet — please type your question. \
-                 (The host can enable voice input in KinAI → Settings → Voice replies. \
-                 I can already talk back: send /voice and my answers arrive as voice notes.)",
+                 (The host can enable voice input in KinAI → Settings → Voice input, \
+                 then download a voice model. I can already talk back: send /voice and \
+                 my answers arrive as voice notes.)",
             )
         } else {
             (
@@ -860,6 +861,16 @@ async fn send_assistant_reply<R: Runtime>(
         api.send_message(chat_id, &truncate_for_tg(reply)).await?;
     }
 
+    // If the reply embedded a REMOTE image (an `image_search` hit), deliver
+    // it as a real photo. These reach here via the text paths above —
+    // markdown_to_telegram strips `![](url)`, so "show me a picture of X"
+    // would otherwise be text-only on Telegram even though the app shows the
+    // image inline. The caption/source text is already on screen, so the
+    // photo follows without a caption. Best-effort: failures leave the text.
+    if !sent_photo && send_reply_remote_image(api, reply, chat_id).await {
+        sent_photo = true;
+    }
+
     // --- Voice note (opt-in per chat via /voice, host master switch in
     // Settings). Spawned so synthesis/upload never delays the turn;
     // failures only log. Photo replies are skipped — reading an image
@@ -985,6 +996,84 @@ pub(super) fn strip_inline_image_markdown(reply: &str) -> String {
         regex::Regex::new(r"!\[[^\]]*\]\(http[s]?://[^)]+\)\s*\n*").unwrap()
     });
     RE.replace_all(reply, "").trim().to_string()
+}
+
+/// Remote image URLs the LLM embedded as `![alt](http(s)://…)`, EXCLUDING our
+/// own `/v1/pic/` local paths (those are handled by extract_local_pic_path).
+fn extract_remote_image_urls(reply: &str) -> Vec<String> {
+    static RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
+        regex::Regex::new(r"!\[[^\]]*\]\((https?://[^)\s]+)\)").unwrap()
+    });
+    RE.captures_iter(reply)
+        .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
+        .filter(|u| !u.contains("/v1/pic/"))
+        .collect()
+}
+
+/// Download the first reply-embedded remote image that is genuinely an image
+/// and send it as a Telegram photo. Tries a few candidates — the LLM
+/// sometimes lists page URLs alongside direct image URLs. Returns true once
+/// one photo lands. Best-effort: any failure just moves to the next URL, and
+/// an empty/all-failed list leaves the already-sent text untouched.
+async fn send_reply_remote_image(api: &BotApi, reply: &str, chat_id: i64) -> bool {
+    let urls = extract_remote_image_urls(reply);
+    if urls.is_empty() {
+        return false;
+    }
+    // Browser-ish UA: many image CDNs (Cloudflare et al.) 403 a blank/default
+    // agent — the same class of block we hit while diagnosing Groq.
+    let client = match reqwest::Client::builder()
+        .user_agent(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
+             AppleWebKit/537.36 (KHTML, like Gecko) Safari/537.36",
+        )
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    const MAX_TRIES: usize = 4;
+    const MAX_BYTES: usize = 10 * 1024 * 1024; // Telegram photo-upload cap
+    for url in urls.into_iter().take(MAX_TRIES) {
+        let resp = match client.get(&url).send().await {
+            Ok(r) if r.status().is_success() => r,
+            _ => continue,
+        };
+        let mime = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        if !mime.starts_with("image/") {
+            continue; // a page URL or non-image hit — skip it
+        }
+        let bytes = match resp.bytes().await {
+            Ok(b) => b.to_vec(),
+            Err(_) => continue,
+        };
+        if bytes.is_empty() || bytes.len() > MAX_BYTES {
+            continue;
+        }
+        let ext = mime.split('/').nth(1).unwrap_or("jpg");
+        let fname = format!("image.{ext}");
+        match api
+            .send_photo_bytes(chat_id, bytes, &fname, &mime, None, None)
+            .await
+        {
+            Ok(()) => return true,
+            Err(e) => {
+                tracing::warn!("telegram remote-image send failed for {url}: {e:?}");
+                continue;
+            }
+        }
+    }
+    false
 }
 
 /// Cap an in-progress streamed snapshot at ~4000 chars for INTERMEDIATE
@@ -1247,6 +1336,35 @@ mod newchat_tests {
         assert_eq!(strip_newchat("/newchattery"), None);
         assert_eq!(strip_newchat("tell me about /newchat"), None);
         assert_eq!(strip_newchat("/new"), None);
+    }
+}
+
+#[cfg(test)]
+mod remote_image_tests {
+    use super::extract_remote_image_urls;
+
+    #[test]
+    fn extracts_external_image_urls_with_query_strings() {
+        let reply = "Here's a portrait:\n\n\
+            ![Demis](https://media.licdn.com/dms/image/v2/abc/photo?e=2147483647&v=beta&t=xyz)\n\n\
+            *Source: LinkedIn*";
+        let urls = extract_remote_image_urls(reply);
+        assert_eq!(urls.len(), 1);
+        assert!(urls[0].ends_with("t=xyz"), "full query string captured: {}", urls[0]);
+    }
+
+    #[test]
+    fn skips_our_local_pic_paths() {
+        // /v1/pic local images are handled by extract_local_pic_path, not here.
+        let reply = "![clown](http://192.168.1.56:4847/v1/pic/abc123.png)";
+        assert!(extract_remote_image_urls(reply).is_empty());
+    }
+
+    #[test]
+    fn collects_multiple_and_ignores_plain_links() {
+        let reply = "![a](https://x.test/a.jpg) and a [link](https://y.test/page) and ![b](https://x.test/b.png)";
+        let urls = extract_remote_image_urls(reply);
+        assert_eq!(urls, vec!["https://x.test/a.jpg", "https://x.test/b.png"]);
     }
 }
 

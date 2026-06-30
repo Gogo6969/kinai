@@ -355,6 +355,51 @@ impl BotApi {
         Ok(())
     }
 
+    /// Send already-in-memory bytes as a Telegram photo. Used for remote
+    /// images (e.g. an `image_search` hit) that the host downloaded itself,
+    /// so Telegram never has to fetch the URL (it often can't — many image
+    /// hits are behind a CDN that 403s Telegram's fetcher, or are page URLs).
+    pub async fn send_photo_bytes(
+        &self,
+        chat_id: i64,
+        bytes: Vec<u8>,
+        file_name: &str,
+        mime: &str,
+        caption: Option<&str>,
+        caption_parse_mode: Option<&str>,
+    ) -> Result<()> {
+        let mut form = reqwest::multipart::Form::new()
+            .text("chat_id", chat_id.to_string())
+            .part(
+                "photo",
+                reqwest::multipart::Part::bytes(bytes)
+                    .file_name(file_name.to_string())
+                    .mime_str(mime)
+                    .unwrap_or_else(|_| reqwest::multipart::Part::bytes(vec![])),
+            );
+        if let Some(c) = caption {
+            let trimmed = if c.chars().count() > 1024 {
+                let truncated: String = c.chars().take(1019).collect();
+                format!("{truncated}…")
+            } else {
+                c.to_string()
+            };
+            form = form.text("caption", trimmed);
+            if let Some(mode) = caption_parse_mode {
+                form = form.text("parse_mode", mode.to_string());
+            }
+        }
+        let resp = self
+            .http
+            .post(self.endpoint("sendPhoto"))
+            .multipart(form)
+            .send()
+            .await
+            .context("sendPhoto(bytes) send")?;
+        let _: Value = Self::unwrap_response(resp).await?;
+        Ok(())
+    }
+
     /// Upload an audio file as a Telegram VOICE NOTE — the round
     /// waveform bubble. OGG/Opus is the canonical format (Telegram
     /// parses duration + waveform itself); the AAC `.m4a` fallback needs
