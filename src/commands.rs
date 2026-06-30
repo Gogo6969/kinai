@@ -1940,7 +1940,10 @@ async fn run_assistant_turn(
 
     let route = crate::vision::decide(&active_llm_settings.model, &user_msg.attachments, &cfg.vision)
         .map_err(err)?;
-    let result = crate::vision::run_with_route(
+    // Keep a runtime copy for post-turn image recovery (run_with_route
+    // consumes tool_runtime).
+    let recover_runtime = tool_runtime.clone();
+    let mut result = crate::vision::run_with_route(
         route,
         llm,
         &active_llm_settings,
@@ -1953,6 +1956,11 @@ async fn run_assistant_turn(
     )
     .await
     .map_err(err)?;
+    // The model may have fabricated image URLs (small models do this instead
+    // of calling image_search); verify + recover them to real images.
+    result.final_content =
+        crate::tools::image_recover::recover_reply_images(&result.final_content, &recover_runtime)
+            .await;
     let total_ms = started_at.elapsed().as_millis() as u64;
     let first_token_ms = first_token_seen.lock().unwrap_or(0);
     let output_tokens = crate::context::token_guard::count_tokens(&result.final_content) as u64;

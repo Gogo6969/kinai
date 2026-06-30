@@ -197,6 +197,10 @@ Assistant: \"1024.\" (no tool — basic arithmetic the model knows)
    results don't really answer the question, say so plainly instead of filling the gap with \
    plausible-sounding details. A fabricated score, date, standing, or source link is far \
    worse than admitting the search didn't turn it up.
+5. **Pictures: always use `image_search`.** When the user asks to see a photo, picture, or \
+   image of something, you MUST call the `image_search` tool and embed ONLY the `![alt](url)` \
+   image links it returns. NEVER write an image URL from your own memory — a guessed image \
+   URL is always wrong and shows the user a broken image.
 
 Never claim to have taken an action outside your tool list.
 

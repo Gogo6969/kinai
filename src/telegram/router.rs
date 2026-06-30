@@ -78,7 +78,13 @@ pub async fn handle_update<R: Runtime>(
                     // Echo what was understood — builds trust in the
                     // transcription and explains an off answer.
                     let _ = api.send_message(chat_id, &format!("🎙 «{transcript}»")).await;
-                    text_or_caption = format!("🎙 {transcript}");
+                    // Feed the model the PLAIN transcript — NOT prefixed with
+                    // the 🎙 emoji. A small chat model (e.g. gpt-oss-20b) reads
+                    // the mic glyph as "this is audio I can't process" and
+                    // refuses ("I can't interpret voice messages") even though
+                    // it has the text. The Telegram echo above already shows
+                    // the message came from voice.
+                    text_or_caption = transcript;
                 }
                 Ok(_) => {
                     api.send_message(
@@ -679,6 +685,8 @@ async fn run_turn_for_peer<R: Runtime>(
 
     let route = crate::vision::decide(&active_llm_settings.model, &attachments, &cfg.vision)?;
     let started = std::time::Instant::now();
+    // Runtime copy for post-turn image recovery (run_with_route consumes it).
+    let recover_runtime = tool_runtime.clone();
     let result = crate::vision::run_with_route(
         route,
         llm,
@@ -696,7 +704,12 @@ async fn run_turn_for_peer<R: Runtime>(
     typing_cancel.cancel();
     edit_cancel.cancel();
     let stream_msg_id = editor.await.ok().flatten();
-    let result = result?;
+    let mut result = result?;
+    // Verify + recover any fabricated image URLs the model embedded before we
+    // send/store the reply (same as the app path).
+    result.final_content =
+        crate::tools::image_recover::recover_reply_images(&result.final_content, &recover_runtime)
+            .await;
     let total_ms = started.elapsed().as_millis() as u64;
     let output_tokens =
         crate::context::token_guard::count_tokens(&result.final_content) as u64;

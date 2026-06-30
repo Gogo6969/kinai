@@ -5,6 +5,32 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.73] — 2026-06-30
+
+### Fixed
+
+- **"Show me a picture of X" no longer shows a broken image.** Small chat models
+  often fabricate a plausible-looking image URL instead of calling the
+  `image_search` tool, so the link 404'd. The host now verifies every image the
+  model embeds and, when a URL is dead, recovers a real one via `image_search`
+  on the caption (dropping it only if nothing can be found) — in the app and on
+  Telegram. The model is also told more firmly to use the tool and never invent
+  image URLs.
+- **Voice messages get a real answer again.** The transcript was handed to the
+  model with a 🎙 emoji prefix, which a small model reads as "audio I can't
+  process" and refuses ("I can't interpret voice messages"). The model now gets
+  the plain transcript; the Telegram echo still shows it came from voice.
+- **Questions you ask in the KinAI app now mirror to Telegram.** Telegram→app
+  already worked, but app→Telegram silently didn't: the echo only fired for the
+  deterministic `telegram-…` thread id, while the bridge actually routes into
+  the peer's *active* thread (often a normal app thread). The echo now keys off
+  the same active thread the router uses, so the conversation stays in sync both
+  ways.
+- **The voice-input "Enabled" toggle is no longer impossible to find.** It was
+  shown only when STT was already enabled-and-downloaded — a catch-22 that left
+  it hidden while disabled, so you couldn't turn it on. It now appears whenever
+  a voice model is downloaded.
+
 ## [0.2.72] — 2026-06-30
 
 ### Fixed

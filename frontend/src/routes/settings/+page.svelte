@@ -1681,7 +1681,11 @@
                 One-time model download, nothing else to install.
               </p>
             </div>
-            {#if stt?.ready}
+            <!-- Show the Enable toggle whenever a model is DOWNLOADED — not
+                 only when STT is already `ready` (= enabled && downloaded).
+                 Gating on `ready` was a catch-22: while disabled, the toggle
+                 was hidden, so there was no way to turn it on. -->
+            {#if stt && stt.models.some((m) => m.downloaded)}
               <label class="flex items-center gap-2 shrink-0 cursor-pointer">
                 <input
                   type="checkbox"

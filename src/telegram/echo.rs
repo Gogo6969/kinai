@@ -113,8 +113,21 @@ async fn prepare_send(
     peer_id: &str,
     thread_id: &str,
 ) -> Option<(super::api::BotApi, i64)> {
-    if thread_id != telegram_thread_id_for_peer(peer_id) {
-        return None; // not a Telegram thread
+    // Mirror only into the thread the router actually DELIVERS Telegram
+    // messages to: the peer's ACTIVE thread, falling back to the
+    // deterministic `telegram-…` default — the SAME resolution the router
+    // uses (see router.rs `active_thread(...).unwrap_or_else(...)`). The old
+    // check hard-coded the default id, so once the active thread diverged
+    // (e.g. the host's normal app thread became the Telegram thread), KinAI→
+    // Telegram echo silently stopped while Telegram→KinAI kept working —
+    // exactly the one-way sync the user reported.
+    let tg_thread = crate::db::telegram::active_thread(&state.db.pool, peer_id)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| telegram_thread_id_for_peer(peer_id));
+    if thread_id != tg_thread {
+        return None; // not the peer's Telegram thread
     }
     let token = state.config.read().telegram.bot_token.clone();
     if token.trim().is_empty() {
