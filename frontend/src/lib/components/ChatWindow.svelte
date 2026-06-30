@@ -7,6 +7,7 @@
   import { app } from '$lib/stores/app.svelte';
   import { renderMarkdown as renderStreamMarkdown } from '$lib/markdown';
   import type { Attachment } from '$lib/api';
+  import { fileToDataUrl } from '$lib/image';
   import { Send, Square, Paperclip, X, FileText, Image as ImageIcon } from '@lucide/svelte';
 
   let input = $state('');
@@ -172,14 +173,6 @@
     }
   }
 
-  function fileToDataUrl(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = () => reject(reader.error ?? new Error('read failed'));
-      reader.readAsDataURL(file);
-    });
-  }
 
   function removeAttachment(idx: number) {
     pendingAttachments = pendingAttachments.filter((_, i) => i !== idx);

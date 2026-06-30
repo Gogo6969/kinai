@@ -1,6 +1,7 @@
 <script lang="ts">
   import { api, events, type Attachment } from '$lib/api';
   import { renderMarkdown } from '$lib/markdown';
+  import { fileToDataUrl } from '$lib/image';
   import { onMount, onDestroy } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { LogicalSize } from '@tauri-apps/api/dpi';
@@ -50,15 +51,6 @@
   // message whether they paste in the overlay or the main window.
   const MAX_BYTES = 25 * 1024 * 1024;
   const SUPPORTED_MIMES = /^(application\/pdf|image\/(png|jpe?g|gif|webp))$/i;
-
-  function fileToDataUrl(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = () => reject(reader.error ?? new Error('read failed'));
-      reader.readAsDataURL(file);
-    });
-  }
 
   async function ingestFiles(files: FileList | File[]) {
     attachmentError = '';

@@ -94,6 +94,11 @@ pub async fn run_pipeline(
                     // surface a hard error when nothing usable arrived.
                     let partial = accumulated.lock().await.clone();
                     if partial.trim().is_empty() {
+                        // Nothing usable arrived. Log the upstream error so a
+                        // silent failure (e.g. a vision endpoint returning a
+                        // 413 / model-decommissioned that the user only sees
+                        // as "no reply") is debuggable from the host log.
+                        tracing::warn!("llm stream produced no content: {e}");
                         return Err(anyhow::anyhow!("llm stream: {e}"));
                     }
                     tracing::warn!(

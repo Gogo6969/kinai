@@ -5,6 +5,37 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.71] — 2026-06-30
+
+### Fixed
+
+- **Drag-and-drop a photo into chat now works.** The drop was being swallowed
+  by Tauri's native file-drop handler (you'd see the green "+" cursor but the
+  image never landed) instead of reaching the chat's drop zone. KinAI now
+  hands drops to the in-app handler, so images attach. Paste already worked;
+  drag-drop now matches it.
+- **Vision turns only send the image you just attached.** KinAI was re-sending
+  *every* image in the thread on each vision turn, so a handful of pictures
+  piled into a request that 413'd hosted providers (Groq's size cap) and made
+  local models grind for minutes in multi-image prefill before any output —
+  surfacing as "no reply" or a failover that then went silent. A vision Q&A now
+  carries just the current image; earlier images are summarized away.
+- **Large photos are downscaled before sending.** Images are resized to
+  ≤1568 px on the longest edge (the resolution every major vision model treats
+  as full detail) before base64-encoding, keeping individual requests well
+  under cloud size caps. Local backends are unaffected; already-small images
+  and PDFs pass through untouched.
+
+### Changed
+
+- **Vision failover is smarter.** A primary vision endpoint that fails with a
+  retired-model error (decommissioned / not found) or a too-large rejection
+  now falls over to the configured failover endpoint instead of returning
+  nothing — so a cloud model getting pulled out from under your config
+  auto-falls-back to, say, your local model.
+- **Vision/LLM turns that produce no content are now logged on the host**, so a
+  silent failure is debuggable from the log instead of invisible.
+
 ## [0.2.70] — 2026-06-29
 
 ### Added

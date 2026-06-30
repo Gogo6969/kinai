@@ -102,6 +102,57 @@ fn strip_images_from_history(
         .collect()
 }
 
+/// For a dedicated vision call, keep ONLY the current turn's image(s) and
+/// drop images from earlier turns (replaced with a short text marker).
+///
+/// Sending the whole thread's image history on every vision turn balloons
+/// the request: it 413s hosted providers (Groq caps request size) and, on a
+/// local model, forces a multi-image prefill that can stall for minutes with
+/// no output (tripping the stream inactivity guard) — the exact "Groq 413 →
+/// fail over to local → local goes silent for 5 min → nothing" failure. A
+/// vision Q&A only needs the image the user just attached, so we send that
+/// one and summarize the rest away. The CURRENT turn (the last user message
+/// bearing an image) keeps all of its images, so multi-image single-turn
+/// questions ("compare these") still work.
+fn keep_only_current_turn_images(
+    messages: Vec<crate::context::ChatMessage>,
+) -> Vec<crate::context::ChatMessage> {
+    use crate::context::ChatMessage;
+    let last_img_idx = messages
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, m)| {
+            matches!(m, ChatMessage::User { image_data_urls, .. } if !image_data_urls.is_empty())
+        })
+        .map(|(i, _)| i);
+    messages
+        .into_iter()
+        .enumerate()
+        .map(|(i, m)| match m {
+            ChatMessage::User {
+                content,
+                name,
+                image_data_urls,
+            } if !image_data_urls.is_empty() && Some(i) != last_img_idx => {
+                const NOTE: &str =
+                    "[an earlier image was attached here; omitted to keep this request small]";
+                let new_content = if content.trim().is_empty() {
+                    NOTE.to_string()
+                } else {
+                    format!("{content}\n\n{NOTE}")
+                };
+                ChatMessage::User {
+                    content: new_content,
+                    name,
+                    image_data_urls: vec![],
+                }
+            }
+            other => other,
+        })
+        .collect()
+}
+
 /// Where should this turn go?
 #[derive(Debug, Clone)]
 pub enum Route {
@@ -236,6 +287,10 @@ pub async fn run_with_route(
             // accepts. (`None` already means "let the server decide".)
             const VISION_MAX_TOKENS: usize = 4096;
             let vision_max_tokens = max_tokens.map(|m| m.min(VISION_MAX_TOKENS));
+            // Send only the image just attached, not every image ever sent in
+            // this thread — otherwise the accumulated history 413s hosted
+            // providers and stalls local models in multi-image prefill.
+            let messages = keep_only_current_turn_images(messages);
             let primary_client =
                 crate::llm::LlmClient::new(endpoint_to_llm_settings(&primary, chat_cfg));
             // Vision turns skip tools — see function doc comment for why.
@@ -284,16 +339,27 @@ pub async fn run_with_route(
     }
 }
 
-/// CCC-style transient-error heuristic. Returns true when the failover
-/// chain should fire. We deliberately overshoot a little (any 5xx is
-/// transient) rather than miss a Gemini overload — the failover only
-/// runs once so a false positive costs one extra API call, never a loop.
+/// Returns true when a primary-endpoint failure warrants trying the
+/// failover. Covers two classes:
+///
+///   1. TRANSIENT cloud hiccups (any 5xx, 429, overload, timeout) — the
+///      original CCC-style heuristic. We overshoot a little rather than
+///      miss a Gemini overload; the failover runs once, so a false
+///      positive costs one extra call, never a loop.
+///   2. PRIMARY-CONFIG failures a *different* endpoint can rescue: a model
+///      that's been retired (decommissioned / not found) or a request the
+///      provider rejects as too large. These aren't transient, but the
+///      failover (e.g. a local model with no size cap, or a live model id)
+///      may well succeed — exactly the case where a cloud vendor pulls a
+///      model out from under a working config. (Downscaling now keeps us
+///      under size caps, so "too large" is belt-and-suspenders.)
 pub fn is_transient_failure(err_msg: &str) -> bool {
     let lc = err_msg.to_ascii_lowercase();
     if lc.contains("status: 5") {
         return true;
     }
     let needles = [
+        // Transient
         "429",
         "rate limit",
         "rate_limit",
@@ -307,6 +373,17 @@ pub fn is_transient_failure(err_msg: &str) -> bool {
         "service unavailable",
         "temporarily unavailable",
         "internal error",
+        // Retired / wrong model — a different endpoint may have a live one
+        "decommission",
+        "model_not_found",
+        "model not found",
+        "does not exist",
+        "no longer available",
+        // Request rejected as too large — a local endpoint may have no cap
+        "413",
+        "request_too_large",
+        "request entity too large",
+        "too large",
     ];
     needles.iter().any(|n| lc.contains(n))
 }
@@ -389,6 +466,95 @@ mod vision_capable_tests {
         // sending multipart to a text-only backend 500s.
         for m in ["qwen3-32b", "qwen2.5-coder-7b", "llama3.1:8b", "gpt-oss-120b"] {
             assert!(!is_vision_capable(m), "{m} must NOT be treated as vision");
+        }
+    }
+}
+
+#[cfg(test)]
+mod failover_trigger_tests {
+    use super::is_transient_failure;
+
+    #[test]
+    fn fails_over_on_transient_and_recoverable_errors() {
+        for msg in [
+            "LLM error 503 Service Unavailable",
+            "status: 500",
+            "429 Too Many Requests",
+            "model has been decommissioned",
+            "invalid model: model_not_found",
+            "LLM error 413: {\"code\":\"request_too_large\"}",
+            "Request Entity Too Large",
+        ] {
+            assert!(is_transient_failure(msg), "should fail over: {msg}");
+        }
+    }
+
+    #[test]
+    fn does_not_fail_over_on_plain_client_errors() {
+        // A 401/400 that a different endpoint can't fix shouldn't burn a
+        // failover call.
+        for msg in [
+            "LLM error 401 Unauthorized: invalid api key",
+            "LLM error 400 Bad Request: malformed json",
+        ] {
+            assert!(!is_transient_failure(msg), "should NOT fail over: {msg}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod vision_history_tests {
+    use super::keep_only_current_turn_images;
+    use crate::context::ChatMessage;
+
+    #[test]
+    fn keeps_only_the_last_turns_image() {
+        let msgs = vec![
+            ChatMessage::System { content: "sys".into() },
+            ChatMessage::User {
+                content: "first pic".into(),
+                name: Some("Wolf".into()),
+                image_data_urls: vec!["data:image/png;base64,OLD".into()],
+            },
+            ChatMessage::Assistant { content: "ok".into(), tool_calls: vec![] },
+            ChatMessage::User {
+                content: "what do you see?".into(),
+                name: Some("Wolf".into()),
+                image_data_urls: vec!["data:image/png;base64,CURRENT".into()],
+            },
+        ];
+        let out = keep_only_current_turn_images(msgs);
+        // Old image stripped, marker added, text preserved.
+        if let ChatMessage::User { image_data_urls, content, .. } = &out[1] {
+            assert!(image_data_urls.is_empty(), "history image must be dropped");
+            assert!(content.contains("first pic"));
+            assert!(content.contains("omitted"));
+        } else {
+            panic!("expected User at 1");
+        }
+        // Current (last) image kept intact.
+        if let ChatMessage::User { image_data_urls, .. } = &out[3] {
+            assert_eq!(image_data_urls, &vec!["data:image/png;base64,CURRENT".to_string()]);
+        } else {
+            panic!("expected User at 3");
+        }
+    }
+
+    #[test]
+    fn preserves_multiple_images_in_the_current_turn() {
+        let msgs = vec![ChatMessage::User {
+            content: "compare these".into(),
+            name: None,
+            image_data_urls: vec![
+                "data:image/png;base64,A".into(),
+                "data:image/png;base64,B".into(),
+            ],
+        }];
+        let out = keep_only_current_turn_images(msgs);
+        if let ChatMessage::User { image_data_urls, .. } = &out[0] {
+            assert_eq!(image_data_urls.len(), 2, "single-turn multi-image kept");
+        } else {
+            panic!("expected User");
         }
     }
 }
