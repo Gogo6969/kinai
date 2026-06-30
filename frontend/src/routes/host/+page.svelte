@@ -97,35 +97,6 @@
   });
   let visionTestState = $state<'idle' | 'testing' | 'ok' | 'fail'>('idle');
   let visionTestMsg = $state('');
-  const VISION_PRESETS = [
-    {
-      label: 'Gemini 2.5 Flash',
-      base_url: 'https://generativelanguage.googleapis.com/v1beta/openai',
-      model: 'gemini-2.5-flash',
-      hint: 'Free tier on aistudio.google.com — paste your API key.',
-    },
-    {
-      label: 'Claude 3.5 Haiku',
-      base_url: 'https://api.anthropic.com/v1/openai',
-      model: 'claude-haiku-4-5',
-      hint: 'Anthropic OpenAI-compat alias. Paste your Anthropic API key.',
-    },
-    {
-      label: 'Local llava (Ollama)',
-      base_url: 'http://localhost:11434/v1',
-      model: 'llava',
-      hint: 'Runs on this host — no API key needed. Install with `ollama pull llava`.',
-    },
-  ];
-  function applyVisionPreset(slot: 'primary' | 'failover', p: (typeof VISION_PRESETS)[number]) {
-    vision[slot] = {
-      label: p.label,
-      base_url: p.base_url,
-      model: p.model,
-      api_key: vision[slot].api_key,
-    };
-    vision.enabled = true;
-  }
   async function testVision(slot: 'primary' | 'failover') {
     const ep = vision[slot];
     if (!ep.base_url || !ep.model) {
@@ -1052,40 +1023,48 @@
         {#if vision.enabled}
           <div class="space-y-3">
             <div class="text-[10px] uppercase tracking-wider text-white/40">Primary endpoint</div>
-            <div class="flex flex-wrap gap-2">
-              {#each VISION_PRESETS as p}
-                <button
-                  type="button"
-                  class="kin-btn !text-xs"
-                  onclick={() => applyVisionPreset('primary', p)}
-                  title={p.hint}
-                >
-                  {p.label}
-                </button>
-              {/each}
+            <div class="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5 text-xs text-white/55 space-y-1.5">
+              <p>
+                <span class="text-white/75 font-medium">Base URL</span> — your vision
+                server's OpenAI-compatible address. KinAI appends
+                <code class="text-teal-300">/v1/chat/completions</code> itself, so
+                don't add it. Local example:
+                <code class="text-teal-300">http://192.168.1.50:8080</code>
+                (llama.cpp, LM Studio, vLLM, or Ollama on your LAN). A cloud
+                provider's OpenAI-compatible base URL works too.
+              </p>
+              <p>
+                <span class="text-white/75 font-medium">Model</span> — the exact model
+                id your server reports.
+              </p>
+              <p>
+                <span class="text-white/75 font-medium">API key</span> — leave blank for
+                a local server; only a cloud provider needs one.
+              </p>
             </div>
             <div class="grid grid-cols-2 gap-3">
               <label class="block">
                 <span class="text-sm text-white/70">Label</span>
-                <input class="kin-field mt-1" bind:value={vision.primary.label} placeholder="e.g. Gemini Flash" />
+                <input class="kin-field mt-1" bind:value={vision.primary.label} placeholder="a name for you, e.g. Local vision" />
               </label>
               <label class="block">
                 <span class="text-sm text-white/70">Model</span>
-                <input class="kin-field mt-1 font-mono" bind:value={vision.primary.model} placeholder="gemini-2.5-flash" />
+                <input class="kin-field mt-1 font-mono" bind:value={vision.primary.model} placeholder="model id your server reports" />
               </label>
             </div>
             <label class="block">
               <span class="text-sm text-white/70">Base URL</span>
               <input class="kin-field mt-1 font-mono" bind:value={vision.primary.base_url}
-                placeholder="https://generativelanguage.googleapis.com/v1beta/openai" />
+                placeholder="http://192.168.1.50:8080" />
             </label>
             <label class="block">
               <span class="text-sm text-white/70">API key</span>
               <input
                 type="password"
                 class="kin-field mt-1 font-mono"
-                bind:value={vision.primary.api_key}
-                placeholder="paste your key (leave blank for local endpoints)"
+                value={vision.primary.api_key ?? ''}
+                oninput={(e) => (vision.primary.api_key = (e.currentTarget as HTMLInputElement).value || null)}
+                placeholder="leave blank for a local server"
                 autocomplete="off"
                 spellcheck="false"
               />
@@ -1110,38 +1089,31 @@
                 Add a failover endpoint (optional)
               </summary>
               <div class="space-y-3 mt-3 pl-2 border-l border-white/10">
-                <div class="flex flex-wrap gap-2">
-                  {#each VISION_PRESETS as p}
-                    <button
-                      type="button"
-                      class="kin-btn !text-xs"
-                      onclick={() => applyVisionPreset('failover', p)}
-                      title={p.hint}
-                    >
-                      {p.label}
-                    </button>
-                  {/each}
-                </div>
+                <p class="text-xs text-white/45">
+                  Tried only if the primary fails — e.g. a cloud backup for a local
+                  primary. Same fields as above; leave empty to skip.
+                </p>
                 <div class="grid grid-cols-2 gap-3">
                   <label class="block">
                     <span class="text-sm text-white/70">Label</span>
-                    <input class="kin-field mt-1" bind:value={vision.failover.label} placeholder="e.g. Claude Haiku" />
+                    <input class="kin-field mt-1" bind:value={vision.failover.label} placeholder="a name for you, e.g. Cloud backup" />
                   </label>
                   <label class="block">
                     <span class="text-sm text-white/70">Model</span>
-                    <input class="kin-field mt-1 font-mono" bind:value={vision.failover.model} placeholder="claude-haiku-4-5" />
+                    <input class="kin-field mt-1 font-mono" bind:value={vision.failover.model} placeholder="model id" />
                   </label>
                 </div>
                 <label class="block">
                   <span class="text-sm text-white/70">Base URL</span>
-                  <input class="kin-field mt-1 font-mono" bind:value={vision.failover.base_url} placeholder="https://api.anthropic.com/v1/openai" />
+                  <input class="kin-field mt-1 font-mono" bind:value={vision.failover.base_url} placeholder="https://provider.example/openai" />
                 </label>
                 <label class="block">
                   <span class="text-sm text-white/70">API key</span>
                   <input
                     type="password"
                     class="kin-field mt-1 font-mono"
-                    bind:value={vision.failover.api_key}
+                    value={vision.failover.api_key ?? ''}
+                    oninput={(e) => (vision.failover.api_key = (e.currentTarget as HTMLInputElement).value || null)}
                     placeholder="leave blank to disable failover"
                     autocomplete="off"
                     spellcheck="false"

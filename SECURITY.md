@@ -11,16 +11,14 @@ seriously.
 
 ## Reporting a vulnerability
 
-**Preferred channel — GitHub's private vulnerability reporting:**
+**Use GitHub's private vulnerability reporting:**
 
 [Open a private advisory →](https://github.com/Gogo6969/kinai/security/advisories/new)
 
 This sends the report directly to the maintainers, keeps it invisible
 to the public until a fix ships, and lets us collaborate with you on a
-patch in a private branch.
-
-**Fallback — email:** `vidfame@me.com` with subject line starting with
-`[KinAI security]`.
+patch in a private branch. You'll need a (free) GitHub account; the
+form takes a minute.
 
 **Do not** open a public GitHub issue or PR for security problems.
 Public disclosure before a patch lands puts existing KinAI users at

@@ -104,8 +104,14 @@ impl LlmClient {
             max_tokens,
         };
         let mut builder = self.http.post(&url).json(&req);
-        if let Some(key) = &self.settings.api_key {
-            builder = builder.bearer_auth(key);
+        // Only attach an Authorization header when there's actually a key.
+        // A blank/whitespace key means "local server" (llama.cpp, LM Studio,
+        // Ollama, vLLM) — those need no auth, and sending `Bearer ` (empty)
+        // makes some of them answer 401. Cloud endpoints always set a key.
+        if let Some(key) = self.settings.api_key.as_deref() {
+            if !key.trim().is_empty() {
+                builder = builder.bearer_auth(key);
+            }
         }
         stream::open(builder, cancel).await
     }
@@ -141,8 +147,14 @@ impl LlmClient {
             .post(&url)
             .timeout(std::time::Duration::from_secs(180))
             .json(&req);
-        if let Some(key) = &self.settings.api_key {
-            builder = builder.bearer_auth(key);
+        // Only attach an Authorization header when there's actually a key.
+        // A blank/whitespace key means "local server" (llama.cpp, LM Studio,
+        // Ollama, vLLM) — those need no auth, and sending `Bearer ` (empty)
+        // makes some of them answer 401. Cloud endpoints always set a key.
+        if let Some(key) = self.settings.api_key.as_deref() {
+            if !key.trim().is_empty() {
+                builder = builder.bearer_auth(key);
+            }
         }
         let resp = builder.send().await?;
         if !resp.status().is_success() {

@@ -19,7 +19,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import QRCode from 'qrcode';
-  import { Loader2, RefreshCw } from '@lucide/svelte';
+  import { Loader2, RefreshCw, ArrowDownUp } from '@lucide/svelte';
   import {
     enable as enableAutostart,
     disable as disableAutostart,
@@ -72,6 +72,7 @@
   let tools = $state<ToolSettings>({
     web_search: true,
     x_search: true,
+    image_search: true,
     calculator: true,
     datetime: true,
     search_engine: 'duckduckgo',
@@ -329,49 +330,6 @@
     }
   }
 
-  // Quick-fill presets — base_url + model only, never an API key. KinAI's
-  // local-first ethos means we never ship credentials.
-  const VISION_PRESETS = [
-    {
-      label: 'Groq Llama 4 Scout',
-      // Host + `/openai` only — KinAI appends `/v1/chat/completions`, giving
-      // https://api.groq.com/openai/v1/chat/completions. Adding `/v1` here
-      // would double it into a 404.
-      base_url: 'https://api.groq.com/openai',
-      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-      hint: 'Free + multimodal — get a key at console.groq.com/keys.',
-    },
-    {
-      label: 'Gemini 2.5 Flash',
-      base_url: 'https://generativelanguage.googleapis.com/v1beta/openai',
-      model: 'gemini-2.5-flash',
-      hint: 'Free tier on aistudio.google.com — paste your API key below.',
-    },
-    {
-      label: 'Claude 3.5 Haiku',
-      // Host only — KinAI appends `/v1/chat/completions`, so the OpenAI-compat
-      // endpoint is https://api.anthropic.com/v1/chat/completions. A base of
-      // `…/v1` or `…/v1/openai` double-paths it into a 404.
-      base_url: 'https://api.anthropic.com',
-      model: 'claude-3-5-haiku-latest',
-      hint: 'Anthropic OpenAI-compat shim. Paste your Anthropic API key.',
-    },
-    {
-      label: 'Local llava (Ollama)',
-      base_url: 'http://localhost:11434/v1',
-      model: 'llava',
-      hint: 'Runs on this host — no API key needed. Install with `ollama pull llava`.',
-    },
-  ];
-
-  function applyPreset(slot: 'primary' | 'failover', p: (typeof VISION_PRESETS)[number]) {
-    vision[slot] = {
-      label: p.label,
-      base_url: p.base_url,
-      model: p.model,
-      api_key: vision[slot].api_key, // preserve any key the user already typed
-    };
-  }
   let displayName = $state('');
   let models = $state<string[]>([]);
   let saving = $state(false);
@@ -391,6 +349,34 @@
    *  Empty string for the initial state and after the fade. */
   let saveStatus = $state<'' | 'saved' | 'error'>('');
   let saveError = $state('');
+
+  /**
+   * Unsaved-changes tracking. `settingsSnapshot()` serializes exactly the
+   * fields the main `save()` persists — nothing more. Everything that saves
+   * itself immediately via its own handler (autostart, Telegram token, STT,
+   * the autostart-minimized sub-toggle) is deliberately excluded, so toggling
+   * those does NOT make the form look dirty.
+   *
+   * `savedBaseline` is stamped after hydration and after every successful
+   * save; `dirty` is true whenever the live form diverges from it. The
+   * header button reads `dirty` to turn "Back to chat" into "Save changes",
+   * so the user can't navigate away on unsaved edits.
+   */
+  function settingsSnapshot(): string {
+    return JSON.stringify({
+      llm,
+      llmDeep,
+      overlay,
+      theme,
+      tools,
+      vision,
+      comfyui,
+      tts,
+      displayName: displayName.trim(),
+    });
+  }
+  let savedBaseline = $state('');
+  const dirty = $derived(savedBaseline !== '' && settingsSnapshot() !== savedBaseline);
   let refreshMessage = $state('');
   let testResult = $state<string>('');
   let versionInfo = $state<{
@@ -435,6 +421,10 @@
         tts = { ...app.config.tts };
       }
     }
+    // Stamp the unsaved-changes baseline once hydration is done. The async
+    // refreshes below (TTS voices, STT, Telegram, autostart) don't touch any
+    // tracked field, so the form starts clean.
+    savedBaseline = settingsSnapshot();
     if (app.config?.mode === 'host') {
       void refreshTtsVoices();
       void refreshStt();
@@ -629,6 +619,9 @@
         });
       }
       await app.load();
+      // Re-baseline: the live form now equals what we persisted, so the
+      // header button drops back from "Save changes" to "Back to chat".
+      savedBaseline = settingsSnapshot();
       saveStatus = 'saved';
       // Show "saved" briefly, then return to the chat — settings are
       // done, no reason to leave the user parked here.
@@ -673,6 +666,20 @@
     } catch (e) {
       testResult = String(e);
     }
+  }
+
+  /** Swap the primary and failover vision endpoints so the user can flip
+   *  which model is the regular one and which is the backup without
+   *  retyping anything. `VisionEndpoint` is flat (label/base_url/model/
+   *  api_key), so a shallow clone is a full copy. The ✓/✗ test results
+   *  belonged to the old slots, so reset them. Mutating `vision` marks the
+   *  form dirty, so the header "Save & close" button appears. */
+  function swapVisionEndpoints() {
+    const oldPrimary = { ...vision.primary };
+    vision.primary = { ...vision.failover };
+    vision.failover = oldPrimary;
+    visionTestState = { primary: 'idle', failover: 'idle' };
+    visionTestMsg = { primary: '', failover: '' };
   }
 
   async function testVision(slot: 'primary' | 'failover') {
@@ -852,7 +859,15 @@
           >@gogo6969</a>
         </div>
       </div>
-      <button class="kin-btn flex-shrink-0" onclick={() => goto('/')}>Back to chat</button>
+      {#if dirty}
+        <!-- Unsaved edits: the only exit button saves first, so changes
+             can't be lost by clicking away. save() returns to chat itself. -->
+        <button class="kin-btn-primary flex-shrink-0" disabled={saving} onclick={save}>
+          {#if saving}<Loader2 size={14} class="animate-spin" /> Saving…{:else}Save &amp; close{/if}
+        </button>
+      {:else}
+        <button class="kin-btn flex-shrink-0" onclick={() => goto('/')}>Back to chat</button>
+      {/if}
     </header>
 
     <div class="kin-card space-y-3">
@@ -1244,39 +1259,47 @@
 
       <div class="space-y-3">
         <div class="text-[10px] uppercase tracking-wider text-white/40">Primary endpoint</div>
-        <div class="flex flex-wrap gap-2">
-          {#each VISION_PRESETS as p}
-            <button
-              type="button"
-              class="kin-btn !text-xs"
-              onclick={() => applyPreset('primary', p)}
-              title={p.hint}
-            >
-              {p.label}
-            </button>
-          {/each}
+        <div class="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2.5 text-xs text-white/55 space-y-1.5">
+          <p>
+            <span class="text-white/75 font-medium">Base URL</span> — your vision
+            server's OpenAI-compatible address. KinAI appends
+            <code class="text-teal-300">/v1/chat/completions</code> itself, so don't
+            add it. Local example:
+            <code class="text-teal-300">http://192.168.1.50:8080</code>
+            (llama.cpp, LM Studio, vLLM, or Ollama on your LAN). A cloud provider's
+            OpenAI-compatible base URL works too.
+          </p>
+          <p>
+            <span class="text-white/75 font-medium">Model</span> — the exact model id
+            your server reports (e.g. what <code class="text-teal-300">/v1/models</code> lists).
+          </p>
+          <p>
+            <span class="text-white/75 font-medium">API key</span> — leave blank for a
+            local server; only a cloud provider needs one.
+          </p>
         </div>
         <div class="grid grid-cols-2 gap-3">
           <label class="block">
             <span class="text-sm text-white/70">Label</span>
-            <input class="kin-field mt-1" bind:value={vision.primary.label} placeholder="e.g. Gemini Flash" />
+            <input class="kin-field mt-1" bind:value={vision.primary.label} placeholder="a name for you, e.g. Local vision" />
           </label>
           <label class="block">
             <span class="text-sm text-white/70">Model</span>
-            <input class="kin-field mt-1 font-mono" bind:value={vision.primary.model} placeholder="gemini-2.5-flash" />
+            <input class="kin-field mt-1 font-mono" bind:value={vision.primary.model} placeholder="model id your server reports" />
           </label>
         </div>
         <label class="block">
           <span class="text-sm text-white/70">Base URL</span>
           <input class="kin-field mt-1 font-mono" bind:value={vision.primary.base_url}
-            placeholder="https://generativelanguage.googleapis.com/v1beta/openai" />
+            placeholder="http://192.168.1.50:8080" />
         </label>
         <label class="block">
           <span class="text-sm text-white/70">API key</span>
           <input
             type="password"
             class="kin-field mt-1 font-mono"
-            bind:value={vision.primary.api_key}
+            value={vision.primary.api_key ?? ''}
+            oninput={(e) => (vision.primary.api_key = (e.currentTarget as HTMLInputElement).value || null)}
             placeholder="paste your key (leave blank for local endpoints)"
             autocomplete="off"
             spellcheck="false"
@@ -1299,41 +1322,44 @@
       </div>
 
       <div class="space-y-3 border-t border-white/5 pt-4">
-        <div class="text-[10px] uppercase tracking-wider text-white/40">
-          Failover endpoint <span class="text-white/30 normal-case">(optional)</span>
+        <div class="flex items-center justify-between gap-2">
+          <div class="text-[10px] uppercase tracking-wider text-white/40">
+            Failover endpoint <span class="text-white/30 normal-case">(optional)</span>
+          </div>
+          <button
+            type="button"
+            class="kin-btn !text-xs"
+            onclick={swapVisionEndpoints}
+            title="Swap the primary and failover endpoints — make the backup your main model, or vice versa"
+          >
+            <ArrowDownUp size={13} /> Swap with primary
+          </button>
         </div>
-        <div class="flex flex-wrap gap-2">
-          {#each VISION_PRESETS as p}
-            <button
-              type="button"
-              class="kin-btn !text-xs"
-              onclick={() => applyPreset('failover', p)}
-              title={p.hint}
-            >
-              {p.label}
-            </button>
-          {/each}
-        </div>
+        <p class="text-xs text-white/45">
+          A second endpoint KinAI tries only if the primary fails — e.g. a cloud
+          backup for a local primary. Same fields as above; leave it empty to skip.
+        </p>
         <div class="grid grid-cols-2 gap-3">
           <label class="block">
             <span class="text-sm text-white/70">Label</span>
-            <input class="kin-field mt-1" bind:value={vision.failover.label} placeholder="e.g. Claude Haiku" />
+            <input class="kin-field mt-1" bind:value={vision.failover.label} placeholder="a name for you, e.g. Cloud backup" />
           </label>
           <label class="block">
             <span class="text-sm text-white/70">Model</span>
-            <input class="kin-field mt-1 font-mono" bind:value={vision.failover.model} placeholder="claude-3-5-haiku-latest" />
+            <input class="kin-field mt-1 font-mono" bind:value={vision.failover.model} placeholder="model id" />
           </label>
         </div>
         <label class="block">
           <span class="text-sm text-white/70">Base URL</span>
-          <input class="kin-field mt-1 font-mono" bind:value={vision.failover.base_url} placeholder="https://api.anthropic.com" />
+          <input class="kin-field mt-1 font-mono" bind:value={vision.failover.base_url} placeholder="https://provider.example/openai" />
         </label>
         <label class="block">
           <span class="text-sm text-white/70">API key</span>
           <input
             type="password"
             class="kin-field mt-1 font-mono"
-            bind:value={vision.failover.api_key}
+            value={vision.failover.api_key ?? ''}
+            oninput={(e) => (vision.failover.api_key = (e.currentTarget as HTMLInputElement).value || null)}
             placeholder="leave blank to disable failover"
             autocomplete="off"
             spellcheck="false"

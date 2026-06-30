@@ -188,6 +188,10 @@
       {/each}
       {#if invites.length === 0}
         <div class="kin-card text-sm text-white/50 text-center">No invites yet.</div>
+      {:else}
+        <p class="text-xs text-white/30 text-center pt-1">
+          Revoked or expired codes are cleared automatically about a week later.
+        </p>
       {/if}
     </div>
   </div>

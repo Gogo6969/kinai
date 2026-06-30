@@ -12,9 +12,9 @@ name: Release
 #   Apple Developer ID code signing + notarization (macOS Gatekeeper):
 #     APPLE_CERTIFICATE                    — base64 of developer-id.p12
 #     APPLE_CERTIFICATE_PASSWORD           — password used when exporting the .p12
-#     APPLE_SIGNING_IDENTITY               — "Developer ID Application: Wolfgang Gabler (L5VWNX44MY)"
+#     APPLE_SIGNING_IDENTITY               — "Developer ID Application: Your Name (TEAMID)"
 #     APPLE_API_ISSUER                     — App Store Connect API issuer UUID
-#     APPLE_API_KEY                        — App Store Connect API key ID (e.g. 8PN9W26H97)
+#     APPLE_API_KEY                        — App Store Connect API key ID (e.g. ABCDE12345)
 #     APPLE_API_KEY_BASE64                 — base64 of AuthKey_<key>.p8 (we materialize to disk in the job)
 #
 # Without the updater secret the build still succeeds, but the produced

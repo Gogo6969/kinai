@@ -89,7 +89,7 @@
   <!-- Backdrop (div, not button: HTML doesn't let buttons nest, and the
        card has its own buttons). Click outside the card to dismiss. -->
   <div
-    class="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
+    class="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
     role="presentation"
     onclick={dismiss}
     onkeydown={(e) => {
@@ -104,7 +104,7 @@
       role="dialog"
       aria-modal="true"
       aria-labelledby="changelog-title"
-      class="kin-card max-w-2xl w-full max-h-[85vh] flex flex-col p-0 cursor-default text-left"
+      class="kin-card kin-changelog-card max-w-2xl w-full max-h-[85vh] flex flex-col p-0 cursor-default text-left"
       onclick={(e) => e.stopPropagation()}
       onkeydown={(e) => e.stopPropagation()}
       tabindex="-1"
@@ -150,6 +150,19 @@
 {/if}
 
 <style>
+  /* The modal card must be OPAQUE. `kin-card` is only `bg-white/5` and
+     leans on the backdrop's `backdrop-blur-sm` to stay legible — but
+     WebKitGTK (Linux Tauri) doesn't render backdrop-blur, so the chat
+     bled through and the release notes were unreadable. Force a solid,
+     theme-aware surface (ink-900 dark / white light); `!important` beats
+     kin-card's translucent background regardless of stylesheet order. */
+  :global(.kin-changelog-card) {
+    background-color: #0f172a !important;
+  }
+  :global(html.light .kin-changelog-card) {
+    background-color: #ffffff !important;
+  }
+
   /* Tighter typography for the markdown body — the chat-bubble defaults
      are too airy when applied to a long-form release note. */
   :global(.kin-changelog-body h3) {

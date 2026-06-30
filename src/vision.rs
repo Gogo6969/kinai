@@ -29,9 +29,13 @@ const VISION_CAPABLE_FRAGMENTS: &[&str] = &[
     "gpt-4o", "gpt-4-vision", "gpt-4-turbo",
     // Google Gemini (Pro & Flash both vision; 2.0/2.5 etc.)
     "gemini-2", "gemini-1.5", "gemini-pro", "gemini-flash",
-    // Open-source vision models commonly served via Ollama / vLLM
-    "llava", "qwen2-vl", "qwen-vl", "moondream", "minicpm-v",
-    "pixtral", "cogvlm", "internvl", "phi-3-vision", "phi-3.5-vision",
+    // Open-source vision models commonly served via Ollama / vLLM /
+    // llama.cpp (GGUF + mmproj). The Qwen-VL line is a popular fully-local
+    // choice — note "qwen2.5-vl" is NOT a superstring of "qwen2-vl" (the
+    // ".5" breaks the substring), so each generation needs its own fragment.
+    "llava", "qwen-vl", "qwen2-vl", "qwen2.5-vl", "qwen3-vl",
+    "moondream", "minicpm-v", "pixtral", "cogvlm", "internvl",
+    "phi-3-vision", "phi-3.5-vision",
 ];
 
 /// Returns true if the given model name is in the hardcoded vision list.
@@ -358,6 +362,33 @@ mod image_strip_tests {
             assert!(content.contains("can't view images"));
         } else {
             panic!("expected User");
+        }
+    }
+}
+
+#[cfg(test)]
+mod vision_capable_tests {
+    use super::is_vision_capable;
+
+    #[test]
+    fn recognises_qwen_vl_generations_as_chat_vision() {
+        // Real-world served ids (llama.cpp aliases, GGUF names, LM Studio).
+        for m in [
+            "Qwen2.5-VL-32B-Instruct",
+            "qwen2.5-vl-7b-instruct-q4_k_m",
+            "Qwen2-VL-7B",
+            "qwen3-vl-8b",
+        ] {
+            assert!(is_vision_capable(m), "{m} should be vision-capable");
+        }
+    }
+
+    #[test]
+    fn text_only_models_are_not_vision() {
+        // These must route to the dedicated Vision endpoint, not inline —
+        // sending multipart to a text-only backend 500s.
+        for m in ["qwen3-32b", "qwen2.5-coder-7b", "llama3.1:8b", "gpt-oss-120b"] {
+            assert!(!is_vision_capable(m), "{m} must NOT be treated as vision");
         }
     }
 }

@@ -5,6 +5,55 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.70] — 2026-06-29
+
+### Added
+
+- **Fully-local vision is now first-class.** Point the vision endpoint at any
+  OpenAI-compatible server on your LAN — llama.cpp (`llama-server`), LM Studio,
+  Ollama, or vLLM — and images never leave your network. The vision settings
+  now **explain each field inline** (Base URL, Model, API key) instead of
+  pre-filling provider presets: you configure your own endpoint with no
+  guesswork, and the API-key field is optional — leave it blank for a local
+  server. Qwen-VL (Qwen2.5-VL / Qwen2-VL / Qwen3-VL) is also recognized as a
+  vision-capable *chat* model now, so a single local multimodal model can
+  answer both text and image questions.
+- **Settings can't be left unsaved by accident.** When you have unsaved
+  changes, the "Back to chat" button in Settings turns into a highlighted
+  **"Save & close"** button — clicking it saves first, then returns you to the
+  chat, so edits can't be lost by navigating away. It reverts to "Back to chat"
+  once everything's saved.
+- **Swap vision endpoints with one click.** A "Swap with primary" button on the
+  failover endpoint flips the primary and failover vision models, so you can
+  promote your backup to the main model (or demote the main one) without
+  retyping any URLs, models, or keys.
+
+### Changed
+
+- **Vision settings no longer ship quick-fill presets.** The provider preset
+  buttons (which pre-filled specific cloud/local endpoints) were removed from
+  both the Settings page and the host setup wizard in favor of clear per-field
+  explanations. Nothing is hardcoded; every user enters their own endpoint.
+
+### Fixed
+
+- **"What's new" update notes are now readable on Linux.** The modal card was
+  only 5% opaque and relied on a backdrop blur that WebKitGTK (Linux) doesn't
+  render, so the chat showed through and the text was hard to read. The card
+  now uses a solid, theme-aware background.
+- **A blank API key no longer sends a broken `Authorization` header.** KinAI
+  now omits the header entirely when the key is empty (vision *and* chat
+  endpoints), so local servers that reject `Bearer ` with no token work out of
+  the box.
+- **Revoked and expired invite codes no longer pile up forever.** The invite
+  list kept every code you'd ever revoked — greyed out, with no way to clear
+  them. Now a code that has been revoked or expired for more than a week is
+  swept automatically the next time the invite page loads. A freshly revoked
+  code still lingers for the grace week as a visible "this is dead" record,
+  then disappears. (Internally: a new `revoked_at` column measures the grace
+  window from when you revoked the code, not when it was first issued, so
+  revoking an old never-expiring invite doesn't make it vanish on the spot.)
+
 ## [0.2.69] — 2026-06-27
 
 ### Added
@@ -1606,7 +1655,7 @@ builds since v0.2.32-ish)
 
 - **Bot-username advertised over Welcome.** The host's `Welcome`
   envelope now carries `host_telegram_bot` so client peers can
-  show *"Family bot: @vidfame_kinai_bot"* and enable their pair
+  show *"Family bot: @your_family_bot"* and enable their pair
   button without a separate round-trip.
 
 ## [0.2.11] — 2026-05-19
@@ -1731,8 +1780,8 @@ builds since v0.2.32-ish)
 
 ### Added
 - **Signed + notarized macOS builds.** KinAI is now signed with Apple's
-  Developer ID Application certificate (Wolfgang Gabler, team
-  L5VWNX44MY) and notarized through Apple's notary service via
+  Developer ID Application certificate and notarized through Apple's
+  notary service via
   `notarytool` + an App Store Connect API key. End users no longer see
   *"KinAI can't be opened because Apple cannot check it for malicious
   software"* on first launch — just the standard *"KinAI was

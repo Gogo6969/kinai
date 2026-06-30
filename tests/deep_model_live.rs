@@ -9,7 +9,7 @@
 //!
 //! `#[ignore]` by default because it needs a live server. Run explicitly:
 //!
-//!   KINAI_DEEP_URL=http://192.168.1.91:8081 \
+//!   KINAI_DEEP_URL=http://127.0.0.1:8081 \
 //!   KINAI_DEEP_MODEL=Qwen3.6-35B-A3B-MTP-UD-Q6_K.gguf \
 //!   cargo test --test deep_model_live -- --ignored --nocapture
 //!
@@ -32,7 +32,7 @@ fn deep_settings() -> LlmSettings {
     LlmSettings {
         provider: "llamacpp".into(),
         base_url: std::env::var("KINAI_DEEP_URL")
-            .unwrap_or_else(|_| "http://192.168.1.91:8081".into()),
+            .unwrap_or_else(|_| "http://127.0.0.1:8081".into()),
         model: std::env::var("KINAI_DEEP_MODEL")
             .unwrap_or_else(|_| "Qwen3.6-35B-A3B-MTP-UD-Q6_K.gguf".into()),
         context_window: 32768,
@@ -48,7 +48,7 @@ fn deep_settings() -> LlmSettings {
 #[ignore = "needs a live llama.cpp deep server; run with --ignored"]
 async fn deep_model_streams_reasoning_and_answer() {
     let base_url =
-        std::env::var("KINAI_DEEP_URL").unwrap_or_else(|_| "http://192.168.1.91:8081".into());
+        std::env::var("KINAI_DEEP_URL").unwrap_or_else(|_| "http://127.0.0.1:8081".into());
     let model = std::env::var("KINAI_DEEP_MODEL")
         .unwrap_or_else(|_| "Qwen3.6-35B-A3B-MTP-UD-Q6_K.gguf".into());
 

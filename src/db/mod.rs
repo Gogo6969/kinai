@@ -2,7 +2,7 @@
 
 mod memory;
 pub mod messages;
-mod migrate;
+pub(crate) mod migrate;
 pub mod telegram;
 pub mod user_facts;
 

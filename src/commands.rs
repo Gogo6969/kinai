@@ -2435,8 +2435,21 @@ pub async fn generate_invite(
         .map_err(err)
 }
 
+/// Invites stay visible (greyed out) for this many days after they're
+/// revoked or expire, then `list_invites` purges them. Long enough to be a
+/// useful "yes, that code is dead" record; short enough that the list
+/// doesn't grow forever.
+const INVITE_STALE_GRACE_DAYS: i64 = 7;
+
 #[tauri::command]
 pub async fn list_invites(state: tauri::State<'_, SharedState>) -> Result<Vec<invite::Invite>> {
+    // Opportunistically sweep dead invites before listing. Best-effort: a
+    // cleanup failure must never block showing the (still-valid) list.
+    match invite::cleanup_stale(&state.db.pool, INVITE_STALE_GRACE_DAYS).await {
+        Ok(n) if n > 0 => tracing::info!("purged {n} stale invite(s)"),
+        Ok(_) => {}
+        Err(e) => tracing::warn!("invite cleanup_stale failed: {e}"),
+    }
     invite::list(&state.db.pool).await.map_err(err)
 }
 

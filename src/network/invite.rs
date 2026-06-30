@@ -104,11 +104,42 @@ pub async fn list(pool: &SqlitePool) -> Result<Vec<Invite>> {
 }
 
 pub async fn revoke(pool: &SqlitePool, id: &str) -> Result<()> {
-    sqlx::query("UPDATE invites SET revoked = 1 WHERE id = ?1")
+    // Stamp `revoked_at` so `cleanup_stale` can purge this row a grace
+    // period from now rather than keying off `created_at` (which could be
+    // months old, making a just-revoked invite vanish immediately).
+    sqlx::query("UPDATE invites SET revoked = 1, revoked_at = ?2 WHERE id = ?1")
         .bind(id)
+        .bind(Utc::now().to_rfc3339())
         .execute(pool)
         .await?;
     Ok(())
+}
+
+/// Hard-delete invites that have been dead long enough to stop showing.
+/// An invite is "stale" once it has been *revoked* or *expired* for more
+/// than `grace_days`:
+///
+///   * revoked  → keyed off `revoked_at` (falling back to `created_at`
+///     for rows revoked before that column existed), so a freshly revoked
+///     invite still lingers for the grace window as a visible record.
+///   * expired  → keyed off the existing `expires_at`. "Never expires"
+///     invites sit ~100 years out, so they're never caught here unless
+///     they've also been revoked.
+///
+/// Timestamps are compared as RFC3339 strings — the same lexicographic =
+/// chronological assumption `list`'s `ORDER BY created_at` already relies
+/// on (all are UTC `+00:00`). Returns the number of rows removed.
+pub async fn cleanup_stale(pool: &SqlitePool, grace_days: i64) -> Result<u64> {
+    let cutoff = (Utc::now() - Duration::days(grace_days)).to_rfc3339();
+    let result = sqlx::query(
+        "DELETE FROM invites
+         WHERE (revoked = 1 AND COALESCE(revoked_at, created_at) < ?1)
+            OR (revoked = 0 AND expires_at < ?1)",
+    )
+    .bind(&cutoff)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
 }
 
 pub async fn validate_jwt_for_host(
@@ -272,4 +303,96 @@ fn urldecode(s: &str) -> String {
         i += 1;
     }
     String::from_utf8_lossy(&out).to_string()
+}
+
+#[cfg(test)]
+mod cleanup_tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn fresh_pool() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open in-memory sqlite");
+        crate::db::migrate::run(&pool).await.expect("apply migrations");
+        pool
+    }
+
+    fn days_ago(n: i64) -> String {
+        (Utc::now() - Duration::days(n)).to_rfc3339()
+    }
+    fn days_ahead(n: i64) -> String {
+        (Utc::now() + Duration::days(n)).to_rfc3339()
+    }
+
+    /// Insert a bare invite row with full control over the lifecycle
+    /// timestamps — bypasses `create()` so the test doesn't need signing
+    /// keys or a config, and can place rows arbitrarily in the past.
+    async fn seed(
+        pool: &SqlitePool,
+        id: &str,
+        created_at: &str,
+        expires_at: &str,
+        revoked: i64,
+        revoked_at: Option<&str>,
+    ) {
+        sqlx::query(
+            "INSERT INTO invites
+               (id, short_code, jwt, host_url, label, created_at, expires_at, revoked, revoked_at)
+             VALUES (?1, ?2, 'jwt', 'ws://h/kin', 'L', ?3, ?4, ?5, ?6)",
+        )
+        .bind(id)
+        .bind(id) // short_code is UNIQUE — reuse the id
+        .bind(created_at)
+        .bind(expires_at)
+        .bind(revoked)
+        .bind(revoked_at)
+        .execute(pool)
+        .await
+        .expect("seed invite");
+    }
+
+    async fn ids(pool: &SqlitePool) -> Vec<String> {
+        list(pool).await.unwrap().into_iter().map(|i| i.id).collect()
+    }
+
+    #[tokio::test]
+    async fn cleanup_purges_only_long_dead_invites() {
+        let pool = fresh_pool().await;
+        // Survivors:
+        seed(&pool, "active", &days_ago(1), &days_ahead(30), 0, None).await;
+        seed(&pool, "expired_recent", &days_ago(10), &days_ago(2), 0, None).await;
+        seed(&pool, "revoked_recent", &days_ago(40), &days_ahead(30), 1, Some(&days_ago(2))).await;
+        seed(&pool, "never", &days_ago(1), &days_ahead(36500), 0, None).await;
+        // Should be purged (dead > 7d):
+        seed(&pool, "expired_old", &days_ago(40), &days_ago(30), 0, None).await;
+        seed(&pool, "revoked_old", &days_ago(40), &days_ahead(30), 1, Some(&days_ago(30))).await;
+        // Legacy revoked row (pre-migration): revoked_at NULL, falls back
+        // to created_at, which is old → purged.
+        seed(&pool, "revoked_legacy", &days_ago(40), &days_ahead(30), 1, None).await;
+
+        let removed = cleanup_stale(&pool, 7).await.unwrap();
+        assert_eq!(removed, 3, "exactly the three long-dead invites go");
+
+        let mut remaining = ids(&pool).await;
+        remaining.sort();
+        assert_eq!(
+            remaining,
+            vec!["active", "expired_recent", "never", "revoked_recent"],
+        );
+    }
+
+    #[tokio::test]
+    async fn revoke_stamps_revoked_at() {
+        let pool = fresh_pool().await;
+        seed(&pool, "x", &days_ago(40), &days_ahead(30), 0, None).await;
+        revoke(&pool, "x").await.unwrap();
+        // Just-revoked → revoked_at is "now", so a 7-day sweep must NOT
+        // delete it even though created_at is 40 days old.
+        let removed = cleanup_stale(&pool, 7).await.unwrap();
+        assert_eq!(removed, 0, "a freshly revoked invite survives the grace window");
+        assert_eq!(ids(&pool).await, vec!["x"]);
+    }
 }

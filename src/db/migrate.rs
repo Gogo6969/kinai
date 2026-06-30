@@ -245,6 +245,15 @@ const STATEMENTS: &[&str] = &[
         updated_at TEXT NOT NULL
     )
     "#,
+    // Records WHEN an invite was revoked, so a background sweep can
+    // hard-delete invites that have been dead (revoked or expired) for a
+    // grace period. Expired invites purge off their existing `expires_at`;
+    // revoked ones need their own timestamp because revoke() can fire any
+    // time after issue. NULL for rows revoked before this column existed —
+    // cleanup_stale falls back to created_at for those.
+    r#"
+    ALTER TABLE invites ADD COLUMN revoked_at TEXT
+    "#,
 ];
 
 pub async fn run(pool: &SqlitePool) -> Result<()> {
