@@ -157,10 +157,7 @@ pub async fn handle_update<R: Runtime>(
     {
         tracing::warn!("telegram run_turn: {e:?}");
         let _ = api
-            .send_message(
-                chat_id,
-                &format!("Something went wrong on KinAI's end: {e}"),
-            )
+            .send_message(chat_id, &humanize_turn_error(&e.to_string()))
             .await;
     }
     Ok(())
@@ -710,6 +707,14 @@ async fn run_turn_for_peer<R: Runtime>(
     result.final_content =
         crate::tools::image_recover::recover_reply_images(&result.final_content, &recover_runtime)
             .await;
+    // Don't forward an empty completion verbatim: Telegram rejects an empty
+    // message ("Bad Request: message text is empty") and the app shows a blank
+    // bubble. A reasoning model (the deep slot) can spend its whole budget
+    // "thinking" and emit no visible content, or a backend can return an empty
+    // body — surface that as an actionable note instead of a cryptic error.
+    if result.final_content.trim().is_empty() {
+        result.final_content = crate::tools::loop_pipeline::EMPTY_REPLY_NOTE.to_string();
+    }
     let total_ms = started.elapsed().as_millis() as u64;
     let output_tokens =
         crate::context::token_guard::count_tokens(&result.final_content) as u64;
@@ -1089,6 +1094,47 @@ async fn send_reply_remote_image(api: &BotApi, reply: &str, chat_id: i64) -> boo
     false
 }
 
+/// Turn a raw turn error into a calm, actionable Telegram message. The
+/// common failures are all "the model isn't ready yet" — the local model
+/// server (especially the big /deep model) is starting up, mid-load, or
+/// briefly offline. Those get a plain-language line telling the user to
+/// retry, instead of a scary "Something went wrong" plus a raw stack string.
+/// Anything unrecognized falls back to the generic message so we never hide
+/// a real bug.
+fn humanize_turn_error(e: &str) -> String {
+    let lc = e.to_ascii_lowercase();
+    // Server up but the model is still loading into memory (llama.cpp returns
+    // HTTP 503 "Loading model" until the weights are resident).
+    if lc.contains("loading model")
+        || lc.contains("503")
+        || lc.contains("service unavailable")
+        || lc.contains("unavailable_error")
+    {
+        return "⏳ The model is still loading — a big model can take a minute to warm up. \
+                Give it a few seconds and send your message again."
+            .to_string();
+    }
+    // Couldn't even open a connection — the model server is offline or starting.
+    if lc.contains("error sending request")
+        || lc.contains("connection refused")
+        || lc.contains("connect error")
+        || lc.contains("tcp connect")
+        || lc.contains("dns error")
+        || lc.contains("no route")
+    {
+        return "🔌 I couldn't reach the model server — it may be starting up or offline. \
+                Check that it's running, then try again."
+            .to_string();
+    }
+    // Connected but no response in time (loading, or busy on a long turn).
+    if lc.contains("timed out") || lc.contains("timeout") || lc.contains("went silent") {
+        return "⏱ The model didn't respond in time — it may be loading or busy. \
+                Try again in a moment."
+            .to_string();
+    }
+    format!("Something went wrong on KinAI's end: {e}")
+}
+
 /// Cap an in-progress streamed snapshot at ~4000 chars for INTERMEDIATE
 /// edits (a single Telegram message can't exceed 4096). Walks back to a
 /// UTF-8 char boundary before slicing so a multi-byte char at the cut
@@ -1353,6 +1399,32 @@ mod newchat_tests {
 }
 
 #[cfg(test)]
+mod humanize_error_tests {
+    use super::humanize_turn_error;
+
+    #[test]
+    fn maps_model_not_ready_states_to_friendly_text() {
+        let loading = humanize_turn_error(
+            "LLM error 503 Service Unavailable: {\"message\":\"Loading model\"}",
+        );
+        assert!(loading.contains("still loading"), "got: {loading}");
+
+        let unreachable =
+            humanize_turn_error("error sending request for url (http://127.0.0.1:8081/v1/chat/completions)");
+        assert!(unreachable.contains("couldn't reach"), "got: {unreachable}");
+
+        let timeout = humanize_turn_error("the model server went silent for 5 minutes");
+        assert!(timeout.contains("didn't respond"), "got: {timeout}");
+    }
+
+    #[test]
+    fn unknown_errors_keep_the_generic_message() {
+        let other = humanize_turn_error("sqlite: database is locked");
+        assert!(other.contains("Something went wrong on KinAI's end"), "got: {other}");
+    }
+}
+
+#[cfg(test)]
 mod remote_image_tests {
     use super::extract_remote_image_urls;
 
@@ -1369,7 +1441,7 @@ mod remote_image_tests {
     #[test]
     fn skips_our_local_pic_paths() {
         // /v1/pic local images are handled by extract_local_pic_path, not here.
-        let reply = "![clown](http://192.168.1.56:4847/v1/pic/abc123.png)";
+        let reply = "![clown](http://127.0.0.1:4847/v1/pic/abc123.png)";
         assert!(extract_remote_image_urls(reply).is_empty());
     }
 

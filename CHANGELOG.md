@@ -5,6 +5,25 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.74] — 2026-06-30
+
+### Fixed
+
+- **Clearer messages when a model isn't ready or can't answer.** Raw backend
+  errors are now plain-language and actionable, especially for the big `/deep`
+  model as it starts up:
+  - Still loading (HTTP 503) → "⏳ The model is still loading — give it a few
+    seconds and try again."
+  - Server unreachable → "🔌 I couldn't reach the model server — it may be
+    starting up or offline. Check that it's running, then try again."
+  - Timed out / went silent → "⏱ The model didn't respond in time…"
+  - An **empty completion** no longer forwards as Telegram's cryptic
+    "Bad Request: message text is empty" (or a blank bubble in the app) — it
+    shows a short retry note.
+  - The "ran tools but never produced an answer" note is now plain language
+    ("I searched but couldn't pull together a clear answer…") instead of
+    mentioning "max-rounds limits" and "tool-calling loops."
+
 ## [0.2.73] — 2026-06-30
 
 ### Fixed

@@ -172,7 +172,7 @@ pub async fn handle(cfg: &AppConfig, content: &str) -> Option<String> {
     if let Some((model, width, height, prompt)) = crate::comfyui::parse_slash(trimmed) {
         if !crate::comfyui::is_configured(&cfg.comfyui.base_url) {
             return Some(
-                "**Image generation isn't configured on this host.**\n\nThe host owner can enable it in **Settings → Image generation** by pointing it at a ComfyUI server (e.g. `http://192.168.1.25:8188`).".into()
+                "**Image generation isn't configured on this host.**\n\nThe host owner can enable it in **Settings → Image generation** by pointing it at a ComfyUI server (e.g. `http://192.168.1.50:8188`).".into()
             );
         }
         if prompt.is_empty() {

@@ -1961,6 +1961,12 @@ async fn run_assistant_turn(
     result.final_content =
         crate::tools::image_recover::recover_reply_images(&result.final_content, &recover_runtime)
             .await;
+    // Never store/emit an empty reply (e.g. a reasoning model that produced
+    // only hidden "thinking"); show an actionable note instead of a blank
+    // bubble. Mirrors the Telegram path.
+    if result.final_content.trim().is_empty() {
+        result.final_content = crate::tools::loop_pipeline::EMPTY_REPLY_NOTE.to_string();
+    }
     let total_ms = started_at.elapsed().as_millis() as u64;
     let first_token_ms = first_token_seen.lock().unwrap_or(0);
     let output_tokens = crate::context::token_guard::count_tokens(&result.final_content) as u64;

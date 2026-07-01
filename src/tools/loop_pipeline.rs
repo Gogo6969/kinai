@@ -20,6 +20,15 @@ use crate::llm::stream::{ChatDelta, ToolCallAccum};
 use crate::llm::LlmClient;
 use crate::tools::registry::{self, ToolDef, ToolRuntime};
 
+/// Shown in place of an empty assistant reply. A completion can come back
+/// with no visible content — a reasoning model (the deep slot) that spent its
+/// whole budget "thinking", or a backend that returned an empty body. Sending
+/// the emptiness onward means a blank chat bubble and, on Telegram, the cryptic
+/// "Bad Request: message text is empty".
+pub const EMPTY_REPLY_NOTE: &str = "⚠️ The model returned an empty response. \
+    If you used /deep, its model server may still be loading, may have hit its \
+    output-token limit, or may be offline — please try again in a moment.";
+
 /// Number of streaming rounds where the model is allowed to call tools.
 /// After this many rounds without a visible final answer we still do **one
 /// more** synthesis round with the tool list emptied — see the loop bottom.
@@ -217,9 +226,10 @@ in plain prose, citing the most relevant facts from the tool results."
     let mut final_content = accumulated.lock().await.clone();
     if final_content.trim().is_empty() {
         let note = if total_tool_invocations > 0 {
-            "_The model ran tools but never produced a final answer. \
-This usually means it hit the max-rounds limit or its tool-calling loop \
-stalled. Try simplifying the question or disabling tools in Settings._"
+            "_I searched but couldn't pull together a clear answer to that one — it happens with \
+very specific or hard-to-find facts. Try rephrasing or narrowing the question, or ask `/deep` \
+for a more thorough attempt. (If this happens on every question, your model may not handle \
+tool-calling well — you can turn tools off in Settings → Tools.)_"
         } else if any_reasoning {
             "_The model reasoned through your request but didn't produce a visible answer. \
 This usually means it tried to call a tool from inside its reasoning channel but the call \

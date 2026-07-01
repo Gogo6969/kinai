@@ -792,7 +792,7 @@
     const url = comfyui.base_url.trim();
     if (!url) {
       comfyTestState = 'fail';
-      comfyTestMsg = 'Enter a ComfyUI URL first (e.g. http://192.168.1.25:8188).';
+      comfyTestMsg = 'Enter a ComfyUI URL first (e.g. http://192.168.1.50:8188).';
       return;
     }
     comfyTestState = 'testing';
@@ -1407,7 +1407,7 @@
         <input
           class="kin-field mt-1 font-mono"
           bind:value={comfyui.base_url}
-          placeholder="http://192.168.1.25:8188"
+          placeholder="http://192.168.1.50:8188"
           autocomplete="off"
           spellcheck="false"
         />
@@ -1460,7 +1460,7 @@
             </p>
             <p>
               <strong class="text-white/80">4.</strong> Paste the URL above
-              (e.g. <code>http://192.168.1.25:8188</code>) and hit
+              (e.g. <code>http://192.168.1.50:8188</code>) and hit
               <em>Test image-gen</em>.
             </p>
             <p class="text-white/40">

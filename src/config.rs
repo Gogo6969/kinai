@@ -288,7 +288,7 @@ pub struct TelegramConfig {
 /// attempt to invoke them returns a "no image-gen endpoint" error.
 ///
 /// `base_url` is a ComfyUI server reachable from the host machine
-/// (e.g. http://192.168.1.25:8188). Same provider CCC chat targets.
+/// (e.g. http://192.168.1.50:8188). Same provider CCC chat targets.
 /// The host calls /prompt to submit a workflow, polls /history/<id>,
 /// fetches the result via /view, saves it to ~/.kinai/pics/, and serves
 /// it back to clients through /v1/pic/<filename>.
