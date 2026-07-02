@@ -170,8 +170,7 @@ jobs:
             - **macOS Apple Silicon**: `KinAI_*_aarch64.dmg`
             - **macOS Intel**: `KinAI_*_x64.dmg`
             - **Windows x64**: `KinAI_*_x64-setup.exe` (or `KinAI_*_x64_en-US.msi`)
-
-            > Linux is coming.
+            - **Linux x64**: `KinAI_*_amd64.AppImage` (auto-updates; `.deb`/`.rpm` also available but update manually)
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
