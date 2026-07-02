@@ -789,7 +789,9 @@ async fn run_chat_turn(
     // vision decision and the pipeline so the chosen slot's
     // vision-capability profile and context window apply.
     let route = crate::vision::decide(&active_llm_settings.model, attachments, &cfg.vision)?;
-    let result = crate::vision::run_with_route(
+    // Runtime copy for post-turn image recovery (run_with_route consumes it).
+    let recover_runtime = tool_runtime.clone();
+    let mut result = crate::vision::run_with_route(
         route,
         llm,
         &active_llm_settings,
@@ -801,6 +803,20 @@ async fn run_chat_turn(
         cancel,
     )
     .await?;
+    // Parity with the host-app (commands.rs) and Telegram paths — family
+    // CLIENTS hit this WS path, and it was missed when both fixes landed:
+    //  * recover fabricated image URLs (small models invent them instead of
+    //    calling image_search);
+    //  * never store/emit an EMPTY completion — a reasoning model (the deep
+    //    slot) can spend its whole token budget thinking and produce no
+    //    visible answer, which otherwise lands on the client as a blank
+    //    bubble ("it does not produce an outcome").
+    result.final_content =
+        crate::tools::image_recover::recover_reply_images(&result.final_content, &recover_runtime)
+            .await;
+    if result.final_content.trim().is_empty() {
+        result.final_content = crate::tools::loop_pipeline::EMPTY_REPLY_NOTE.to_string();
+    }
     let total_ms = started_at.elapsed().as_millis() as u64;
     let mut assistant_msg = s
         .app

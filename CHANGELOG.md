@@ -5,6 +5,29 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.75] — 2026-07-02
+
+### Fixed
+
+- **Watching the deep model think no longer lags or freezes the app.** The
+  expanded "Thinking…" panel re-rendered the entire chain-of-thought (often
+  hundreds of KB) on every incoming token, which bogged the window down until
+  the panel was collapsed. While streaming, the panel now updates at most a few
+  times per second and renders only the newest slice of the trace (the full
+  text appears once thinking finishes) — smooth no matter how much the model
+  thinks.
+- **The thinking view now follows the newest thought.** The trace used to grow
+  faster than you could scroll ("can't reach the end"). The panel stays pinned
+  to the bottom while streaming; scroll up to read something and it stops
+  following, scroll back down and it re-engages.
+- **Family members no longer get a blank reply when the deep model
+  over-thinks.** The fixes for empty completions (0.2.74) and fabricated image
+  links (0.2.73) applied to the host's own chat and Telegram, but not to
+  connected family clients — a deep turn that spent its whole budget reasoning
+  landed as no answer at all on a client. Client conversations now get the same
+  treatment: a clear retry note instead of nothing, and dead image links are
+  recovered.
+
 ## [0.2.74] — 2026-06-30
 
 ### Fixed
