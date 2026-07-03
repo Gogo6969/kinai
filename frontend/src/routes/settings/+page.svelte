@@ -864,6 +864,15 @@
             title="Follow on X"
             class="text-teal-300/80 hover:text-teal-200 underline-offset-2 hover:underline transition-colors"
           >@gogo6969</a>
+          <span class="text-white/20">·</span>
+          <!-- KinAI writes rotating logs to ~/.kinai/logs; this is what to
+               attach to a bug report when something misbehaved earlier. -->
+          <button
+            type="button"
+            onclick={() => api.openLogsDir()}
+            title="Open KinAI's log folder — attach the latest file to bug reports"
+            class="text-teal-300/80 hover:text-teal-200 underline-offset-2 hover:underline transition-colors"
+          >Open logs</button>
         </div>
       </div>
       {#if dirty}

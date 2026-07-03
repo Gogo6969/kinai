@@ -89,6 +89,16 @@ impl Db {
     ) -> Result<Vec<Message>> {
         messages::load(&self.pool, peer_id, thread_id, limit).await
     }
+    /// `load_messages` for the LLM context builder: image payloads are
+    /// stripped at the SQL layer (PDFs kept). See messages::load_for_context.
+    pub async fn load_messages_for_context(
+        &self,
+        peer_id: &str,
+        thread_id: &str,
+        limit: i64,
+    ) -> Result<Vec<Message>> {
+        messages::load_for_context(&self.pool, peer_id, thread_id, limit).await
+    }
     pub async fn search_messages(
         &self,
         peer_id: &str,

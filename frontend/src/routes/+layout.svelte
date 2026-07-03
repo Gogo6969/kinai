@@ -1,5 +1,8 @@
 <script lang="ts">
   import '../app.css';
+  // DEV-only: installs an in-memory Tauri IPC mock when running in a plain
+  // browser (no-op inside the real app; eliminated from production builds).
+  import '$lib/dev-tauri-mock';
   import { onMount, onDestroy } from 'svelte';
   import { events } from '$lib/api';
   import { app } from '$lib/stores/app.svelte';

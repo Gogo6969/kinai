@@ -6,6 +6,16 @@
   import UpdateBanner from '$lib/components/UpdateBanner.svelte';
   import { goto } from '$app/navigation';
   import { Home, LogIn } from '@lucide/svelte';
+
+  // First run → the setup wizard owns onboarding (splash + guided steps).
+  // The two-card chooser below stays only as a fallback for the edge case
+  // "setup finished/skipped but mode still unconfigured" (e.g. a config
+  // hand-edited back to unconfigured after the wizard).
+  $effect(() => {
+    if (app.config && app.config.mode === 'unconfigured' && !app.config.setup_completed) {
+      goto('/setup');
+    }
+  });
 </script>
 
 {#if app.config === null}

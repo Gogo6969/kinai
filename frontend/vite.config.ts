@@ -20,6 +20,13 @@ export default defineConfig({
     watch: { ignored: ['**/src-tauri/**', '**/target/**'] },
   },
   envPrefix: ['VITE_', 'TAURI_ENV_*'],
+  // `vite dev`'s dependency pre-bundler does NOT inherit build.target — it
+  // defaults to chrome87/safari14-era targets, and esbuild 0.28 dropped its
+  // downleveling transforms for those, so dev mode hard-errored on modern
+  // syntax in Svelte 5.55+. Give it the same modern target as the build.
+  optimizeDeps: {
+    esbuildOptions: { target: 'safari16' },
+  },
   build: {
     // The runtime is a Tauri WKWebView (macOS 11+, our minimum) /
     // WebView2 (Windows) — both modern, so we emit modern JS instead of

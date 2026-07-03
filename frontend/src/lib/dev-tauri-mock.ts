@@ -1,0 +1,149 @@
+// DEV-ONLY Tauri IPC mock.
+//
+// When the frontend runs in a plain browser (`pnpm dev` + localhost:1420,
+// no Tauri shell), `window.__TAURI_INTERNALS__` doesn't exist and every
+// invoke() rejects — the UI is untestable outside the app. This module
+// installs a minimal in-memory backend so the whole UI (most importantly
+// the /setup wizard) can be driven end-to-end in a browser: config
+// mutations persist for the session, test buttons return canned successes,
+// and every invoke is recorded on `window.__mockCalls` so an automated
+// walkthrough can assert what would have been persisted.
+//
+// Guarded by import.meta.env.DEV — Vite eliminates the whole module from
+// production builds — and by the __TAURI_INTERNALS__ check, so it never
+// interferes inside the real app shell.
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+function defaultConfig() {
+  return {
+    mode: 'unconfigured',
+    theme: 'dark',
+    setup_completed: false,
+    llm: {
+      provider: 'ollama', base_url: 'http://localhost:11434', model: '',
+      context_window: 8192, api_key: null, temperature: 0.7, max_tokens: 0,
+      system_addendum: '', enabled: true,
+    },
+    llm_deep: {
+      provider: 'llamacpp', base_url: '', model: '', context_window: 32768,
+      api_key: null, temperature: 0.7, max_tokens: 0, system_addendum: '', enabled: false,
+    },
+    host: { bind_addr: '0.0.0.0', port: 4847, family_name: 'Our Family', mdns_enabled: true, rate_limit_rpm: 60 },
+    client: { host_url: null, host_token: null, host_label: null, display_name: 'You', pinned_hosts: [] },
+    overlay: { hotkey: 'CmdOrCtrl+Space', always_on_top: true, font_size: 14, auto_close_on_blur: true },
+    tools: { web_search: true, x_search: true, calculator: true, datetime: true, image_search: true, search_engine: 'duckduckgo', search_api_key: null },
+    vision: {
+      enabled: false,
+      primary: { label: '', base_url: '', model: '', api_key: null },
+      failover: { label: '', base_url: '', model: '', api_key: null },
+    },
+    comfyui: { base_url: '', default_model: 'zimage' },
+    telegram: { bot_token: '', bot_username: '' },
+    tts: { enabled: true, voice_en: 'Zoe (Premium)', voice_de: 'Anna (Premium)', auto_speak: false },
+    stt: { enabled: false, model: 'small-q5_1' },
+    startup: { autostart_minimized: true },
+    last_seen_changelog_version: '0.0.0',
+  };
+}
+
+if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS__' in window)) {
+  const w = window as any;
+  const cfg = defaultConfig();
+  const calls: { cmd: string; args: any }[] = [];
+  w.__mockCalls = calls;
+  w.__mockConfig = cfg;
+
+  const handlers: Record<string, (args: any) => any> = {
+    get_config: () => cfg,
+    runtime_stats: () => ({ model_loaded: null, peers_connected: 0, host_url: null, last_first_token_ms: null, client_connected: false, client_error: null, host_info: null }),
+    kinai_version: () => ({ version: 'dev-mock', build_time: 0, git_commit: 'mock', target: 'browser', repository: '' }),
+    get_changelog_payload: () => ({ version: 'dev', markdown: null, should_show: false }),
+    tts_supported: () => true,
+    list_tts_voices: () => [
+      { name: 'Zoe (Premium)', lang: 'en_US' }, { name: 'Samantha', lang: 'en_US' },
+      { name: 'Anna (Premium)', lang: 'de_DE' }, { name: 'Markus', lang: 'de_DE' },
+    ],
+    stt_status: () => ({ enabled: cfg.stt.enabled, model: cfg.stt.model, ready: cfg.stt.enabled, models: [
+      { id: 'small-q5_1', label: 'Standard (good accuracy, fast)', size_mb: 190, downloaded: false },
+      { id: 'medium-q5_0', label: 'High accuracy (bigger, slower)', size_mb: 574, downloaded: false },
+    ] }),
+    download_stt_model: () => { cfg.stt.enabled = true; return null; },
+    set_stt_config: (a) => { Object.assign(cfg.stt, a.stt); return cfg; },
+    set_tts_config: (a) => { Object.assign(cfg.tts, a.tts); return cfg; },
+    detect_backends: () => [
+      { provider: 'ollama', base_url: 'http://localhost:11434', label: 'Ollama (this computer)', models: ['llama3.1:8b', 'qwen2.5:14b'] },
+    ],
+    scan_local_network: () => [
+      { provider: 'ollama', base_url: 'http://localhost:11434', label: 'Ollama (this computer)', models: ['llama3.1:8b', 'qwen2.5:14b'] },
+      { provider: 'lmstudio', base_url: 'http://192.168.1.50:1234', label: 'LM Studio (192.168.1.50)', models: ['qwen2.5-14b-instruct'] },
+    ],
+    query_model_caps: () => ({ context_length: 32768 }),
+    test_llm_endpoint: () => ({ ok: true, latency_ms: 850, reply: 'Hello! I’m ready to help your family.', error: null }),
+    test_llm_connection: () => ({ ok: true, models: ['llama3.1:8b', 'qwen2.5:14b'], error: null }),
+    test_vision_endpoint: () => ({ ok: true, latency_ms: 1200, reply: 'Red', error: null }),
+    test_comfy_endpoint: () => ({ ok: true, error: null }),
+    test_telegram_token: () => ({ ok: true, bot_username: 'mock_family_bot', error: null }),
+    set_telegram_token: (a) => { cfg.telegram.bot_token = a.args.bot_token; cfg.telegram.bot_username = 'mock_family_bot'; return cfg; },
+    set_llm_settings: (a) => { Object.assign(cfg.llm, a.llm); return cfg; },
+    set_llm_deep_settings: (a) => { Object.assign(cfg.llm_deep, a.llm); return cfg; },
+    set_vision_settings: (a) => { Object.assign(cfg.vision, a.vision); return cfg; },
+    set_comfy_config: (a) => { Object.assign(cfg.comfyui, a.comfyui); return cfg; },
+    set_overlay_settings: (a) => { Object.assign(cfg.overlay, a.overlay); return cfg; },
+    set_theme: (a) => { cfg.theme = a.theme; return cfg; },
+    set_startup_settings: (a) => { Object.assign(cfg.startup, a.startup); return cfg; },
+    set_mode: (a) => {
+      cfg.mode = a.args.mode;
+      if (a.args.host) Object.assign(cfg.host, a.args.host);
+      if (a.args.client) Object.assign(cfg.client, a.args.client);
+      if (a.args.tools) Object.assign(cfg.tools, a.args.tools);
+      if (a.args.overlay) Object.assign(cfg.overlay, a.args.overlay);
+      return cfg;
+    },
+    start_host: () => null,
+    mark_setup_completed: () => { cfg.setup_completed = true; return cfg; },
+    generate_invite: (a) => ({
+      id: 'mock-invite', short_code: 'k7m3px', jwt: 'mock', host_url: 'ws://192.168.1.50:4847/kin',
+      label: a.args.label, join_url: 'kinai://join?host=mock&code=k7m3px&token=mock',
+      qr_payload: 'kinai://join?host=mock&code=k7m3px&token=mock',
+      created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 30 * 864e5).toISOString(), revoked: false,
+    }),
+    list_threads: () => [],
+    create_thread: (a: any) => ({
+      id: 'mock-thread-1', title: a?.title ?? 'New conversation',
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(), peer_id: 'host',
+    }),
+    load_messages: () => [],
+    thread_active_slot: () => null,
+    list_invites: () => [],
+    list_peers: () => [],
+    stt_download_progress: () => null,
+  };
+
+  w.__TAURI_INTERNALS__ = {
+    metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } },
+    plugins: {},
+    convertFileSrc: (p: string) => p,
+    transformCallback: (cb: (r: any) => void) => {
+      const id = Math.floor(Math.random() * 1e9);
+      w[`_${id}`] = cb;
+      return id;
+    },
+    invoke: async (cmd: string, args: any = {}) => {
+      calls.push({ cmd, args });
+      // Plugin-namespaced commands (events, autostart, dialogs…) all no-op.
+      if (cmd.startsWith('plugin:')) {
+        if (cmd === 'plugin:autostart|is_enabled') return false;
+        if (cmd === 'plugin:event|listen') return 0;
+        return null;
+      }
+      const h = handlers[cmd];
+      if (h) return h(args);
+      console.info('[dev-tauri-mock] unhandled command:', cmd, args);
+      return null;
+    },
+  };
+  console.info('[dev-tauri-mock] installed — browser session uses in-memory backend');
+}
+
+export {};

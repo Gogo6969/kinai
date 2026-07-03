@@ -94,6 +94,89 @@ pub struct HostInfo {
 
 pub type SharedState = Arc<AppState>;
 
+/// Keeps the non-blocking file-log writer alive for the whole process —
+/// dropping it stops file logging. Set once during startup.
+static LOG_GUARD: std::sync::OnceLock<tracing_appender::non_blocking::WorkerGuard> =
+    std::sync::OnceLock::new();
+
+/// Cap ~/.kinai/logs at 7 days AND ~50MB total. Oldest files go first (by
+/// name — the daily roller suffixes `kinai.log.YYYY-MM-DD`, so lexicographic
+/// = chronological). Runs before the tracing subscriber exists, so failures
+/// are silently ignored rather than logged.
+fn prune_old_logs(dir: &std::path::Path) {
+    const MAX_AGE: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 3600);
+    const MAX_TOTAL_BYTES: u64 = 50 * 1024 * 1024;
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let mut files: Vec<(std::path::PathBuf, u64, std::time::SystemTime)> = entries
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            let name = p.file_name()?.to_str()?.to_string();
+            if !name.starts_with("kinai.log") {
+                return None; // never touch files we didn't create
+            }
+            let meta = e.metadata().ok()?;
+            Some((p, meta.len(), meta.modified().ok()?))
+        })
+        .collect();
+    let now = std::time::SystemTime::now();
+    // Age pass.
+    files.retain(|(p, _, modified)| {
+        let too_old = now.duration_since(*modified).map(|a| a > MAX_AGE).unwrap_or(false);
+        if too_old {
+            let _ = std::fs::remove_file(p);
+        }
+        !too_old
+    });
+    // Size pass: newest first, delete once the running total exceeds the cap.
+    files.sort_by(|a, b| b.2.cmp(&a.2));
+    let mut total: u64 = 0;
+    for (p, len, _) in files {
+        total = total.saturating_add(len);
+        if total > MAX_TOTAL_BYTES {
+            let _ = std::fs::remove_file(&p);
+        }
+    }
+}
+
+/// Clamp permissions on everything secret under ~/.kinai: directories to
+/// 0700, files to 0600. Covers config.toml (API keys, bot token), the
+/// SQLite DB (+wal/shm — the family's entire chat history), and keys/
+/// (JWT signing keypair, updater signing key, Apple notary env). Unix-only;
+/// on Windows the per-user home ACL already scopes access.
+fn harden_kinai_permissions() {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fn clamp(path: &std::path::Path, mode: u32) {
+            if let Ok(meta) = std::fs::metadata(path) {
+                let mut perms = meta.permissions();
+                if perms.mode() & 0o777 != mode {
+                    perms.set_mode(mode);
+                    if let Err(e) = std::fs::set_permissions(path, perms) {
+                        tracing::warn!("perm clamp {} failed: {e}", path.display());
+                    }
+                }
+            }
+        }
+        let root = AppConfig::config_dir();
+        clamp(&root, 0o700);
+        for sub in ["keys", "logs"] {
+            clamp(&root.join(sub), 0o700);
+        }
+        // Files directly under ~/.kinai (config.toml + backups, kinai.db +
+        // -wal/-shm) and everything inside keys/.
+        for dir in [root.clone(), root.join("keys")] {
+            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+            for e in entries.flatten() {
+                if e.file_type().map(|t| t.is_file()).unwrap_or(false) {
+                    clamp(&e.path(), 0o600);
+                }
+            }
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Linux/WebKitGTK: the DMABUF renderer leaves a blank white window on
@@ -147,12 +230,43 @@ pub fn run() {
         }
     }
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "kinai=info,axum=info,tower_http=info".into()),
-        )
-        .init();
+    // Log to stdout AND a daily-rolling file under ~/.kinai/logs. Launched
+    // from Finder/`open`, stdout goes nowhere — every past field problem
+    // required relaunching the binary from a terminal just to see the error.
+    // The file layer makes failures diagnosable after the fact
+    // (Settings → About → "Open logs").
+    {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| "kinai=info,axum=info,tower_http=info".into());
+        let logs_dir = AppConfig::config_dir().join("logs");
+        let _ = std::fs::create_dir_all(&logs_dir);
+        prune_old_logs(&logs_dir);
+        let (file_writer, guard) = tracing_appender::non_blocking(
+            tracing_appender::rolling::daily(&logs_dir, "kinai.log"),
+        );
+        // The guard flushes the background writer on drop — park it for the
+        // process lifetime or file logging silently stops.
+        let _ = LOG_GUARD.set(guard);
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(tracing_subscriber::fmt::layer())
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(file_writer),
+            )
+            .init();
+    }
+
+    // Secrets hygiene: everything under ~/.kinai is per-user private state —
+    // config.toml carries API keys and the Telegram bot token, kinai.db the
+    // family's chats, keys/ the JWT signing keypair AND the updater signing
+    // key (a readable updater.key would let any local process mint update
+    // signatures this app trusts). Default file creation left several of
+    // these world-readable; clamp them every launch.
+    harden_kinai_permissions();
 
     // Raise the open-file soft limit before anything opens sockets. macOS
     // launches GUI apps with a 256-fd cap, which the LAN scanner (and a
@@ -166,6 +280,11 @@ pub fn run() {
     let db = rt
         .block_on(Db::open(&cfg.db_path()))
         .expect("failed to open KinAI database");
+    // Second clamp pass, AFTER the DB exists: on a FRESH install the first
+    // pass ran before SQLite created kinai.db(+wal/shm), so those files
+    // would otherwise sit world-readable (umask 022 → 0644) until the next
+    // launch. Idempotent and cheap.
+    harden_kinai_permissions();
 
     let llm = llm::LlmClient::new(cfg.llm.clone());
     let net = Arc::new(Mutex::new(network::NetState::default()));
@@ -285,6 +404,9 @@ pub fn run() {
             commands::check_updates,
             commands::install_update,
             commands::kinai_version,
+            commands::open_logs_dir,
+            commands::mark_setup_completed,
+            commands::test_llm_endpoint,
             commands::get_changelog_payload,
             commands::mark_changelog_seen,
         ])

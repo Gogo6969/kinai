@@ -167,6 +167,10 @@ export interface AppConfig {
   tts: TtsConfig;
   stt: SttConfig;
   startup: StartupSettings;
+  /** True once first-run setup finished (completed or skipped) — gates
+   *  the splash + /setup wizard. Existing configured installs are
+   *  auto-marked true by the backend on load. */
+  setup_completed: boolean;
 }
 
 export interface ThreadMeta {
@@ -399,6 +403,16 @@ export const api = {
       target: string;
       repository: string;
     }>('kinai_version'),
+  /** Reveal ~/.kinai/logs in the OS file manager (for bug reports). */
+  openLogsDir: () => invoke<void>('open_logs_dir'),
+  /** Stamp first-run setup as done — splash + wizard never show again. */
+  markSetupCompleted: () => invoke<AppConfig>('mark_setup_completed'),
+  /** One-shot test message against an arbitrary chat endpoint (wizard). */
+  testLlmEndpoint: (args: { base_url: string; model: string; api_key: string | null }) =>
+    invoke<{ ok: boolean; latency_ms: number; reply: string; error: string | null }>(
+      'test_llm_endpoint',
+      { args },
+    ),
   queryModelCaps: (args: {
     provider: string;
     base_url: string;

@@ -52,3 +52,7 @@ releases/
 *.AppImage
 *.deb
 *.rpm
+
+# Local agent/dev tooling — never ship
+.claude/
+.playwright-mcp/

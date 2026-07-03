@@ -58,12 +58,17 @@ struct Asset {
 pub fn schedule_periodic_sync<R: Runtime>(app: AppHandle<R>) {
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
+        // Purely local cleanup — safe to run before the first network sync.
+        prune_staged_updates();
         // Initial delay so app startup isn't blocked on a network call.
         tokio::time::sleep(Duration::from_secs(30)).await;
         loop {
             if is_host(&handle) {
                 match sync_once().await {
-                    Ok(Some(v)) => tracing::info!("update_sync: staged v{v} for clients"),
+                    Ok(Some(v)) => {
+                        tracing::info!("update_sync: staged v{v} for clients");
+                        prune_staged_updates();
+                    }
                     Ok(None) => tracing::debug!("update_sync: already up to date"),
                     Err(e) => tracing::warn!("update_sync: {e:?}"),
                 }
@@ -71,6 +76,120 @@ pub fn schedule_periodic_sync<R: Runtime>(app: AppHandle<R>) {
             tokio::time::sleep(Duration::from_secs(SYNC_INTERVAL_SECS)).await;
         }
     });
+}
+
+/// Delete old staged versions under `~/.kinai/updates`, keeping:
+///   * the newest KEEP_VERSIONS by semver (two — the extra one is deliberate
+///     rollback headroom), and
+///   * any version a `latest-<target>` symlink still points at (Intel-mac
+///     staging is manual and can lag several versions behind — deleting a
+///     dir a symlink references would 404 those clients' updates).
+///
+/// Without this the dir grew ~125MB per release, unbounded (measured 3.0GB
+/// on the reference host). Only version-shaped directory names are ever
+/// touched; anything else in the dir is left alone.
+fn prune_staged_updates() {
+    const KEEP_VERSIONS: usize = 2;
+    let root = updates_dir();
+    let Ok(entries) = std::fs::read_dir(&root) else { return };
+
+    let mut versions: Vec<String> = Vec::new();
+    let mut pinned: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        let path = e.path();
+        // Symlink targets are bare version strings ("0.2.75") — collect
+        // them as pinned. read_link sees the symlink itself even though
+        // file_type() follows on some platforms, so check by name prefix.
+        if name.starts_with("latest-") {
+            if let Ok(target) = std::fs::read_link(&path) {
+                pinned.insert(target.to_string_lossy().to_string());
+            }
+            continue;
+        }
+        if path.is_dir() && parse_version(&name).is_some() {
+            versions.push(name);
+        }
+    }
+
+    for name in versions_to_remove(versions, &pinned, KEEP_VERSIONS) {
+        let dir = root.join(&name);
+        match std::fs::remove_dir_all(&dir) {
+            Ok(()) => tracing::info!("update_sync: pruned staged v{name}"),
+            Err(e) => tracing::warn!("update_sync: prune v{name} failed: {e}"),
+        }
+    }
+}
+
+fn parse_version(s: &str) -> Option<(u64, u64, u64)> {
+    let mut it = s.split('.');
+    let v = (
+        it.next()?.parse().ok()?,
+        it.next()?.parse().ok()?,
+        it.next()?.parse().ok()?,
+    );
+    // Exactly three numeric components — don't match e.g. "0.2.75.bak".
+    if it.next().is_some() {
+        return None;
+    }
+    Some(v)
+}
+
+/// Pure core of the prune decision (unit-tested): given the staged version
+/// names and the symlink-pinned set, return the names to delete.
+fn versions_to_remove(
+    mut versions: Vec<String>,
+    pinned: &std::collections::HashSet<String>,
+    keep: usize,
+) -> Vec<String> {
+    versions.sort_by_key(|v| std::cmp::Reverse(parse_version(v)));
+    versions
+        .into_iter()
+        .skip(keep)
+        .filter(|v| !pinned.contains(v))
+        .collect()
+}
+
+#[cfg(test)]
+mod prune_tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    fn v(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn keeps_newest_two_and_pinned() {
+        let pinned: HashSet<String> = ["0.2.70".to_string()].into();
+        let out = versions_to_remove(
+            v(&["0.2.69", "0.2.75", "0.2.70", "0.2.74", "0.2.73"]),
+            &pinned,
+            2,
+        );
+        // Newest two (0.2.75, 0.2.74) survive the skip; 0.2.70 is pinned.
+        assert_eq!(out, vec!["0.2.73".to_string(), "0.2.69".to_string()]);
+    }
+
+    #[test]
+    fn numeric_not_lexicographic_ordering() {
+        let out = versions_to_remove(v(&["0.2.9", "0.2.75", "0.2.10"]), &HashSet::new(), 2);
+        // Lexicographic would wrongly rank "0.2.9" above "0.2.75".
+        assert_eq!(out, vec!["0.2.9".to_string()]);
+    }
+
+    #[test]
+    fn fewer_than_keep_is_noop() {
+        assert!(versions_to_remove(v(&["0.2.75"]), &HashSet::new(), 2).is_empty());
+    }
+
+    #[test]
+    fn version_parse_rejects_junk() {
+        assert!(parse_version("0.2.75").is_some());
+        assert!(parse_version("latest-darwin-aarch64").is_none());
+        assert!(parse_version("0.2").is_none());
+        assert!(parse_version("0.2.75.bak").is_none());
+    }
 }
 
 fn is_host<R: Runtime>(app: &AppHandle<R>) -> bool {

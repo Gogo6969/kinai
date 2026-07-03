@@ -219,6 +219,57 @@ pub async fn load(
     Ok(messages)
 }
 
+/// `load_messages`, but for the LLM context builder: history rows drop their
+/// image payloads AT THE SQL LAYER. Measured on a real family DB, 75MB of an
+/// 81MB messages table was attachment base64 — and the context builder was
+/// pulling, allocating, and JSON-parsing those multi-MB blobs on EVERY turn
+/// in an image-bearing thread, only for the vision router to discard them
+/// (vision sends current-turn images only).
+///
+/// The CASE keeps two things intact:
+///   * PDF-bearing rows pass through whole — `format_user` re-extracts their
+///     text each turn, so follow-up questions about an uploaded PDF keep
+///     working;
+///   * image rows collapse to a tiny placeholder attachment (no data_url),
+///     so the model still sees "[attached image: …]" continuity markers
+///     without the megabytes.
+/// The UI listing path (`load_messages`) is untouched — thumbnails still
+/// render from full rows.
+pub async fn load_for_context(
+    pool: &SqlitePool,
+    peer_id: &str,
+    thread_id: &str,
+    limit: i64,
+) -> Result<Vec<Message>> {
+    // PDF detection matches the serialized `"mime":"application/pdf"` field
+    // or a PDF data-URL prefix — NOT the bare substring 'application/pdf',
+    // which a filename could contain (an image named "see application/pdf
+    // notes.png" must still get its payload stripped, not ride through).
+    let rows = sqlx::query(
+        "SELECT m.id, m.thread_id, m.role, m.sender, m.content,
+                CASE
+                  WHEN m.attachments LIKE '%\"mime\":\"application/pdf\"%'
+                    OR m.attachments LIKE '%data:application/pdf%' THEN m.attachments
+                  WHEN m.attachments LIKE '%data:image%'
+                    THEN '[{\"kind\":\"image\",\"name\":\"(earlier image omitted)\"}]'
+                  ELSE m.attachments
+                END AS attachments,
+                m.created_at, m.summarized_into, m.metrics
+         FROM messages m
+         JOIN threads t ON t.id = m.thread_id
+         WHERE m.thread_id = ?1 AND t.peer_id = ?2
+         ORDER BY m.created_at DESC LIMIT ?3",
+    )
+    .bind(thread_id)
+    .bind(peer_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    let mut messages: Vec<Message> = rows.into_iter().map(row_to_message).collect();
+    messages.reverse();
+    Ok(messages)
+}
+
 /// One cross-thread search result: the matching message plus its thread's
 /// title and a highlighted snippet.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -421,8 +472,11 @@ pub async fn oldest_unsummarized(
     thread_id: &str,
     keep_recent: i64,
 ) -> Result<Vec<Message>> {
+    // `'[]' AS attachments`: the summarizer reads only role/content — never
+    // pay the multi-MB image-blob parse for rows headed into a text summary.
     let rows = sqlx::query(
-        "SELECT m.id, m.thread_id, m.role, m.sender, m.content, m.attachments,
+        "SELECT m.id, m.thread_id, m.role, m.sender, m.content,
+                '[]' AS attachments,
                 m.created_at, m.summarized_into, m.metrics
          FROM messages m
          JOIN threads t ON t.id = m.thread_id
@@ -604,5 +658,70 @@ mod tests {
         // is treated as text. "or" must find "ordinary".
         append(&pool, &tid, "user", "me", "ordinary content here", &[]).await.unwrap();
         assert_eq!(search(&pool, HOST_PEER, "OR", 50).await.unwrap().len(), 1);
+    }
+
+    fn img_attachment(name: &str) -> Attachment {
+        Attachment {
+            kind: "image".into(),
+            mime: Some("image/png".into()),
+            name: Some(name.into()),
+            data_url: Some(format!("data:image/png;base64,{}", "A".repeat(64))),
+        }
+    }
+
+    fn pdf_attachment() -> Attachment {
+        Attachment {
+            kind: "file".into(),
+            mime: Some("application/pdf".into()),
+            name: Some("manual.pdf".into()),
+            data_url: Some(format!("data:application/pdf;base64,{}", "B".repeat(64))),
+        }
+    }
+
+    #[tokio::test]
+    async fn context_load_strips_images_keeps_pdfs() {
+        let pool = fresh_pool().await;
+        let tid = seed_thread(&pool, HOST_PEER, "t").await;
+        append(&pool, &tid, "user", "me", "look at this", &[img_attachment("pic.png")])
+            .await
+            .unwrap();
+        append(&pool, &tid, "user", "me", "and this doc", &[pdf_attachment()])
+            .await
+            .unwrap();
+        append(&pool, &tid, "user", "me", "plain", &[]).await.unwrap();
+        // Image whose NAME contains the pdf mime string — must still strip
+        // (the LIKE must key on the mime field, not any substring).
+        append(
+            &pool,
+            &tid,
+            "user",
+            "me",
+            "tricky",
+            &[img_attachment("see application/pdf notes.png")],
+        )
+        .await
+        .unwrap();
+
+        let msgs = load_for_context(&pool, HOST_PEER, &tid, 50).await.unwrap();
+        assert_eq!(msgs.len(), 4);
+        // Image row: placeholder, no payload — but still an attachment so
+        // the "[attached image: …]" continuity hint survives.
+        assert_eq!(msgs[0].attachments.len(), 1);
+        assert!(msgs[0].attachments[0].data_url.is_none(), "image payload stripped");
+        assert_eq!(msgs[0].attachments[0].kind, "image");
+        // PDF row: passes through whole (text re-extraction needs it).
+        assert_eq!(msgs[1].attachments.len(), 1);
+        assert!(
+            msgs[1].attachments[0].data_url.as_deref().unwrap_or("").starts_with("data:application/pdf"),
+            "pdf payload preserved"
+        );
+        // Plain row untouched.
+        assert!(msgs[2].attachments.is_empty());
+        // Tricky filename: still stripped.
+        assert!(msgs[3].attachments[0].data_url.is_none(), "pdf-ish filename must not defeat the strip");
+
+        // The UI path is unaffected — full payloads still come back.
+        let full = load(&pool, HOST_PEER, &tid, 50).await.unwrap();
+        assert!(full[0].attachments[0].data_url.is_some(), "UI listing keeps payloads");
     }
 }

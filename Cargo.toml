@@ -1,6 +1,6 @@
 [package]
 name = "kinai"
-version = "0.2.75"
+version = "0.2.77"
 description = "Family-sharing layer for the local LLM you already run. Host on a Mac, point it at any OpenAI-compatible backend (Ollama, vLLM, LM Studio, llama.cpp anywhere on your LAN). Mac + Windows clients. Phones via the family Telegram bot. No cloud, no accounts."
 authors = ["KinAI Contributors"]
 license = "MIT"
@@ -92,6 +92,10 @@ anyhow = "1"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Daily-rolling file logs under ~/.kinai/logs — a background desktop app's
+# stdout is lost the moment it's launched via Finder/`open`, which made every
+# field problem undiagnosable after the fact.
+tracing-appender = "0.2"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 once_cell = "1"

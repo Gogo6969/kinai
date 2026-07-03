@@ -5,6 +5,69 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.77] — 2026-07-03
+
+### Added
+
+- **A real first-run setup wizard.** New installs now open with a welcome
+  screen — headline promise: every family member's conversations are sealed to
+  them, invisible to everyone else including whoever runs the host — followed
+  by a guided, installer-style setup: family & names, connect your AI
+  (auto-detects Ollama/LM Studio/llama.cpp/vLLM on this machine and the LAN,
+  with a real "send a test message" check), deep model, vision, web search &
+  tools, image generation, Telegram bot, voice, Quick Chat & appearance, and
+  a first family invite (QR + code). **Every step is skippable**, explains
+  itself in plain language, spells out the consequence of skipping, and saves
+  the moment you continue — quitting mid-setup loses nothing. The finish
+  screen lists everything configured or skipped with the exact Settings page
+  for each; skipping the AI step ends on a clear warning that KinAI can't
+  answer until a model is connected, with the fix path. The welcome screen
+  never appears again once setup completes — and existing installs are
+  auto-marked complete, so **nobody already running KinAI ever sees the
+  wizard**.
+- **"Send a test message" backend check** (`test_llm_endpoint`) — the wizard
+  proves your model actually answers before you commit to it.
+
+### Fixed
+
+- **`pnpm dev` (browser dev mode) works again** — Vite's dependency
+  pre-bundler was still targeting 2020-era browsers, which esbuild 0.28 can
+  no longer downlevel to; dev mode hard-errored on modern Svelte syntax.
+  Dev-mode browser sessions also get an in-memory IPC mock now, so the UI can
+  be exercised without a running Tauri shell (dev-only; stripped from real
+  builds).
+
+## [0.2.76] — 2026-07-03
+
+### Added
+
+- **KinAI now keeps log files.** Everything the host logs is written to daily
+  files under `~/.kinai/logs` (self-pruning: 7 days / 50 MB), so a problem
+  from yesterday is diagnosable today — previously logs went to a console
+  nobody could see. Settings → About has a new **"Open logs"** link; attach
+  the latest file to bug reports.
+
+### Fixed
+
+- **Small-context models get their memory back.** On models with an 8k
+  context window (like the README's suggested starter model), the prompt
+  budget could collapse to zero — the model saw no history or memory at all
+  and seemed inexplicably forgetful. The prompt now always keeps at least a
+  quarter of the context window.
+- **Private files are now private.** `~/.kinai` (config with API keys and the
+  Telegram token, the chat database, signing keys — including the update
+  signing key) was world-readable on multi-user systems. Permissions are
+  clamped on every launch, including the first.
+- **Turns in image-heavy threads are much lighter.** The context builder was
+  re-reading and re-parsing every image ever sent in a thread (measured:
+  75 MB of an 81 MB database) on each turn, only to discard them. History
+  image payloads are now stripped at the database layer — PDFs still pass
+  through so follow-up questions about uploaded documents keep working, and
+  thumbnails in the chat are unaffected.
+- **Staged updates no longer accumulate forever.** The host keeps the newest
+  two versions (plus anything still referenced for slower-updating platforms)
+  instead of every release ever staged — measured 3 GB reclaimed.
+
 ## [0.2.75] — 2026-07-02
 
 ### Fixed

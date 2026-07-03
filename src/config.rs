@@ -436,6 +436,14 @@ pub struct AppConfig {
     /// the next update.
     #[serde(default)]
     pub last_seen_changelog_version: String,
+    /// True once the first-run setup wizard was completed OR deliberately
+    /// skipped. Gates the splash + wizard: while false and the mode is
+    /// still Unconfigured, the app opens into /setup instead of chat.
+    /// Existing installs are auto-marked complete on load (see
+    /// load_or_default) so nobody who configured KinAI before this flag
+    /// existed ever sees the wizard after an update.
+    #[serde(default)]
+    pub setup_completed: bool,
 }
 
 impl AppConfig {
@@ -478,6 +486,14 @@ impl AppConfig {
                     cfg.llm.max_tokens = 0;
                     let _ = cfg.save();
                 }
+                // Anyone already running as a host or client configured KinAI
+                // before the setup wizard existed — mark setup complete so an
+                // update NEVER drops an established family into first-run
+                // onboarding.
+                if !cfg.setup_completed && cfg.mode != Mode::Unconfigured {
+                    cfg.setup_completed = true;
+                    let _ = cfg.save();
+                }
                 cfg
             }
             Err(_) => {
@@ -501,4 +517,51 @@ fn default_display_name() -> String {
     std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "Family Member".into())
+}
+
+#[cfg(test)]
+mod setup_flag_tests {
+    use super::*;
+
+    /// An existing family's config predates `setup_completed` — it must
+    /// deserialize as false (serde default) with the mode intact, so
+    /// load_or_default's auto-mark (mode != Unconfigured → completed) can
+    /// take over. Guards against an update dropping an established host
+    /// into first-run onboarding.
+    #[test]
+    fn old_config_without_flag_parses_false_and_keeps_mode() {
+        let old = r#"
+mode = "host"
+
+[llm]
+provider = "ollama"
+base_url = "http://localhost:11434"
+model = "llama3.1:8b"
+context_window = 8192
+temperature = 0.7
+max_tokens = 0
+system_addendum = ""
+"#;
+        let cfg: AppConfig = toml::from_str(old).expect("old config must parse");
+        assert_eq!(cfg.mode, Mode::Host);
+        assert!(!cfg.setup_completed, "missing flag must default to false");
+        // The load_or_default migration condition: configured install → mark.
+        assert!(cfg.mode != Mode::Unconfigured);
+    }
+
+    #[test]
+    fn fresh_default_shows_wizard() {
+        let cfg = AppConfig::default();
+        assert_eq!(cfg.mode, Mode::Unconfigured);
+        assert!(!cfg.setup_completed, "fresh install must route to /setup");
+    }
+
+    #[test]
+    fn flag_roundtrips_through_toml() {
+        let mut cfg = AppConfig::default();
+        cfg.setup_completed = true;
+        let text = toml::to_string_pretty(&cfg).unwrap();
+        let back: AppConfig = toml::from_str(&text).unwrap();
+        assert!(back.setup_completed);
+    }
 }

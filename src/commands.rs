@@ -1102,6 +1102,99 @@ pub async fn kinai_version() -> Result<VersionInfo> {
     })
 }
 
+/// Stamp first-run setup as finished (completed OR deliberately skipped).
+/// The splash + wizard never show again after this — see
+/// `AppConfig::setup_completed`.
+#[tauri::command]
+pub async fn mark_setup_completed(
+    state: tauri::State<'_, SharedState>,
+) -> Result<crate::config::AppConfig> {
+    let cfg = {
+        let mut cfg = state.config.write();
+        cfg.setup_completed = true;
+        cfg.clone()
+    };
+    cfg.save().map_err(err)?;
+    Ok(cfg)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TestLlmArgs {
+    pub base_url: String,
+    pub model: String,
+    pub api_key: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TestLlmResult {
+    pub ok: bool,
+    pub latency_ms: u64,
+    pub reply: String,
+    pub error: Option<String>,
+}
+
+/// One-shot "send a test message" against an arbitrary chat endpoint —
+/// the setup wizard's proof that the model actually answers before the
+/// user commits to it. Nothing is saved; mirrors test_vision_endpoint.
+#[tauri::command]
+pub async fn test_llm_endpoint(args: TestLlmArgs) -> Result<TestLlmResult> {
+    use crate::context::ChatMessage;
+    let started = std::time::Instant::now();
+    let settings = crate::config::LlmSettings {
+        provider: "openai-compat".into(),
+        base_url: args.base_url,
+        model: args.model,
+        api_key: args.api_key,
+        context_window: 4096,
+        temperature: 0.3,
+        max_tokens: 64,
+        system_addendum: String::new(),
+        enabled: true,
+    };
+    let client = crate::llm::LlmClient::new(settings);
+    let messages = vec![ChatMessage::User {
+        content: "Say hello in one short sentence.".into(),
+        name: None,
+        image_data_urls: vec![],
+    }];
+    let result = client.complete(&messages, &[], Some(64)).await;
+    let latency_ms = started.elapsed().as_millis() as u64;
+    match result {
+        Ok(c) => Ok(TestLlmResult {
+            ok: true,
+            latency_ms,
+            reply: c.content.trim().to_string(),
+            error: None,
+        }),
+        Err(e) => Ok(TestLlmResult {
+            ok: false,
+            latency_ms,
+            reply: String::new(),
+            error: Some(e.to_string()),
+        }),
+    }
+}
+
+/// Reveal `~/.kinai/logs` in the OS file manager (Settings → About → "Open
+/// logs"). A dedicated command because the shell plugin's open scope is
+/// deliberately restricted to URLs — no need to widen it to arbitrary paths.
+#[tauri::command]
+pub async fn open_logs_dir() -> Result<()> {
+    let dir = crate::config::AppConfig::config_dir().join("logs");
+    std::fs::create_dir_all(&dir).map_err(err)?;
+    #[cfg(target_os = "macos")]
+    let opener = "open";
+    #[cfg(target_os = "windows")]
+    let opener = "explorer";
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let opener = "xdg-open";
+    std::process::Command::new(opener)
+        .arg(&dir)
+        .spawn()
+        .map_err(err)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn local_ip() -> Result<LocalIpInfo> {
     let ip = local_ip_address::local_ip().ok().map(|i| i.to_string());

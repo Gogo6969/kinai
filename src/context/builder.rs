@@ -17,7 +17,12 @@ pub async fn build_context(
     thread_id: &str,
     new_message: &Message,
 ) -> Result<Vec<ChatMessage>> {
-    let recent = db.load_messages(peer_id, thread_id, RECENT_TURNS).await?;
+    // Context load strips history image payloads at the SQL layer — the
+    // vision router only sends current-turn images anyway, and full rows
+    // meant parsing tens of MB of base64 per turn in image-bearing threads.
+    let recent = db
+        .load_messages_for_context(peer_id, thread_id, RECENT_TURNS)
+        .await?;
     let memories = db
         .relevant_memories(peer_id, thread_id, &new_message.content, TOP_MEMORIES)
         .await?;
@@ -86,14 +91,59 @@ pub async fn build_context(
     // truncated/empty answer is far worse than slightly less context —
     // and the thread summary + memory layers preserve the gist of what
     // gets trimmed. When the user pins an explicit max_tokens, honor it.
-    let reserve = if cfg.llm.max_tokens > 0 {
-        cfg.llm.max_tokens
-    } else {
-        (cfg.llm.context_window / 2).max(8192)
-    };
-    let budget = cfg.llm.context_window.saturating_sub(reserve);
+    let budget = prompt_budget(cfg.llm.context_window, cfg.llm.max_tokens);
     token_guard::trim_to_fit(&mut messages, budget);
     Ok(messages)
+}
+
+/// How many tokens of the context window the PROMPT may use; the rest is
+/// reserved for generation (see the long rationale above).
+///
+/// The v0.2.50 formula had a collapse bug on small windows: with auto
+/// max_tokens the reserve was `max(cw/2, 8192)`, which on an 8k-context
+/// model (the README's own starter suggestion) is the ENTIRE window —
+/// prompt budget 0, so the model saw no history/memory at all and looked
+/// inexplicably dumb. Floor the prompt budget at a quarter of the window so
+/// every model keeps meaningful context; the same floor also rescues a
+/// user-pinned max_tokens larger than the window.
+fn prompt_budget(context_window: usize, max_tokens: usize) -> usize {
+    let reserve = if max_tokens > 0 {
+        max_tokens
+    } else {
+        (context_window / 2).max(8192)
+    };
+    context_window
+        .saturating_sub(reserve)
+        .max(context_window / 4)
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::prompt_budget;
+
+    #[test]
+    fn small_windows_keep_context() {
+        // 8k model, auto max_tokens: old formula gave 0. Floor = 2048.
+        assert_eq!(prompt_budget(8192, 0), 2048);
+        // 4k model: floor = 1024 (was 0).
+        assert_eq!(prompt_budget(4096, 0), 1024);
+    }
+
+    #[test]
+    fn large_windows_unchanged() {
+        // 32k: reserve 16k, budget 16k — exactly the pre-fix behavior.
+        assert_eq!(prompt_budget(32_768, 0), 16_384);
+        // 16k: reserve max(8k,8k)=8k, budget 8k.
+        assert_eq!(prompt_budget(16_384, 0), 8_192);
+    }
+
+    #[test]
+    fn explicit_max_tokens_honored_but_floored() {
+        // Pinned 4k generation on a 32k window: prompt gets the rest.
+        assert_eq!(prompt_budget(32_768, 4_096), 28_672);
+        // Pathological pin larger than the window: floor saves the prompt.
+        assert_eq!(prompt_budget(8_192, 32_768), 2_048);
+    }
 }
 
 fn message_to_chat(m: &Message) -> ChatMessage {
