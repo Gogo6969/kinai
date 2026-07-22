@@ -391,7 +391,7 @@ impl Default for StartupSettings {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub mode: Mode,
     #[serde(default)]
@@ -405,6 +405,11 @@ pub struct AppConfig {
     /// `llm` is disabled or unconfigured.
     #[serde(default = "LlmSettings::default_empty")]
     pub llm_deep: LlmSettings,
+    /// Optional "balanced" model slot — the middle ground between fast
+    /// and deep, addressed via `/balanced <prompt>`. Same disabled+empty
+    /// default so existing configs are untouched by the upgrade.
+    #[serde(default = "LlmSettings::default_empty")]
+    pub llm_balanced: LlmSettings,
     #[serde(default)]
     pub host: HostSettings,
     #[serde(default)]
@@ -444,6 +449,37 @@ pub struct AppConfig {
     /// existed ever sees the wizard after an update.
     #[serde(default)]
     pub setup_completed: bool,
+}
+
+/// Manual Default: the derived one filled `llm_deep`/`llm_balanced` with
+/// LlmSettings::default() — i.e. an ACTIVE slot pointing at the same
+/// llama3.1:8b as fast — because `#[serde(default = "…default_empty")]`
+/// only applies during TOML parsing, not to `AppConfig::default()`. A
+/// truly fresh install therefore showed `/deep` (and would have shown
+/// `/balanced`) as available before any model was configured there. The
+/// extra slots must start empty + disabled.
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            mode: Mode::default(),
+            theme: Theme::default(),
+            llm: LlmSettings::default(),
+            llm_deep: LlmSettings::default_empty(),
+            llm_balanced: LlmSettings::default_empty(),
+            host: HostSettings::default(),
+            client: ClientSettings::default(),
+            overlay: OverlaySettings::default(),
+            tools: ToolSettings::default(),
+            vision: VisionSettings::default(),
+            comfyui: ComfyConfig::default(),
+            telegram: TelegramConfig::default(),
+            tts: TtsConfig::default(),
+            stt: SttConfig::default(),
+            startup: StartupSettings::default(),
+            last_seen_changelog_version: String::new(),
+            setup_completed: false,
+        }
+    }
 }
 
 impl AppConfig {

@@ -339,6 +339,7 @@ pub fn run() {
             commands::set_mode,
             commands::set_llm_settings,
             commands::set_llm_deep_settings,
+            commands::set_llm_balanced_settings,
             commands::set_overlay_settings,
             commands::set_theme,
             commands::set_startup_settings,

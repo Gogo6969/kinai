@@ -58,6 +58,18 @@
     enabled: false,
   });
   let llmDeepSaveState = $state<'idle' | 'saving' | 'ok' | 'fail'>('idle');
+  // Balanced model — the middle slot between fast and deep (`/balanced`).
+  let llmBalanced = $state<LlmSettings>({
+    provider: 'llamacpp',
+    base_url: '',
+    model: '',
+    context_window: 32768,
+    api_key: null,
+    temperature: 0.7,
+    max_tokens: 0,
+    system_addendum: '',
+    enabled: false,
+  });
   let overlay = $state<OverlaySettings>({
     hotkey: 'CmdOrCtrl+Space',
     always_on_top: true,
@@ -373,6 +385,7 @@
     return JSON.stringify({
       llm,
       llmDeep,
+      llmBalanced,
       overlay,
       theme,
       tools,
@@ -409,6 +422,9 @@
       llm = { ...app.config.llm };
       if (app.config.llm_deep) {
         llmDeep = { ...app.config.llm_deep };
+      }
+      if (app.config.llm_balanced) {
+        llmBalanced = { ...app.config.llm_balanced };
       }
       overlay = { ...app.config.overlay };
       theme = app.config.theme;
@@ -598,6 +614,10 @@
         // state. The backend's `is_active()` check handles the
         // visibility/routing implications.
         await api.setLlmDeepSettings(llmDeep);
+        await api.setLlmBalancedSettings({
+          ...llmBalanced,
+          enabled: !!llmBalanced.base_url.trim() && !!llmBalanced.model.trim() && llmBalanced.enabled,
+        });
         if (app.config) {
           await api.setMode({ mode: app.config.mode, tools });
         }
@@ -1033,7 +1053,7 @@
     {#snippet modelCard(
       title: string,
       subtitle: string,
-      slug: 'fast' | 'deep',
+      slug: 'fast' | 'deep' | 'balanced',
       get: () => LlmSettings,
       set: (v: LlmSettings) => void
     )}
@@ -1204,6 +1224,14 @@
       'fast',
       () => llm,
       (v) => (llm = v)
+    )}
+
+    {@render modelCard(
+      'Balanced model (optional)',
+      'The middle ground — smarter than fast, quicker than deep. Reachable as `/balanced` in chat. Leave Base URL empty to disable.',
+      'balanced',
+      () => llmBalanced,
+      (v) => (llmBalanced = v)
     )}
 
     {@render modelCard(

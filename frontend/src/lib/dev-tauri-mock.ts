@@ -29,6 +29,10 @@ function defaultConfig() {
       provider: 'llamacpp', base_url: '', model: '', context_window: 32768,
       api_key: null, temperature: 0.7, max_tokens: 0, system_addendum: '', enabled: false,
     },
+    llm_balanced: {
+      provider: 'llamacpp', base_url: '', model: '', context_window: 32768,
+      api_key: null, temperature: 0.7, max_tokens: 0, system_addendum: '', enabled: false,
+    },
     host: { bind_addr: '0.0.0.0', port: 4847, family_name: 'Our Family', mdns_enabled: true, rate_limit_rpm: 60 },
     client: { host_url: null, host_token: null, host_label: null, display_name: 'You', pinned_hosts: [] },
     overlay: { hotkey: 'CmdOrCtrl+Space', always_on_top: true, font_size: 14, auto_close_on_blur: true },
@@ -87,6 +91,7 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
     set_telegram_token: (a) => { cfg.telegram.bot_token = a.args.bot_token; cfg.telegram.bot_username = 'mock_family_bot'; return cfg; },
     set_llm_settings: (a) => { Object.assign(cfg.llm, a.llm); return cfg; },
     set_llm_deep_settings: (a) => { Object.assign(cfg.llm_deep, a.llm); return cfg; },
+    set_llm_balanced_settings: (a) => { Object.assign(cfg.llm_balanced, a.llm); return cfg; },
     set_vision_settings: (a) => { Object.assign(cfg.vision, a.vision); return cfg; },
     set_comfy_config: (a) => { Object.assign(cfg.comfyui, a.comfyui); return cfg; },
     set_overlay_settings: (a) => { Object.assign(cfg.overlay, a.overlay); return cfg; },

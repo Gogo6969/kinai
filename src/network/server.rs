@@ -634,7 +634,7 @@ async fn run_chat_turn(
     // Bare `/fast` / `/deep` → mode switch confirmation, no LLM turn.
     // Otherwise the normal slash handlers (/pic, /picHQ, /help, ?).
     let slash_reply = if route_pick.bare_switch {
-        Some(crate::slash::switch_confirmation(&route_pick))
+        Some(crate::slash::switch_confirmation(&cfg, &route_pick))
     } else if let Some(arg) = crate::telegram::router::strip_voice(&llm_route_content) {
         // /voice typed in a family member's KinAI app — toggles THEIR
         // Telegram voice-note opt-in (context_peer scoping), same as
@@ -696,7 +696,7 @@ async fn run_chat_turn(
         ..user_msg.clone()
     };
     let messages =
-        context::builder::build_context(&s.app.db, &cfg, context_peer, thread_id, &user_msg_for_llm)
+        context::builder::build_context(&s.app.db, &cfg, route_pick.settings, context_peer, thread_id, &user_msg_for_llm)
             .await?;
     // Snapshot the prompt for the per-turn diagnostic panel. Replace
     // inline image data URLs with a tiny placeholder so a single
@@ -712,7 +712,7 @@ async fn run_chat_turn(
     let tool_runtime = registry::ToolRuntime::from_tool_settings(&cfg.tools)
         .with_memory(s.app.db.clone(), context_peer)
         .with_source_msg(client_msg_id.to_string());
-    let max_tokens = compute_max_tokens(&cfg, &messages);
+    let max_tokens = compute_max_tokens(route_pick.settings, &messages);
     // Construct the LLM client from the active route's settings (fast
     // or deep), NOT the cached `state.llm` — that one always holds
     // the fast slot. Cheap allocation: LlmClient is a reqwest wrapper
@@ -943,17 +943,16 @@ pub async fn return_unauthorized() -> impl IntoResponse {
     StatusCode::UNAUTHORIZED
 }
 
-fn compute_max_tokens(cfg: &AppConfig, messages: &[crate::context::ChatMessage]) -> Option<usize> {
+fn compute_max_tokens(llm: &crate::config::LlmSettings, messages: &[crate::context::ChatMessage]) -> Option<usize> {
     const SAFETY: usize = 128;
     let prompt = crate::context::token_guard::estimate_messages(messages);
-    let budget = cfg
-        .llm
+    let budget = llm
         .context_window
         .saturating_sub(prompt + SAFETY)
         .max(256);
-    Some(if cfg.llm.max_tokens == 0 {
+    Some(if llm.max_tokens == 0 {
         budget
     } else {
-        cfg.llm.max_tokens.min(budget)
+        llm.max_tokens.min(budget)
     })
 }

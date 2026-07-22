@@ -328,27 +328,36 @@ async fn run_turn_for_peer<R: Runtime>(
 
     let cfg = state.config.read().clone();
 
-    // Bare `/fast` or `/deep` (no body) = mode switch, not a question.
-    // Persist the choice on the thread, confirm via Telegram, return.
+    // Bare `/fast`, `/balanced` or `/deep` (no body) = mode switch, not a
+    // question. Persist the choice on the thread, confirm, return.
     let trimmed_lc = content.trim().to_ascii_lowercase();
-    if trimmed_lc == "/fast" || trimmed_lc == "/deep" {
-        let slot = if trimmed_lc == "/deep" { "deep" } else { "fast" };
+    if let Some(slot) = crate::slash::SLOTS
+        .iter()
+        .find(|s| trimmed_lc == format!("/{s}"))
+        .copied()
+    {
         // thread_id is already resolved + upserted above — write the
         // sticky slot to the active (possibly /newchat-rotated) thread.
         let _ = state.db.set_thread_active_slot(peer_id, &thread_id, Some(slot)).await;
-        let active_model = if slot == "deep" {
-            &cfg.llm_deep.model
-        } else {
-            &cfg.llm.model
+        let active_model = &crate::slash::slot_settings(&cfg, slot).model;
+        let icon = match slot {
+            "deep" => "🧠",
+            "balanced" => "⚖️",
+            _ => "⚡",
         };
-        let icon = if slot == "deep" { "🧠" } else { "⚡" };
-        let label = if slot == "deep" { "deep" } else { "fast" };
+        let others: Vec<String> = crate::slash::SLOTS
+            .iter()
+            .filter(|s| **s != slot && crate::slash::slot_settings(&cfg, s).is_active())
+            .map(|s| format!("`/{s}`"))
+            .collect();
         let body = if active_model.trim().is_empty() {
-            format!("{icon} Switched to **{label}** model — but no model is configured for this slot. Open KinAI → Settings → {} model to add one.", if slot == "deep" { "Deep" } else { "Fast" })
+            format!("{icon} Switched to **{slot}** model — but no model is configured for this slot. Open KinAI → Settings to add one.")
+        } else if others.is_empty() {
+            format!("{icon} Switched to **{slot}** model (`{active_model}`).")
         } else {
             format!(
-                "{icon} Switched to **{label}** model (`{active_model}`).\nAll follow-up questions in this chat go here until you type `/{}` to switch back.",
-                if slot == "deep" { "fast" } else { "deep" }
+                "{icon} Switched to **{slot}** model (`{active_model}`).\nAll follow-up questions in this chat go here until you type {} to switch.",
+                others.join(" or ")
             )
         };
         api.send_message(chat_id, &body).await?;
@@ -418,7 +427,7 @@ async fn run_turn_for_peer<R: Runtime>(
     // instant handlers (the /pic usage hint, the "not configured"
     // message) never flash a placeholder.
     let slash_reply = if route_pick.bare_switch {
-        Some(crate::slash::switch_confirmation(&route_pick))
+        Some(crate::slash::switch_confirmation(&cfg, &route_pick))
     } else {
         // Only /pic and /picHQ are slow enough to warrant a placeholder;
         // every other slash handler answers instantly.
@@ -536,6 +545,7 @@ async fn run_turn_for_peer<R: Runtime>(
     let messages = crate::context::builder::build_context(
         &state.db,
         &cfg,
+        route_pick.settings,
         peer_id,
         &thread_id,
         &user_msg_for_llm,

@@ -157,6 +157,8 @@ export interface AppConfig {
    *  Empty + disabled by default; becomes the default routing target
    *  when `llm` is paused or unconfigured. */
   llm_deep: LlmSettings;
+  /** Optional "balanced" middle slot. Reachable as `/balanced <prompt>`. */
+  llm_balanced: LlmSettings;
   host: HostSettings;
   client: ClientSettings;
   overlay: OverlaySettings;
@@ -316,7 +318,7 @@ export interface TurnMetrics {
   /** Full LLM model id (e.g. "olares/gpt-oss-20b"). Empty for slash
    *  commands. The UI abbreviates this for display. */
   model?: string;
-  /** "fast", "deep", or "" — used to render a small slot badge
+  /** "fast", "balanced", "deep", or "" — used to render a small slot badge
    *  alongside the model name. */
   slot?: string;
 }
@@ -346,6 +348,8 @@ export const api = {
   setLlmSettings: (llm: LlmSettings) => invoke<AppConfig>('set_llm_settings', { llm }),
   /** Save the secondary "deep" LLM slot. Same shape as
    *  setLlmSettings, separate command server-side. */
+  setLlmBalancedSettings: (llm: LlmSettings) =>
+    invoke<AppConfig>('set_llm_balanced_settings', { llm }),
   setLlmDeepSettings: (llm: LlmSettings) =>
     invoke<AppConfig>('set_llm_deep_settings', { llm }),
   setOverlaySettings: (overlay: OverlaySettings) =>

@@ -31,20 +31,21 @@ fn err<E: std::fmt::Display>(e: E) -> String {
 ///   * If user set `max_tokens == 0` → use the full remaining budget after the
 ///     prompt (auto). Reasoning models in particular need this.
 fn compute_max_tokens(
-    cfg: &AppConfig,
+    // The ROUTED slot's settings — a /balanced or /deep turn must budget
+    // against ITS context window, not the fast slot's.
+    llm: &crate::config::LlmSettings,
     messages: &[crate::context::ChatMessage],
 ) -> Option<usize> {
     const SAFETY: usize = 128;
     let prompt = crate::context::token_guard::estimate_messages(messages);
-    let budget = cfg
-        .llm
+    let budget = llm
         .context_window
         .saturating_sub(prompt + SAFETY)
         .max(256);
-    let max_tokens = if cfg.llm.max_tokens == 0 {
+    let max_tokens = if llm.max_tokens == 0 {
         budget
     } else {
-        cfg.llm.max_tokens.min(budget)
+        llm.max_tokens.min(budget)
     };
     Some(max_tokens)
 }
@@ -106,6 +107,23 @@ pub async fn set_llm_settings(
     *client = crate::llm::LlmClient::new(llm);
     state.stats.write().model_loaded = Some(new_cfg.llm.model.clone());
     Ok(new_cfg)
+}
+
+/// Persist the "balanced" LLM slot — the middle slot between fast and
+/// deep, reachable as `/balanced` in chat. Same shape as
+/// `set_llm_settings`, targets `cfg.llm_balanced`.
+#[tauri::command]
+pub async fn set_llm_balanced_settings(
+    state: tauri::State<'_, SharedState>,
+    llm: crate::config::LlmSettings,
+) -> Result<AppConfig> {
+    let cfg = {
+        let mut cfg = state.config.write();
+        cfg.llm_balanced = llm;
+        cfg.clone()
+    };
+    cfg.save().map_err(err)?;
+    Ok(cfg)
 }
 
 /// Persist the secondary "deep" LLM slot. Same shape as
@@ -1859,7 +1877,7 @@ async fn run_assistant_turn(
     let mut speak_override: Option<bool> = None;
     let mut config_changed = false;
     let slash_reply = if route_pick.bare_switch {
-        Some(crate::slash::switch_confirmation(&route_pick))
+        Some(crate::slash::switch_confirmation(&cfg, &route_pick))
     } else if let Some(arg) = crate::telegram::router::strip_voice(&llm_route_content) {
         // /voice typed in the KinAI desktop chat controls voice ON THIS
         // SURFACE: replies are read aloud automatically (same flag as
@@ -1945,7 +1963,7 @@ async fn run_assistant_turn(
         ..user_msg.clone()
     };
     let messages =
-        context::builder::build_context(&state.db, &cfg, db::HOST_PEER, thread_id, &user_msg_for_llm)
+        context::builder::build_context(&state.db, &cfg, route_pick.settings, db::HOST_PEER, thread_id, &user_msg_for_llm)
             .await
             .map_err(err)?;
     // Snapshot for the 🔍 debug panel — emitted alongside the
@@ -1964,7 +1982,7 @@ async fn run_assistant_turn(
         .with_memory(state.db.clone(), db::HOST_PEER)
         .with_source_msg(client_msg_id.to_string());
 
-    let max_tokens = compute_max_tokens(&cfg, &messages);
+    let max_tokens = compute_max_tokens(route_pick.settings, &messages);
 
     // Pick the LLM client from the routed slot (fast vs deep) rather
     // than the cached state.llm (which is always the fast slot).

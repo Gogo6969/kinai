@@ -114,6 +114,10 @@ fn default_command_menu() -> Vec<api::BotCommand> {
             description: "Switch this chat to the fast model (default)".into(),
         },
         api::BotCommand {
+            command: "balanced".into(),
+            description: "Switch this chat to the balanced model (middle ground)".into(),
+        },
+        api::BotCommand {
             command: "deep".into(),
             description: "Switch this chat to the deep model (slower, smarter)".into(),
         },

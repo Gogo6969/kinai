@@ -5,6 +5,26 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.78] — 2026-07-16
+
+### Added
+
+- **A third model slot: `/balanced`.** Alongside fast and deep there's now a
+  balanced slot — the middle ground: smarter than fast, quicker than deep.
+  Type `/balanced` in chat (app or Telegram) to switch a conversation to it;
+  `/help`, the slash menu, and the Telegram mode-switch messages all know
+  about it. Configure it in Settings → Backend & model, same as the others.
+
+### Fixed
+
+- **Each model slot now gets its own context budget.** Prompt trimming and
+  the generation-token budget followed the *fast* slot's context window even
+  when a turn routed to deep — a 32k deep model was budgeted as if it had
+  fast's window. Every turn now budgets against the slot actually serving it.
+- **Fresh installs no longer start with a phantom deep model.** A defaulting
+  bug marked the deep slot active (pointing at the fast model) on brand-new
+  configs before any wizard ran; extra slots now start empty and disabled.
+
 ## [0.2.77] — 2026-07-03
 
 ### Added

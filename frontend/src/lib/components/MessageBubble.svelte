@@ -107,10 +107,11 @@
   }
   const modelAbbrev = $derived(metrics?.model ? abbreviateModel(metrics.model) : '');
   /** Glyph + tooltip text for the slot — keeps the badge compact:
-   *  fast = ⚡, deep = 🧠. Empty slot label = no glyph (single-model
-   *  setups don't need the visual cue). */
+   *  fast = ⚡, balanced = ⚖️, deep = 🧠. Empty slot label = no glyph
+   *  (single-model setups don't need the visual cue). */
   function slotGlyph(slot: string | undefined): string {
     if (slot === 'fast') return '⚡';
+    if (slot === 'balanced') return '⚖️';
     if (slot === 'deep') return '🧠';
     return '';
   }

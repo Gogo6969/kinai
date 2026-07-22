@@ -100,19 +100,32 @@
   const SLASH_COMMANDS = $derived.by(() => {
     const cfg = app.config;
     const fastActive = isSlotActive(cfg?.llm);
+    const balancedActive = isSlotActive(cfg?.llm_balanced);
     const deepActive = isSlotActive(cfg?.llm_deep);
     const extra: Array<{ cmd: string; desc: string; hint?: string }> = [];
-    if (fastActive && deepActive) {
-      extra.push({
-        cmd: '/fast',
-        desc: `Use the fast model (${cfg!.llm.model})`,
-        hint: 'Plain messages already default to this model.',
-      });
-      extra.push({
-        cmd: '/deep',
-        desc: `Use the deep model (${cfg!.llm_deep.model})`,
-        hint: 'Slower but typically higher quality.',
-      });
+    // Model switches only appear when there's an actual choice (≥2 slots).
+    if ([fastActive, balancedActive, deepActive].filter(Boolean).length >= 2) {
+      if (fastActive) {
+        extra.push({
+          cmd: '/fast',
+          desc: `Use the fast model (${cfg!.llm.model})`,
+          hint: 'Plain messages already default to this model.',
+        });
+      }
+      if (balancedActive) {
+        extra.push({
+          cmd: '/balanced',
+          desc: `Use the balanced model (${cfg!.llm_balanced.model})`,
+          hint: 'The middle ground — smarter than fast, quicker than deep.',
+        });
+      }
+      if (deepActive) {
+        extra.push({
+          cmd: '/deep',
+          desc: `Use the deep model (${cfg!.llm_deep.model})`,
+          hint: 'Slower but typically higher quality.',
+        });
+      }
     }
     return [...extra, ...BASE_SLASH_COMMANDS];
   });

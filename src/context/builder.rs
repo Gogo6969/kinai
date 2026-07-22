@@ -13,6 +13,10 @@ const TOP_MEMORIES: i64 = 8;
 pub async fn build_context(
     db: &Db,
     cfg: &AppConfig,
+    // The ROUTED slot's settings (fast/balanced/deep). The prompt budget and
+    // system addendum must follow the model actually serving this turn — a
+    // 32k deep/balanced turn used to be trimmed to the FAST slot's window.
+    llm: &crate::config::LlmSettings,
     peer_id: &str,
     thread_id: &str,
     new_message: &Message,
@@ -35,7 +39,7 @@ pub async fn build_context(
     let mut messages: Vec<ChatMessage> =
         Vec::with_capacity(3 + memories.len() + recent.len() + 1);
 
-    messages.push(system_prompt(&cfg.host.family_name, &cfg.llm.system_addendum));
+    messages.push(system_prompt(&cfg.host.family_name, &llm.system_addendum));
 
     if !user_facts.is_empty() {
         messages.push(ChatMessage::System {
@@ -91,7 +95,7 @@ pub async fn build_context(
     // truncated/empty answer is far worse than slightly less context —
     // and the thread summary + memory layers preserve the gist of what
     // gets trimmed. When the user pins an explicit max_tokens, honor it.
-    let budget = prompt_budget(cfg.llm.context_window, cfg.llm.max_tokens);
+    let budget = prompt_budget(llm.context_window, llm.max_tokens);
     token_guard::trim_to_fit(&mut messages, budget);
     Ok(messages)
 }
