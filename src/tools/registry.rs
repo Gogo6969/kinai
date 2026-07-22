@@ -198,14 +198,25 @@ pub async fn execute(name: &str, args_json: &str, runtime: &ToolRuntime) -> Resu
 }
 
 fn web_search_def() -> ToolDef {
+    // The year is baked into the tool description because models anchor
+    // "recent" to their TRAINING years when composing queries — a July-2026
+    // host watched its model search "World Cup winner 2022 2023 2024 2025"
+    // and confidently report 2022 as the latest. The description is rebuilt
+    // per turn, so it always carries the real current year.
+    let year = crate::tools::datetime::current_year();
+    let desc = format!(
+        "Search the internet and return up-to-date results. The current year is {year} — \
+for time-sensitive questions (news, sports, prices, who holds a role) include {year} in \
+the query, not the years you remember as recent."
+    );
     ToolDef {
         name: "web_search".into(),
-        description: "Search the internet and return up-to-date results.".into(),
+        description: desc.clone(),
         schema: json!({
             "type": "function",
             "function": {
                 "name": "web_search",
-                "description": "Search the internet and return up-to-date results.",
+                "description": desc,
                 "parameters": {
                     "type": "object",
                     "properties": {

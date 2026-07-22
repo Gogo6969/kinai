@@ -5,6 +5,26 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.79] — 2026-07-22
+
+### Fixed
+
+- **No more confident answers from failed searches.** When a web search (or
+  any tool) errored, the model was still told to "answer from the results" —
+  so it invented answers from stale memory and presented them as current
+  (the World Cup incident: every search failed, and the 2022 final was
+  recited as 2026 news). Now: failed tool results explicitly forbid
+  substituting memory, and when *every* lookup in a turn fails the model is
+  instructed to say so plainly and suggest retrying.
+- **Searches now target the current year.** Models anchor "recent" to their
+  training years when composing queries (searching "winner 2022 2023 2024"
+  in mid-2026). The current year is now baked into the search tool's
+  description and the tool-use rules, so time-sensitive queries search the
+  actual present.
+- **Earlier thread answers are no longer treated as sources.** The model is
+  told that prior replies in a conversation may be outdated or wrong — for
+  current events it must search fresh each time, not repeat an old answer.
+
 ## [0.2.78] — 2026-07-16
 
 ### Added

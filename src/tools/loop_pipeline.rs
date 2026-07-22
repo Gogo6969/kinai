@@ -65,6 +65,7 @@ pub async fn run_pipeline(
     let accumulated: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let mut any_reasoning = false;
     let mut total_tool_invocations: usize = 0;
+    let mut total_tool_failures: usize = 0;
 
     for _round in 0..MAX_ROUNDS {
         let mut handle = llm.stream(&messages, &tools, max_tokens, cancel.clone()).await?;
@@ -169,8 +170,25 @@ pub async fn run_pipeline(
             .await
             {
                 Ok(r) => (r, true),
-                Err(e) => (format!("Error running {}: {e}", call.function.name), false),
+                Err(e) => (
+                    // The model reads this as the tool's output — make the
+                    // failure impossible to gloss over. Without this, a turn
+                    // whose every search errored still got told to "answer
+                    // from the results", and it fabricated (the 2026 World
+                    // Cup incident: all Exa calls failed, the model recited
+                    // the 2022 final as current news).
+                    format!(
+                        "TOOL FAILED ({}): {e}. This tool returned NO information. Do not \
+invent or recall-from-memory what it was meant to provide — if the user's question \
+depends on it, say plainly that the lookup failed and suggest trying again.",
+                        call.function.name
+                    ),
+                    false,
+                ),
             };
+            if !ok {
+                total_tool_failures += 1;
+            }
             (handlers.on_tool)(ToolEvent::Finished {
                 name: call.function.name.clone(),
                 ok,
@@ -194,11 +212,22 @@ pub async fn run_pipeline(
             "tool loop exhausted ({} invocations, no final); forcing a no-tools synthesis round",
             total_tool_invocations
         );
+        let synthesis_note = if total_tool_failures >= total_tool_invocations {
+            // EVERY tool call failed — there are no results to cite. The old
+            // text claimed the model had "gathered enough information", which
+            // invited fabrication dressed up as fresh results.
+            "Every tool call above FAILED — you have no fresh information. You no longer \
+have any tools available. Tell the user plainly that the lookup failed and could not be \
+completed right now, suggest they try again in a moment, and do NOT present anything from \
+memory as if it were a current result."
+        } else {
+            "You have gathered information from the tool calls above. You no longer have any \
+tools available — write the final answer to the user's question now, in plain prose, citing \
+the most relevant facts from the SUCCESSFUL tool results. Results marked TOOL FAILED \
+contained no information — do not fabricate what they were meant to provide."
+        };
         messages.push(ChatMessage::System {
-            content: "You have already gathered enough information from the tool calls above. \
-You no longer have any tools available — write the final answer to the user's question now, \
-in plain prose, citing the most relevant facts from the tool results."
-                .into(),
+            content: synthesis_note.into(),
         });
         let mut handle = llm.stream(&messages, &[], max_tokens, cancel.clone()).await?;
         while let Some(delta) = handle.rx.recv().await {
