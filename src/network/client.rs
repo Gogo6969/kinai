@@ -274,6 +274,7 @@ pub async fn connect(
                 host_search_engine,
                 host_vision,
                 host_telegram_bot,
+                host_slots,
             } => {
                 {
                     let mut stats = state.stats.write();
@@ -284,6 +285,7 @@ pub async fn connect(
                         host_search_engine: host_search_engine.clone(),
                         host_vision: host_vision.clone(),
                         host_telegram_bot: host_telegram_bot.clone(),
+                        host_slots: host_slots.clone(),
                     });
                 }
                 let _ = app.emit(
@@ -295,6 +297,7 @@ pub async fn connect(
                         "host_search_engine": host_search_engine,
                         "host_vision": host_vision,
                         "host_telegram_bot": host_telegram_bot,
+                        "host_slots": host_slots,
                     }),
                 );
             }

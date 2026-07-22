@@ -269,7 +269,7 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
         serde_json::json!({"id": peer_id, "name": display_name}),
     );
 
-    let (family_name, host_model, host_search_engine, host_vision, host_telegram_bot) = {
+    let (family_name, host_model, host_search_engine, host_vision, host_telegram_bot, host_slots) = {
         let cfg = s.app.config.read();
         let vision_label = if crate::vision::is_vision_capable(&cfg.llm.model) {
             // Chat model can do vision on its own — no dedicated endpoint needed.
@@ -300,6 +300,10 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
             format!("{:?}", cfg.tools.search_engine).to_lowercase(),
             vision_label,
             cfg.telegram.bot_username.clone(),
+            // Same guard as the fields above — one atomic config
+            // snapshot per Welcome, so a concurrent Settings save can't
+            // produce a half-old / half-new advertisement.
+            crate::slash::active_slot_wires(&cfg),
         )
     };
     let _ = tx.send(Envelope::Welcome {
@@ -309,6 +313,7 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
         host_search_engine,
         host_vision,
         host_telegram_bot,
+        host_slots,
     });
 
     let writer = tokio::spawn(async move {

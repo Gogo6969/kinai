@@ -23,6 +23,19 @@ pub struct TurnMetricsWire {
     pub slot: String,
 }
 
+/// One active model slot as advertised to clients in `Welcome`. Clients
+/// have no local LLM config, so without this they can't know which
+/// `/fast` / `/balanced` / `/deep` switches the host actually serves —
+/// the slash menu on client peers stayed empty (0.2.79 bug).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostSlotWire {
+    /// Slot slug: "fast", "balanced", or "deep".
+    pub slug: String,
+    /// Model id served by that slot (e.g. "Laguna-XS-2.1") — shown in
+    /// the client's slash-menu entry. Informational only.
+    pub model: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Envelope {
@@ -57,6 +70,13 @@ pub enum Envelope {
         /// client (no bot configured → no point pairing).
         #[serde(default)]
         host_telegram_bot: String,
+        /// Active model slots in `slash::SLOTS` order. Drives the
+        /// `/fast` / `/balanced` / `/deep` entries in the client's
+        /// slash menu (≥2 slots → show the switches, same rule as the
+        /// host UI). Snapshot at connect time — refreshed on the next
+        /// reconnect if the host owner re-configures slots.
+        #[serde(default)]
+        host_slots: Vec<HostSlotWire>,
     },
     /// Client → Host: please mint a pairing token for me (the requesting
     /// client peer). The host responds with `TelegramPair`. No payload —

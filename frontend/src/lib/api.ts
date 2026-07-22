@@ -280,6 +280,11 @@ export interface HostInfo {
    *  host owner hasn't configured one. Drives the "Family bot: @foo"
    *  label + Connect-Telegram button on client peers. */
   host_telegram_bot: string;
+  /** Active model slots the host serves, in fast→balanced→deep order.
+   *  Builds the client's `/fast` / `/balanced` / `/deep` slash-menu
+   *  entries (a client's local LLM config is empty). Optional because
+   *  hosts ≤0.2.79 don't send it. */
+  host_slots?: Array<{ slug: string; model: string }>;
 }
 
 export interface RuntimeStats {

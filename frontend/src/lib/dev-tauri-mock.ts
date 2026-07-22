@@ -54,13 +54,56 @@ function defaultConfig() {
 if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS__' in window)) {
   const w = window as any;
   const cfg = defaultConfig();
+  const stats: any = { model_loaded: null, peers_connected: 0, host_url: null, last_first_token_ms: null, client_connected: false, client_error: null, host_info: null };
+  // Scenario preset: a test can set `window.__mockPreset` from an
+  // init script (before the bundle runs) to shape the mock — e.g.
+  // simulate a CLIENT install (config.mode 'client' + stats.host_info
+  // with host_slots) for slash-menu tests. Shallow merge on purpose:
+  // presets replace whole top-level sections.
+  if (w.__mockPreset?.config) Object.assign(cfg, w.__mockPreset.config);
+  if (w.__mockPreset?.stats) Object.assign(stats, w.__mockPreset.stats);
+  // URL scenarios for manual/browser-pane testing, where nothing can run
+  // before the bundle: `?mock=client-slots` simulates a CLIENT install
+  // connected to a host that serves all three model slots. The local LLM
+  // config stays empty on purpose — proving client UI (e.g. the slash
+  // menu) reads the host-advertised slot list, not local settings.
+  const scenario = new URLSearchParams(location.search).get('mock');
+  if (scenario === 'client-slots') {
+    cfg.mode = 'client';
+    cfg.setup_completed = true;
+    stats.client_connected = true;
+    stats.host_info = {
+      family_name: 'Mock Family',
+      host_version: 'dev-mock',
+      host_model: 'mock-fast-20b',
+      host_search_engine: 'exa',
+      host_vision: 'off',
+      host_telegram_bot: '',
+      host_slots: [
+        { slug: 'fast', model: 'mock-fast-20b' },
+        { slug: 'balanced', model: 'mock-balanced-33b' },
+        { slug: 'deep', model: 'mock-deep-35b' },
+      ],
+    };
+  } else if (scenario === 'host-one-slot' || scenario === 'host-three-slots') {
+    // Host-mode scenarios for the slash menu's local-config path:
+    // one active slot → no model switches (≥2 gate); three → all shown.
+    cfg.mode = 'host';
+    cfg.setup_completed = true;
+    cfg.llm.model = 'local-fast-8b';
+    if (scenario === 'host-three-slots') {
+      Object.assign(cfg.llm_balanced, { base_url: 'http://192.168.1.50:8084', model: 'local-balanced-33b', enabled: true });
+      Object.assign(cfg.llm_deep, { base_url: 'http://192.168.1.50:8081', model: 'local-deep-35b', enabled: true });
+    }
+  }
   const calls: { cmd: string; args: any }[] = [];
   w.__mockCalls = calls;
   w.__mockConfig = cfg;
+  w.__mockStats = stats;
 
   const handlers: Record<string, (args: any) => any> = {
     get_config: () => cfg,
-    runtime_stats: () => ({ model_loaded: null, peers_connected: 0, host_url: null, last_first_token_ms: null, client_connected: false, client_error: null, host_info: null }),
+    runtime_stats: () => stats,
     kinai_version: () => ({ version: 'dev-mock', build_time: 0, git_commit: 'mock', target: 'browser', repository: '' }),
     get_changelog_payload: () => ({ version: 'dev', markdown: null, should_show: false }),
     tts_supported: () => true,

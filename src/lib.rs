@@ -90,6 +90,10 @@ pub struct HostInfo {
     /// Drives the client-side "Family bot: @foo" label + gates the
     /// "Connect Telegram" button on client peers.
     pub host_telegram_bot: String,
+    /// Active model slots the host serves (fast/balanced/deep). The
+    /// client's slash menu is built from this — its local LLM config is
+    /// empty, so without it `/fast`-style switches never appeared.
+    pub host_slots: Vec<crate::network::protocol::HostSlotWire>,
 }
 
 pub type SharedState = Arc<AppState>;

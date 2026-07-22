@@ -68,6 +68,20 @@ pub fn slot_settings<'cfg>(cfg: &'cfg AppConfig, label: &str) -> &'cfg LlmSettin
     }
 }
 
+/// Active slots advertised to client peers in the `Welcome` envelope,
+/// in SLOTS order. Clients have no local LLM config, so this is the
+/// only way their slash menu can know which model switches exist.
+pub fn active_slot_wires(cfg: &AppConfig) -> Vec<crate::network::protocol::HostSlotWire> {
+    SLOTS
+        .iter()
+        .filter(|s| slot_settings(cfg, s).is_active())
+        .map(|s| crate::network::protocol::HostSlotWire {
+            slug: (*s).into(),
+            model: slot_settings(cfg, s).model.clone(),
+        })
+        .collect()
+}
+
 /// The slot to actually serve a request aimed at `wanted`: the wanted
 /// slot when active, else the first active slot in SLOTS order, else
 /// `wanted` itself (fail loudly downstream — a config problem should
@@ -375,6 +389,39 @@ mod routing_tests {
         cfg.llm_deep.model = "deep-35b".into();
         cfg.llm_deep.enabled = true;
         cfg
+    }
+
+    #[test]
+    fn active_slot_wires_lists_active_slots_in_order() {
+        let cfg = cfg_three_slots();
+        let wires = active_slot_wires(&cfg);
+        let slugs: Vec<&str> = wires.iter().map(|w| w.slug.as_str()).collect();
+        assert_eq!(slugs, vec!["fast", "balanced", "deep"]);
+        assert_eq!(wires[1].model, "balanced-33b");
+        assert_eq!(wires[2].model, "deep-35b");
+
+        // Disabling a slot removes it; empty base_url removes another.
+        let mut cfg = cfg_three_slots();
+        cfg.llm_balanced.enabled = false;
+        cfg.llm_deep.base_url = String::new();
+        let wires = active_slot_wires(&cfg);
+        let slugs: Vec<&str> = wires.iter().map(|w| w.slug.as_str()).collect();
+        assert_eq!(slugs, vec!["fast"]);
+    }
+
+    #[test]
+    fn welcome_without_host_slots_still_deserializes() {
+        // A 0.2.79-or-older host omits `host_slots` — a new client must
+        // parse its Welcome and default to an empty slot list (menu
+        // falls back to local config, i.e. stays empty on clients).
+        let old_wire = r#"{"type":"welcome","family_name":"Fam","host_version":"0.2.79","host_model":"m"}"#;
+        let env: crate::network::protocol::Envelope = serde_json::from_str(old_wire).unwrap();
+        match env {
+            crate::network::protocol::Envelope::Welcome { host_slots, .. } => {
+                assert!(host_slots.is_empty());
+            }
+            other => panic!("expected Welcome, got {other:?}"),
+        }
     }
 
     #[tokio::test]

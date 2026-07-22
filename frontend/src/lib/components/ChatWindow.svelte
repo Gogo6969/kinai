@@ -87,46 +87,47 @@
     { cmd: '/help', desc: 'List slash commands' },
   ];
 
-  // `/fast` and `/deep` only make sense when BOTH model slots are
-  // active — when only one slot is configured, there's no choice to
-  // route, so the slashes are pointless clutter. The check mirrors
-  // the backend's `LlmSettings::is_active()` so menu visibility and
-  // actual routing stay aligned.
+  // `/fast` / `/balanced` / `/deep` only make sense when ≥2 model slots
+  // are active — with one slot there's no choice to route, so the
+  // slashes are pointless clutter. Hosts derive the active set from the
+  // local config (mirroring the backend's `LlmSettings::is_active()`);
+  // client peers have NO local LLM config, so they use the slot list
+  // the host advertises in the Welcome envelope instead (hosts ≤0.2.79
+  // don't send one — those clients keep the old empty-menu behavior).
   function isSlotActive(slot: { enabled?: boolean; base_url?: string; model?: string } | undefined): boolean {
     if (!slot) return false;
     if (slot.enabled === false) return false;
     return Boolean(slot.base_url?.trim() && slot.model?.trim());
   }
+  const SLOT_MENU_TEXT: Record<string, { label: string; hint: string }> = {
+    fast: { label: 'fast', hint: 'Plain messages already default to this model.' },
+    balanced: { label: 'balanced', hint: 'The middle ground — smarter than fast, quicker than deep.' },
+    deep: { label: 'deep', hint: 'Slower but typically higher quality.' },
+  };
   const SLASH_COMMANDS = $derived.by(() => {
     const cfg = app.config;
-    const fastActive = isSlotActive(cfg?.llm);
-    const balancedActive = isSlotActive(cfg?.llm_balanced);
-    const deepActive = isSlotActive(cfg?.llm_deep);
-    const extra: Array<{ cmd: string; desc: string; hint?: string }> = [];
+    // Wire list only while actually IN client mode — app.hostInfo is
+    // never cleared, so after a live client→host reconfiguration a
+    // stale advertisement would otherwise beat the fresh local config.
+    const wire = cfg?.mode === 'client' ? app.hostInfo?.host_slots : undefined;
+    const slots: Array<{ slug: string; model: string }> = wire?.length
+      ? wire.filter((s) => Object.hasOwn(SLOT_MENU_TEXT, s.slug))
+      : [
+          { slug: 'fast', llm: cfg?.llm },
+          { slug: 'balanced', llm: cfg?.llm_balanced },
+          { slug: 'deep', llm: cfg?.llm_deep },
+        ]
+          .filter(({ llm }) => isSlotActive(llm))
+          .map(({ slug, llm }) => ({ slug, model: llm!.model }));
     // Model switches only appear when there's an actual choice (≥2 slots).
-    if ([fastActive, balancedActive, deepActive].filter(Boolean).length >= 2) {
-      if (fastActive) {
-        extra.push({
-          cmd: '/fast',
-          desc: `Use the fast model (${cfg!.llm.model})`,
-          hint: 'Plain messages already default to this model.',
-        });
-      }
-      if (balancedActive) {
-        extra.push({
-          cmd: '/balanced',
-          desc: `Use the balanced model (${cfg!.llm_balanced.model})`,
-          hint: 'The middle ground — smarter than fast, quicker than deep.',
-        });
-      }
-      if (deepActive) {
-        extra.push({
-          cmd: '/deep',
-          desc: `Use the deep model (${cfg!.llm_deep.model})`,
-          hint: 'Slower but typically higher quality.',
-        });
-      }
-    }
+    const extra =
+      slots.length >= 2
+        ? slots.map(({ slug, model }) => ({
+            cmd: `/${slug}`,
+            desc: `Use the ${SLOT_MENU_TEXT[slug].label} model (${model})`,
+            hint: SLOT_MENU_TEXT[slug].hint,
+          }))
+        : [];
     return [...extra, ...BASE_SLASH_COMMANDS];
   });
   let slashIndex = $state(0);

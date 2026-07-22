@@ -5,6 +5,18 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.80] — 2026-07-22
+
+### Fixed
+
+- **Family members now see the model switches.** The chat's slash menu
+  builds its `/fast` / `/balanced` / `/deep` entries from the local model
+  settings — which are empty on family (client) installs, so the switches
+  never appeared there even though typing them worked. The host now
+  advertises its active model slots when a client connects, and the client
+  menu is built from that list. Requires host and client on 0.2.80+ (older
+  pairings simply keep the old behavior).
+
 ## [0.2.79] — 2026-07-22
 
 ### Fixed
