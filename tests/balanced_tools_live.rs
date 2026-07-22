@@ -39,3 +39,60 @@ async fn balanced_turn_uses_tools() {
         .expect("pipeline");
     eprintln!("FINAL[0..400]: {}", out.final_content.chars().take(400).collect::<String>());
 }
+
+/// The exact regression from the field: a follow-up asking for NEW facts
+/// about a current event must trigger a FRESH search — the old prompt's
+/// follow-up exemption made models answer from imagination instead.
+async fn followup_scenario(llm: kinai::config::LlmSettings, label: &str) {
+    let cfg = AppConfig::load_or_default();
+    let tools = registry::enabled(&cfg.tools);
+    let runtime = ToolRuntime::from_tool_settings(&cfg.tools);
+    let client = LlmClient::new(llm);
+    let messages = vec![
+        system_prompt(&cfg.host.family_name, ""),
+        kinai::context::ChatMessage::User {
+            content: "Who won the final of the soccer World Championship?".into(),
+            name: Some("Wolf".into()),
+            image_data_urls: vec![],
+        },
+        kinai::context::ChatMessage::Assistant {
+            content: "Spain won the 2026 FIFA World Cup final, defeating Argentina 1-0 after extra time (Ferran Torres, 106th minute).".into(),
+            tool_calls: vec![],
+        },
+        kinai::context::ChatMessage::User {
+            content: "Did the players argue with each other after the final whistle of the game?".into(),
+            name: Some("Wolf".into()),
+            image_data_urls: vec![],
+        },
+    ];
+    let called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let called2 = called.clone();
+    let handlers = PipelineHandlers {
+        on_token: Arc::new(|_| {}),
+        on_reasoning: Arc::new(|_| {}),
+        on_tool: Arc::new(move |e| {
+            if let ToolEvent::Started { name, args } = e {
+                called2.store(true, std::sync::atomic::Ordering::SeqCst);
+                eprintln!(">>> [{}] TOOL: {name} {}", std::thread::current().name().unwrap_or("t"), &args.chars().take(100).collect::<String>());
+            }
+        }),
+    };
+    let out = run_pipeline(client, messages, tools, Some(8192), runtime, handlers, CancellationToken::new())
+        .await
+        .expect("pipeline");
+    eprintln!("[{label}] searched: {} | FINAL[0..200]: {}", called.load(std::sync::atomic::Ordering::SeqCst), out.final_content.chars().take(200).collect::<String>());
+}
+
+#[tokio::test]
+#[ignore = "live"]
+async fn followup_balanced() {
+    let cfg = AppConfig::load_or_default();
+    followup_scenario(cfg.llm_balanced.clone(), "balanced").await;
+}
+
+#[tokio::test]
+#[ignore = "live"]
+async fn followup_deep() {
+    let cfg = AppConfig::load_or_default();
+    followup_scenario(cfg.llm_deep.clone(), "deep").await;
+}
