@@ -101,11 +101,17 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
   w.__mockConfig = cfg;
   w.__mockStats = stats;
 
+  // Presettable "What's new" payload — lets a test/screenshot script
+  // drive the real ChangelogModal with real release notes via
+  // `__mockPreset.changelog` (same init-script mechanism as above).
+  let changelogPayload: any = { version: 'dev', markdown: null, should_show: false };
+  if (w.__mockPreset?.changelog) changelogPayload = w.__mockPreset.changelog;
+
   const handlers: Record<string, (args: any) => any> = {
     get_config: () => cfg,
     runtime_stats: () => stats,
     kinai_version: () => ({ version: 'dev-mock', build_time: 0, git_commit: 'mock', target: 'browser', repository: '' }),
-    get_changelog_payload: () => ({ version: 'dev', markdown: null, should_show: false }),
+    get_changelog_payload: () => changelogPayload,
     tts_supported: () => true,
     list_tts_voices: () => [
       { name: 'Zoe (Premium)', lang: 'en_US' }, { name: 'Samantha', lang: 'en_US' },
