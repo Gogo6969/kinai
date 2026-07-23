@@ -12,10 +12,16 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2022, windows-latest]
-    runs-on: ${{ matrix.os }}
+        # Image A/B answered (both fail). Now ref A/B: v0.2.80's windows
+        # job was green at 22:16; if its code fails COLD today, the
+        # environment moved underneath us. If only v0.2.81 fails, the
+        # 3-commit diff is to blame and gets bisected.
+        ref: [v0.2.80, v0.2.81]
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ matrix.ref }}
       - uses: dtolnay/rust-toolchain@stable
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
