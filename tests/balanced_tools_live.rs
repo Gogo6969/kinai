@@ -231,3 +231,69 @@ His most famous works were published in 1528, 1538, and 1544. He died 17 April 1
         "no raw tool markup may leak: {report}"
     );
 }
+
+/// Field bug 0.2.83: balanced answered "Who was Adam Riese?" with
+/// "I don't have information — would you like me to search?" instead of
+/// searching. The prompt now mandates: unknown factual question →
+/// search immediately, never ask permission.
+async fn unknown_fact_scenario(llm: kinai::config::LlmSettings, label: &str) {
+    let cfg = AppConfig::load_or_default();
+    let tools = registry::enabled(&cfg.tools);
+    let runtime = ToolRuntime::from_tool_settings(&cfg.tools);
+    let client = LlmClient::new(llm);
+    let messages = vec![
+        system_prompt(&cfg.host.family_name, ""),
+        kinai::context::ChatMessage::User {
+            content: "Who was Adam Riese?".into(),
+            name: Some("Wolf".into()),
+            image_data_urls: vec![],
+        },
+    ];
+    let called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let called2 = called.clone();
+    let handlers = PipelineHandlers {
+        on_token: Arc::new(|_| {}),
+        on_reasoning: Arc::new(|_| {}),
+        on_tool: Arc::new(move |e| {
+            if let ToolEvent::Started { name, args } = e {
+                called2.store(true, std::sync::atomic::Ordering::SeqCst);
+                eprintln!(">>> TOOL: {name} {}", &args.chars().take(100).collect::<String>());
+            }
+        }),
+    };
+    let out = run_pipeline(client, messages, tools, Some(8192), runtime, handlers, CancellationToken::new())
+        .await
+        .expect("pipeline");
+    let searched = called.load(std::sync::atomic::Ordering::SeqCst);
+    eprintln!(
+        "[{label}] searched: {searched} | FINAL[0..200]: {}",
+        out.final_content.chars().take(200).collect::<String>()
+    );
+    assert!(searched, "[{label}] must search an unknown factual question, not ask permission");
+    assert!(
+        !out.final_content.to_lowercase().contains("would you like me to search"),
+        "[{label}] must not ask permission: {}",
+        out.final_content
+    );
+}
+
+#[tokio::test]
+#[ignore = "live"]
+async fn unknown_fact_balanced() {
+    let cfg = AppConfig::load_or_default();
+    unknown_fact_scenario(cfg.llm_balanced.clone(), "balanced").await;
+}
+
+#[tokio::test]
+#[ignore = "live"]
+async fn unknown_fact_fast() {
+    let cfg = AppConfig::load_or_default();
+    unknown_fact_scenario(cfg.llm.clone(), "fast").await;
+}
+
+#[tokio::test]
+#[ignore = "live"]
+async fn unknown_fact_deep() {
+    let cfg = AppConfig::load_or_default();
+    unknown_fact_scenario(cfg.llm_deep.clone(), "deep").await;
+}

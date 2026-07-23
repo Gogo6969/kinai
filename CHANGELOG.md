@@ -5,6 +5,17 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.84] — 2026-07-23
+
+### Fixed
+
+- **No more "would you like me to search?"** When asked about a person,
+  place, or fact a model doesn't recognize, it now searches immediately
+  instead of asking permission (or worse, inventing an answer). Verified
+  live on all three model slots with the exact question that exposed it
+  ("Who was Adam Riese?") — every slot now searches and answers
+  correctly with sources.
+
 ## [0.2.83] — 2026-07-23
 
 ### Fixed
