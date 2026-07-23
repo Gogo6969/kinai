@@ -778,6 +778,7 @@ Your messages will automatically use another available model until it's back.",
         // route_pick after a failover).
         model: served.settings.model.clone(),
         slot: served.slot_label.clone(),
+        question_msg_id: Some(user_msg.id.clone()),
     };
 
     send_assistant_reply(

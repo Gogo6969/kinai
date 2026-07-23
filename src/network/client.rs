@@ -406,9 +406,9 @@ pub async fn connect(
                     }),
                 );
             }
-            Envelope::FactCheckResult { ok, report, .. } => {
+            Envelope::FactCheckResult { message_id, ok, report } => {
                 let mut net = state.net.lock().await;
-                if let Some(tx) = net.fact_check_pending.take() {
+                if let Some(tx) = net.fact_check_pending.remove(&message_id) {
                     let _ = tx.send((ok, report));
                 }
             }
@@ -471,7 +471,18 @@ pub async fn connect(
     }
 
     writer.abort();
-    state.net.lock().await.client_tx = None;
+    {
+        let mut net = state.net.lock().await;
+        net.client_tx = None;
+        // Resolve any in-flight fact-check waiters with an honest error —
+        // otherwise their commands sit blind until the 120s timeout.
+        for (_, tx) in net.fact_check_pending.drain() {
+            let _ = tx.send((
+                false,
+                "Lost the connection to your KinAI host during the fact check.".to_string(),
+            ));
+        }
+    }
     {
         let mut stats = state.stats.write();
         stats.client_connected = false;

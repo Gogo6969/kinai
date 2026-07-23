@@ -1,4 +1,5 @@
 import { Marked } from 'marked';
+import DOMPurify from 'dompurify';
 import { markedHighlight } from 'marked-highlight';
 import hljs from 'highlight.js';
 import katex from 'katex';
@@ -83,7 +84,16 @@ function isSafeImageUrl(url: string): boolean {
  *  don't get mangled by GFM. */
 export function renderMarkdown(src: string): string {
   const withMath = renderMath(src);
-  return marked.parse(withMath) as string;
+  // Sanitize EVERYTHING that reaches {@html}: model output quotes text
+  // fetched from arbitrary web pages (chat bubbles, streaming, the
+  // fact-check panel), so raw inline HTML from those sources must never
+  // execute in the webview. KaTeX/hljs markup survives — DOMPurify
+  // keeps spans/classes; event handlers, scripts, and iframes don't.
+  return DOMPurify.sanitize(marked.parse(withMath) as string, {
+    // Keep our image-figure affordances working (open/download buttons
+    // are wired via delegated listeners reading data-kin-* attributes).
+    ADD_ATTR: ['data-kin-action', 'data-kin-url'],
+  });
 }
 
 function renderMath(src: string): string {

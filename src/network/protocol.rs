@@ -21,6 +21,9 @@ pub struct TurnMetricsWire {
     /// Slot label: "fast", "deep", or "" when not applicable.
     #[serde(default)]
     pub slot: String,
+    /// Id of the user message this reply answered (fact-check pairing).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question_msg_id: Option<String>,
 }
 
 /// One active model slot as advertised to clients in `Welcome`. Clients

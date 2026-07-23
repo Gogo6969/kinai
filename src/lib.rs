@@ -52,6 +52,9 @@ pub struct AppState {
     /// abort a hung turn instead of leaving the user with a perpetual
     /// "typing…" indicator. Cleaned up in send_message's finish path.
     pub pending_turns: Arc<parking_lot::Mutex<HashMap<String, CancellationToken>>>,
+    /// Peers with a fact check currently in flight — per-peer
+    /// single-flight guard for the PAID online checker slot.
+    pub fact_checks_running: parking_lot::Mutex<std::collections::HashSet<String>>,
     /// Cached per-slot liveness (label -> (probed_at, alive)) with a
     /// short TTL — feeds the slash menu's offline markers and the
     /// switch-confirmation heads-up without hammering the model servers.
@@ -311,6 +314,7 @@ pub fn run() {
         telegram: Arc::new(telegram::TelegramSupervisor::default()),
         pending_turns: Arc::new(parking_lot::Mutex::new(HashMap::new())),
         slot_health: parking_lot::Mutex::new(HashMap::new()),
+        fact_checks_running: parking_lot::Mutex::new(std::collections::HashSet::new()),
         tts_child: parking_lot::Mutex::new(None),
     });
 

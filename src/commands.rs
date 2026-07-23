@@ -1649,6 +1649,11 @@ pub struct TurnMetrics {
     /// small slot indicator alongside the (long-ish) model name.
     #[serde(default)]
     pub slot: String,
+    /// Id of the user message this reply answered — recorded at
+    /// generation time so the fact-check pairing survives edits and
+    /// regenerates (a created_at heuristic can mispair).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub question_msg_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1717,6 +1722,7 @@ pub async fn send_message(
                     tps: 0.0,
                     model: String::new(),
                     slot: String::new(),
+                    question_msg_id: None,
                 };
                 let _ = app.emit(
                     "kinai://assistant-done",
@@ -1795,6 +1801,7 @@ pub async fn send_message(
                 tps: 0.0,
                 model: String::new(),
                 slot: String::new(),
+                question_msg_id: None,
             },
         });
     }
@@ -1915,6 +1922,7 @@ async fn run_assistant_turn(
             tps: 0.0,
             model: String::new(),
             slot: String::new(),
+            question_msg_id: None,
         };
         let metrics_json = serde_json::to_value(&metrics).unwrap_or(serde_json::Value::Null);
         let _ = state
@@ -2107,6 +2115,7 @@ async fn run_assistant_turn(
         // failover this differs from route_pick.
         model: served.settings.model.clone(),
         slot: served.slot_label.clone(),
+        question_msg_id: Some(user_msg.id.clone()),
     };
 
     let mut assistant_msg = state
@@ -2831,11 +2840,13 @@ pub async fn fact_check_message(
         let (sender, receiver) = tokio::sync::oneshot::channel();
         let tx = {
             let mut net = state.net.lock().await;
-            net.fact_check_pending = Some(sender);
+            // Keyed by message_id so two bubbles checking at once can't
+            // cross-wire results (the UI single-flight is per message).
+            net.fact_check_pending.insert(message_id.clone(), sender);
             net.client_tx.clone()
         };
         let Some(tx) = tx else {
-            state.net.lock().await.fact_check_pending = None;
+            state.net.lock().await.fact_check_pending.remove(&message_id);
             return Err("Not connected to your family's KinAI host.".into());
         };
         if tx
@@ -2844,15 +2855,18 @@ pub async fn fact_check_message(
             })
             .is_err()
         {
-            state.net.lock().await.fact_check_pending = None;
+            state.net.lock().await.fact_check_pending.remove(&message_id);
             return Err("Lost the host connection before the fact check could start.".into());
         }
-        let (ok, report) =
-            tokio::time::timeout(std::time::Duration::from_secs(120), receiver)
-                .await
-                .map_err(|_| "The fact check timed out — try again.".to_string())?
-                .map_err(|_| "The host dropped the fact-check request.".to_string())?;
-        return if ok { Ok(report) } else { Err(report) };
+        let recv = tokio::time::timeout(std::time::Duration::from_secs(120), receiver).await;
+        let outcome = match recv {
+            Err(_) => Err("The fact check timed out — try again.".to_string()),
+            Ok(Err(_)) => Err("The host dropped the fact-check request.".to_string()),
+            Ok(Ok((true, report))) => Ok(report),
+            Ok(Ok((false, report))) => Err(report),
+        };
+        state.net.lock().await.fact_check_pending.remove(&message_id);
+        return outcome;
     }
 
     let cfg = state.config.read().clone();
@@ -2864,9 +2878,21 @@ pub async fn fact_check_message(
     let Some((question, answer)) = pair else {
         return Err("That message can't be fact-checked.".into());
     };
-    crate::factcheck::run(&cfg, &question, &answer, CancellationToken::new())
-        .await
-        .map_err(err)
+    // Bounded like the WS path (150s) with a REAL cancel so a hung online
+    // API doesn't pin the pipeline until its 300s stall ceiling.
+    let cancel = CancellationToken::new();
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(150),
+        crate::factcheck::run(&cfg, &question, &answer, cancel.clone()),
+    )
+    .await
+    {
+        Ok(r) => r.map_err(err),
+        Err(_) => {
+            cancel.cancel();
+            Err("The fact check timed out — try again.".into())
+        }
+    }
 }
 
 #[tauri::command]

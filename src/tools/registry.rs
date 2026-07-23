@@ -59,6 +59,14 @@ pub struct ToolDef {
     pub schema: serde_json::Value,
 }
 
+/// The fact-checker's fixed toolset. Deliberately NOT derived from the
+/// per-tool chat toggles: clicking "fact check" is an explicit request
+/// to verify against the web — a host who turned web_search off for
+/// CHAT still expects the checker to search (that's its whole job).
+pub(crate) fn fact_check_defs() -> Vec<ToolDef> {
+    vec![web_search_def(), datetime_def()]
+}
+
 pub fn enabled(settings: &ToolSettings) -> Vec<ToolDef> {
     let mut out = Vec::new();
     if settings.web_search {

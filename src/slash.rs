@@ -650,6 +650,7 @@ mod routing_tests {
                 std::collections::HashMap::new(),
             )),
             slot_health: parking_lot::Mutex::new(std::collections::HashMap::new()),
+            fact_checks_running: parking_lot::Mutex::new(std::collections::HashSet::new()),
             tts_child: parking_lot::Mutex::new(None),
         }
     }

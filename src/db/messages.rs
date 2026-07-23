@@ -735,8 +735,8 @@ pub async fn question_answer_for_fact_check(
     peer_id: &str,
     message_id: &str,
 ) -> Result<Option<(String, String)>> {
-    let row: Option<(String, String, String, String)> = sqlx::query_as(
-        "SELECT m.thread_id, m.role, m.content, m.created_at
+    let row: Option<(String, String, String, String, Option<String>)> = sqlx::query_as(
+        "SELECT m.thread_id, m.role, m.content, m.created_at, m.metrics
          FROM messages m JOIN threads t ON t.id = m.thread_id
          WHERE m.id = ? AND t.peer_id = ?",
     )
@@ -744,11 +744,31 @@ pub async fn question_answer_for_fact_check(
     .bind(peer_id)
     .fetch_optional(pool)
     .await?;
-    let Some((thread_id, role, answer, created_at)) = row else {
+    let Some((thread_id, role, answer, created_at, metrics)) = row else {
         return Ok(None);
     };
     if role != "assistant" {
         return Ok(None);
+    }
+    // Prefer the pairing recorded at generation time (metrics.question_msg_id,
+    // 0.2.82+) — a created_at heuristic can mispair after edits/regenerates.
+    // Same-thread constraint keeps the lookup peer-safe even if metrics were
+    // somehow tampered with.
+    if let Some(qid) = metrics
+        .as_deref()
+        .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+        .and_then(|v| v.get("question_msg_id").and_then(|q| q.as_str().map(String::from)))
+    {
+        let question: Option<(String,)> = sqlx::query_as(
+            "SELECT content FROM messages WHERE id = ? AND thread_id = ? AND role = 'user'",
+        )
+        .bind(&qid)
+        .bind(&thread_id)
+        .fetch_optional(pool)
+        .await?;
+        if let Some((q,)) = question {
+            return Ok(Some((q, answer)));
+        }
     }
     let question: Option<(String,)> = sqlx::query_as(
         "SELECT content FROM messages

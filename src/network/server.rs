@@ -356,7 +356,8 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
                 continue;
             }
         };
-        if matches!(env, Envelope::SendMessage { .. }) && !s.rate.allow(&peer_id) {
+        if matches!(env, Envelope::SendMessage { .. } | Envelope::FactCheckRequest { .. })
+            && !s.rate.allow(&peer_id) {
             let _ = tx.send(Envelope::Error {
                 message: "rate limit exceeded; slow down a moment".into(),
             });
@@ -562,33 +563,78 @@ async fn dispatch(
             // block this peer's WS read loop (chat turns spawn the same
             // way). Ownership check happens inside the peer-scoped DB
             // lookup — a peer can only fact-check its own threads.
+            //
+            // Guards (the checker slot is a PAID online API):
+            //  * draws from the same per-peer rate bucket as chat (above);
+            //  * one in-flight check per peer — rapid re-clicks across
+            //    bubbles queue behind an immediate "already running" reply;
+            //  * 150s hard bound (the client gives up at 120s);
+            //  * provider/DB error details stay in the host log — peers
+            //    get a generic message, not API billing/auth internals.
+            {
+                let mut checks = s.app.fact_checks_running.lock();
+                if !checks.insert(context_peer.to_string()) {
+                    let _ = tx.send(Envelope::FactCheckResult {
+                        message_id,
+                        ok: false,
+                        report: "A fact check is already running — wait for it to finish."
+                            .to_string(),
+                    });
+                    return Ok(());
+                }
+            }
             let s2 = s.clone();
             let tx2 = tx.clone();
             let peer = context_peer.to_string();
             tokio::spawn(async move {
                 let cfg = s2.app.config.read().clone();
-                let pair = s2
-                    .app
-                    .db
-                    .question_answer_for_fact_check(&peer, &message_id)
-                    .await;
-                let (ok, report) = match pair {
-                    Ok(Some((question, answer))) => {
-                        match crate::factcheck::run(
-                            &cfg,
-                            &question,
-                            &answer,
-                            CancellationToken::new(),
-                        )
+                let (ok, report) = if !crate::factcheck::is_configured(&cfg.llm_factcheck) {
+                    // Config changed since this peer's Welcome advertised
+                    // the feature — tell them something actionable.
+                    (
+                        false,
+                        "The host's fact-check model is no longer configured — ask the family owner to check Settings → Models → Fact-check model."
+                            .to_string(),
+                    )
+                } else {
+                    match s2
+                        .app
+                        .db
+                        .question_answer_for_fact_check(&peer, &message_id)
                         .await
-                        {
-                            Ok(report) => (true, report),
-                            Err(e) => (false, format!("Fact check failed: {e}")),
+                    {
+                        Ok(Some((question, answer))) => {
+                            let cancel = CancellationToken::new();
+                            match tokio::time::timeout(
+                                std::time::Duration::from_secs(150),
+                                crate::factcheck::run(&cfg, &question, &answer, cancel.clone()),
+                            )
+                            .await
+                            {
+                                Ok(Ok(report)) => (true, report),
+                                Ok(Err(e)) => {
+                                    tracing::warn!("fact check for peer {peer} failed: {e:#}");
+                                    (
+                                        false,
+                                        "Fact check failed — the checker model returned an error. The host can see details in the KinAI log."
+                                            .to_string(),
+                                    )
+                                }
+                                Err(_) => {
+                                    cancel.cancel();
+                                    tracing::warn!("fact check for peer {peer} timed out");
+                                    (false, "The fact check timed out — try again.".to_string())
+                                }
+                            }
+                        }
+                        Ok(None) => (false, "That message can't be fact-checked.".to_string()),
+                        Err(e) => {
+                            tracing::warn!("fact check db lookup for peer {peer} failed: {e:#}");
+                            (false, "Fact check failed — please try again.".to_string())
                         }
                     }
-                    Ok(None) => (false, "That message can't be fact-checked.".to_string()),
-                    Err(e) => (false, format!("Fact check failed: {e}")),
                 };
+                s2.app.fact_checks_running.lock().remove(&peer);
                 let _ = tx2.send(Envelope::FactCheckResult {
                     message_id,
                     ok,
@@ -736,6 +782,7 @@ async fn run_chat_turn(
             tps: 0.0,
             model: String::new(),
             slot: String::new(),
+            question_msg_id: None,
         };
         let metrics_json = serde_json::to_value(&metrics).unwrap_or(serde_json::Value::Null);
         let _ = s.app.db.set_message_metrics(&assistant_msg.id, &metrics_json).await;
@@ -919,6 +966,7 @@ async fn run_chat_turn(
         // after a failover).
         model: served.settings.model.clone(),
         slot: served.slot_label.clone(),
+        question_msg_id: Some(user_msg.id.clone()),
     };
     let metrics_json = serde_json::to_value(&metrics).unwrap_or(serde_json::Value::Null);
     let _ = s.app.db.set_message_metrics(&assistant_msg.id, &metrics_json).await;

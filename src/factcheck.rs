@@ -77,11 +77,9 @@ checked. No bullets if everything checks out."
         },
     ];
 
-    // Verification tools only — no image search / calculator noise.
-    let tools: Vec<registry::ToolDef> = registry::enabled(&cfg.tools)
-        .into_iter()
-        .filter(|t| t.name == "web_search" || t.name == "datetime")
-        .collect();
+    // Verification tools only — fixed set, independent of the chat
+    // tool toggles (see registry::fact_check_defs).
+    let tools: Vec<registry::ToolDef> = registry::fact_check_defs();
     let runtime = ToolRuntime::from_tool_settings(&cfg.tools);
 
     let llm = crate::llm::LlmClient::new(settings.clone());

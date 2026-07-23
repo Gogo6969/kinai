@@ -81,9 +81,10 @@ pub struct NetState {
     /// Refreshes the client slash menu's offline markers on demand (the
     /// Welcome snapshot goes stale the moment a server restarts).
     pub slot_health_pending: Option<oneshot::Sender<Vec<protocol::HostSlotWire>>>,
-    /// Pending fact-check round-trip: `FactCheckRequest` → `FactCheckResult`
-    /// as (ok, report). Single-flight — the button disables while running.
-    pub fact_check_pending: Option<oneshot::Sender<(bool, String)>>,
+    /// Pending fact-check round-trips keyed by message_id — the UI's
+    /// single-flight is per MESSAGE, so two bubbles can legitimately be
+    /// checking at once and results must not cross-wire.
+    pub fact_check_pending: HashMap<String, oneshot::Sender<(bool, String)>>,
 }
 
 impl Default for NetState {
@@ -101,7 +102,7 @@ impl Default for NetState {
             thread_messages_pending: None,
             user_facts_pending: None,
             slot_health_pending: None,
-            fact_check_pending: None,
+            fact_check_pending: HashMap::new(),
         }
     }
 }
