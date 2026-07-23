@@ -635,6 +635,13 @@ mod routing_tests {
         crate::db::Db { pool }
     }
 
+    // Not compiled on Windows: constructing AppState in the LIB test
+    // binary links tauri's dialog/window code, whose comctl32-v6-only
+    // import (TaskDialogIndirect) kills an unmanifested cargo-test
+    // executable at load (STATUS_ENTRYPOINT_NOT_FOUND) — cargo has no
+    // link-arg key for lib tests to embed a manifest. The logic under
+    // test is platform-independent and stays covered on macOS/Linux.
+    #[cfg(not(target_os = "windows"))]
     async fn fresh_state(cfg: &AppConfig) -> crate::AppState {
         crate::AppState {
             handle: parking_lot::RwLock::new(None),
@@ -757,6 +764,8 @@ mod routing_tests {
     /// Both slots point at dead localhost ports → the failover walks
     /// them, then returns the honest all-down error (fast: connection
     /// refused fails in milliseconds on loopback).
+    /// (cfg-gated off Windows with fresh_state — see its comment.)
+    #[cfg(not(target_os = "windows"))]
     #[tokio::test]
     async fn failover_all_slots_down_yields_honest_error() {
         let mut cfg = AppConfig::default();
