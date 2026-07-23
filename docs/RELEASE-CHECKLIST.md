@@ -64,7 +64,10 @@ and "published".
 - [ ] `./scripts/deploy.sh stage-windows` and `stage-linux`.
 - [ ] X post on @Gogo6969 (short + catchy + screenshot; GitHub/website
       links go in a **reply**, never in tweet 1) — only after step 5's
-      public-endpoint check passed.
+      public-endpoint check passed. **At most ONE post per day**: on
+      multi-release days, skip per-release posts and publish a single
+      EVENING post covering the day's newest version (Wolf's rule,
+      2026-07-23).
 
 ## If a release must be amended
 
