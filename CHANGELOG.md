@@ -5,6 +5,31 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.82] — 2026-07-23
+
+### Added
+
+- **Fact check any answer with one click.** A new button in the reply
+  toolbar (next to speak/copy) sends the answer to an independent
+  ONLINE model — configured under Settings → Models → "Fact-check
+  model" with any OpenAI-compatible API (DeepSeek, OpenAI, Groq, …).
+  The checker verifies claims with fresh web searches and returns a
+  verdict card (✅ / ⚠️ / ❌ with corrections and sources) right under
+  the message. The card is never saved and never enters the chat
+  context. The button only appears once API credentials are set, works
+  on the host and on family devices, is rate-limited per person, and
+  the checker is never used for normal chat.
+
+### Fixed
+
+- **Security hardening:** all rendered markdown is now sanitized
+  (DOMPurify) before display — web content quoted by any model can no
+  longer inject HTML into KinAI windows.
+- Windows release CI died at test startup (comctl32 v6 manifest issue
+  introduced by 0.2.81's new tests) — fixed; this also unblocks the
+  Windows/Linux rollout of 0.2.81's failover features, which ship
+  publicly with this version.
+
 ## [0.2.81] — 2026-07-22
 
 ### Added
