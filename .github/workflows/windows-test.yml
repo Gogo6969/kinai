@@ -1,61 +1,19 @@
-# Throwaway harness, v3: build the v0.2.80 AND v0.2.81 test binaries in
-# one job and DIFF their DLL import tables — the loader crash
-# (STATUS_ENTRYPOINT_NOT_FOUND) means v0.2.81 references a symbol the
-# runner's system DLLs don't export; the diff names it. Delete when done.
+# Throwaway harness, v4: verify the comctl32-v6 test-manifest fix on a
+# cold windows-latest runner. Delete once release CI is green again.
 name: windows-test
 on: workflow_dispatch
 
 jobs:
-  import-diff:
+  verify-fix:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
           node-version: 20
-      - name: Build both refs and diff imports
-        shell: pwsh
-        run: |
-          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
-          $dumpbin = (Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1).FullName
-
-          function Build-And-Dump($ref, $out) {
-            git checkout $ref --quiet
-            pnpm install --frozen-lockfile=false
-            pnpm --filter kinai-frontend build
-            $env:CARGO_TARGET_DIR = "target-$ref"
-            cargo test --lib --no-run --quiet
-            if ($LASTEXITCODE -ne 0) { throw "build failed for $ref" }
-            $exe = Get-ChildItem "target-$ref\debug\deps\kinai-*.exe" | Select-Object -First 1
-            & $dumpbin /imports $exe.FullName | Out-File -Encoding utf8 $out
-            Write-Host "dumped $ref -> $out ($($exe.Name))"
-          }
-
-          Build-And-Dump "v0.2.80" "$env:RUNNER_TEMP\imports-80.txt"
-          Build-And-Dump "v0.2.81" "$env:RUNNER_TEMP\imports-81.txt"
-
-          # Normalize to "dll::symbol" lines for a clean set diff.
-          function Symbols($file) {
-            $dll = ""
-            Get-Content $file | ForEach-Object {
-              $t = $_.Trim()
-              if ($t -match '^([A-Za-z0-9._-]+\.dll)$') { $dll = $t.ToLower() }
-              elseif ($t -match '^[0-9A-F]*\s+([A-Za-z_][A-Za-z0-9_@]*)$') { "$dll::$($Matches[1])" }
-            }
-          }
-          $a = Symbols "$env:RUNNER_TEMP\imports-80.txt" | Sort-Object -Unique
-          $b = Symbols "$env:RUNNER_TEMP\imports-81.txt" | Sort-Object -Unique
-          Write-Host "=== SYMBOLS ONLY IN v0.2.81 (the suspects) ==="
-          Compare-Object $a $b | Where-Object SideIndicator -eq '=>' | ForEach-Object { $_.InputObject }
-          Write-Host "=== SYMBOLS ONLY IN v0.2.80 ==="
-          Compare-Object $a $b | Where-Object SideIndicator -eq '<=' | ForEach-Object { $_.InputObject }
-
-          # And the ground truth: run the 0.2.81 binary to confirm the crash.
-          Write-Host "=== running v0.2.81 test binary ==="
-          $exe81 = Get-ChildItem "target-v0.2.81\debug\deps\kinai-*.exe" | Select-Object -First 1
-          & $exe81.FullName --list *> $null
-          Write-Host "exit code: $LASTEXITCODE"
+      - run: pnpm install --frozen-lockfile=false
+      - run: pnpm --filter kinai-frontend build
+      - name: Run cargo test (cold)
+        run: cargo test --lib --quiet
