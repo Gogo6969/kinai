@@ -1,0 +1,40 @@
+# Throwaway debugging harness for the v0.2.81 Windows loader crash
+# (cargo test binary dies with STATUS_ENTRYPOINT_NOT_FOUND 0xc0000139).
+#
+# Runs ONLY on manual dispatch, builds nothing release-shaped, uses NO
+# rust cache (cold by construction), and A/Bs the runner image. Delete
+# once the root cause is fixed.
+name: windows-test
+on: workflow_dispatch
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile=false
+      - name: Build frontend (tauri::generate_context! needs frontendDist)
+        run: pnpm --filter kinai-frontend build
+      - name: Run cargo test (cold, no rust-cache)
+        run: cargo test --lib --quiet
+      # If the test binary dies at load again, dump its import table so
+      # we can finally see WHICH DLL/symbol the loader can't resolve.
+      - name: Dump test binary imports on failure
+        if: failure()
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem target\debug\deps\kinai-*.exe | Select-Object -First 1
+          Write-Host "=== dumpbin /imports $($exe.FullName) ==="
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+          & $dumpbin.FullName /imports $exe.FullName
