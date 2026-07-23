@@ -61,7 +61,7 @@ async fn build_context_reserves_generation_headroom() {
         metrics: None,
     };
 
-    let messages = build_context(&db, &cfg, HOST_PEER, &thread.id, &new_message)
+    let messages = build_context(&db, &cfg, &cfg.llm, HOST_PEER, &thread.id, &new_message)
         .await
         .unwrap();
 

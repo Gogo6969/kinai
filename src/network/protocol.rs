@@ -34,6 +34,12 @@ pub struct HostSlotWire {
     /// Model id served by that slot (e.g. "Laguna-XS-2.1") — shown in
     /// the client's slash-menu entry. Informational only.
     pub model: String,
+    /// Whether the slot's model server answered a liveness probe at
+    /// connect time. `None` = unknown (older host, or probe skipped).
+    /// Connect-time snapshot only — mid-session outages are handled by
+    /// the turn-level failover, not by refreshing this flag.
+    #[serde(default)]
+    pub alive: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,6 +201,15 @@ pub enum Envelope {
     // The host responds to ALL four mutations with a fresh `UserFacts`
     // list. That keeps the client UI in sync with one round-trip per
     // action and removes the need for separate ack envelopes.
+    /// Client → Host: fresh liveness for the advertised slots (the
+    /// Welcome snapshot is connect-time only). Host answers `SlotHealth`
+    /// from its short-TTL probe cache, so this is cheap to call when the
+    /// slash menu opens.
+    RequestSlotHealth,
+    /// Host → Client: the active slots with up-to-date `alive` flags.
+    SlotHealth {
+        slots: Vec<HostSlotWire>,
+    },
     ListUserFacts,
     SaveUserFact {
         key: String,

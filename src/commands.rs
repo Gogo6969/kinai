@@ -106,6 +106,8 @@ pub async fn set_llm_settings(
     let mut client = state.llm.lock().await;
     *client = crate::llm::LlmClient::new(llm);
     state.stats.write().model_loaded = Some(new_cfg.llm.model.clone());
+    // The old liveness verdict may describe a different server entirely.
+    state.slot_health.lock().remove("fast");
     Ok(new_cfg)
 }
 
@@ -123,6 +125,7 @@ pub async fn set_llm_balanced_settings(
         cfg.clone()
     };
     cfg.save().map_err(err)?;
+    state.slot_health.lock().remove("balanced");
     Ok(cfg)
 }
 
@@ -142,6 +145,7 @@ pub async fn set_llm_deep_settings(
         cfg.save().map_err(err)?;
         cfg.clone()
     };
+    state.slot_health.lock().remove("deep");
     Ok(new_cfg)
 }
 
@@ -1877,7 +1881,8 @@ async fn run_assistant_turn(
     let mut speak_override: Option<bool> = None;
     let mut config_changed = false;
     let slash_reply = if route_pick.bare_switch {
-        Some(crate::slash::switch_confirmation(&cfg, &route_pick))
+        let alive = crate::slash::slot_alive_cached(&state, route_pick.slot_label).await;
+        Some(crate::slash::switch_confirmation(&cfg, &route_pick, Some(alive)))
     } else if let Some(arg) = crate::telegram::router::strip_voice(&llm_route_content) {
         // /voice typed in the KinAI desktop chat controls voice ON THIS
         // SURFACE: replies are read aloud automatically (same flag as
@@ -1982,12 +1987,10 @@ async fn run_assistant_turn(
         .with_memory(state.db.clone(), db::HOST_PEER)
         .with_source_msg(client_msg_id.to_string());
 
-    let max_tokens = compute_max_tokens(route_pick.settings, &messages);
-
-    // Pick the LLM client from the routed slot (fast vs deep) rather
-    // than the cached state.llm (which is always the fast slot).
+    // Route from the routed slot (fast vs deep) rather than the cached
+    // state.llm (which is always the fast slot). The LLM client itself
+    // is built per attempt inside run_turn_with_slot_failover.
     let active_llm_settings = route_pick.settings.clone();
-    let llm = crate::llm::LlmClient::new(active_llm_settings.clone());
     let cancel = CancellationToken::new();
     // Register the token under the frontend-supplied client_msg_id so
     // stop_generation can cancel THIS turn specifically (not whatever
@@ -2054,19 +2057,21 @@ async fn run_assistant_turn(
     // Keep a runtime copy for post-turn image recovery (run_with_route
     // consumes tool_runtime).
     let recover_runtime = tool_runtime.clone();
-    let mut result = crate::vision::run_with_route(
+    let served = crate::slash::run_turn_with_slot_failover(
         route,
-        llm,
-        &active_llm_settings,
+        &state,
+        &cfg,
+        route_pick.slot_label,
         messages,
         tool_defs,
         tool_runtime,
-        max_tokens,
         handlers,
         cancel,
+        |s, msgs| compute_max_tokens(s, msgs),
     )
     .await
     .map_err(err)?;
+    let mut result = served.result;
     // The model may have fabricated image URLs (small models do this instead
     // of calling image_search); verify + recover them to real images.
     result.final_content =
@@ -2098,8 +2103,10 @@ async fn run_assistant_turn(
         total_ms,
         output_tokens,
         tps,
-        model: active_llm_settings.model.clone(),
-        slot: route_pick.slot_label.to_string(),
+        // Report the slot/model that ACTUALLY answered — after a
+        // failover this differs from route_pick.
+        model: served.settings.model.clone(),
+        slot: served.slot_label.clone(),
     };
 
     let mut assistant_msg = state
@@ -2737,6 +2744,65 @@ pub async fn test_tool(
 #[tauri::command]
 pub async fn runtime_stats(state: tauri::State<'_, SharedState>) -> Result<crate::RuntimeStats> {
     Ok(state.stats.read().clone())
+}
+
+#[tauri::command]
+pub async fn slot_health(
+    state: tauri::State<'_, SharedState>,
+) -> Result<std::collections::HashMap<String, bool>> {
+    // CLIENT mode: ask the HOST for fresh liveness over the WS (the
+    // Welcome advertisement is a connect-time snapshot). Best-effort —
+    // any failure returns an empty map, which renders no markers.
+    if matches!(state.config.read().mode, crate::config::Mode::Client) {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let tx = {
+            let mut net = state.net.lock().await;
+            net.slot_health_pending = Some(sender);
+            net.client_tx.clone()
+        };
+        let Some(tx) = tx else {
+            state.net.lock().await.slot_health_pending = None;
+            return Ok(std::collections::HashMap::new());
+        };
+        if tx
+            .send(crate::network::protocol::Envelope::RequestSlotHealth)
+            .is_err()
+        {
+            state.net.lock().await.slot_health_pending = None;
+            return Ok(std::collections::HashMap::new());
+        }
+        let slots: Vec<crate::network::protocol::HostSlotWire> =
+            tokio::time::timeout(std::time::Duration::from_secs(6), receiver)
+                .await
+                .ok()
+                .and_then(|r| r.ok())
+                .unwrap_or_default();
+        return Ok(slots
+            .into_iter()
+            .filter_map(|w| w.alive.map(|a| (w.slug, a)))
+            .collect());
+    }
+
+    // Liveness of every ACTIVE slot, from the short-TTL cache — powers
+    // the slash menu's "offline" markers on the host. Client instances
+    // have no active local slots and get an empty map (their menu reads
+    // the host-advertised liveness from the Welcome envelope instead).
+    let labels: Vec<&'static str> = {
+        let cfg = state.config.read();
+        crate::slash::SLOTS
+            .iter()
+            .filter(|s| crate::slash::slot_settings(&cfg, s).is_active())
+            .copied()
+            .collect()
+    };
+    let mut out = std::collections::HashMap::new();
+    for label in labels {
+        out.insert(
+            label.to_string(),
+            crate::slash::slot_alive_cached(&state, label).await,
+        );
+    }
+    Ok(out)
 }
 
 #[tauri::command]

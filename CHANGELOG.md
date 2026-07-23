@@ -5,6 +5,29 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.81] — 2026-07-22
+
+### Added
+
+- **No more silent dead models.** When a model's server is unreachable
+  (offline, still loading, or not answering), your message no longer
+  disappears into nothing:
+  - The turn **automatically switches to another available model** and
+    the reply starts with a clear notice — "⚠️ The fast model isn't
+    responding (server unreachable) — answering with balanced
+    (Laguna-XS-2.1) instead." Works identically in the app, on family
+    devices, and in Telegram. Your `/fast`-style choice is kept — the
+    conversation returns to your model as soon as it's back.
+  - If **no** model answers, you get one honest, actionable error
+    instead of silence.
+  - The slash menu marks a configured-but-offline model ("offline right
+    now, auto-switches") on both host and family devices.
+  - Switching to an offline model with `/fast` etc. warns you
+    immediately instead of letting the next message fail.
+- **Failed turns now show an inline error bubble** in the chat (host
+  and family devices) instead of a 5-second toast that was easy to miss
+  — no more "the AI just ignored me" moments.
+
 ## [0.2.80] — 2026-07-22
 
 ### Fixed

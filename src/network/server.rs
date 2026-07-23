@@ -306,6 +306,19 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
             crate::slash::active_slot_wires(&cfg),
         )
     };
+    // Stamp connect-time liveness onto the advertised slots (parallel,
+    // 1.5s-bounded probes behind a 15s cache — adds ~1.5s to the
+    // handshake at most once per TTL, ~0ms on a warm cache).
+    let mut host_slots = host_slots;
+    let probes = futures_util::future::join_all(
+        host_slots
+            .iter()
+            .map(|w| crate::slash::slot_alive_cached(&s.app, &w.slug)),
+    )
+    .await;
+    for (w, alive) in host_slots.iter_mut().zip(probes) {
+        w.alive = Some(alive);
+    }
     let _ = tx.send(Envelope::Welcome {
         family_name,
         host_version: env!("CARGO_PKG_VERSION").into(),
@@ -542,6 +555,21 @@ async fn dispatch(
                 }
             }
         }
+        Envelope::RequestSlotHealth => {
+            // Fresh liveness for the client's slash-menu markers, served
+            // from the same short-TTL probe cache as everything else.
+            let mut slots = crate::slash::active_slot_wires(&s.app.config.read());
+            let probes = futures_util::future::join_all(
+                slots
+                    .iter()
+                    .map(|w| crate::slash::slot_alive_cached(&s.app, &w.slug)),
+            )
+            .await;
+            for (w, alive) in slots.iter_mut().zip(probes) {
+                w.alive = Some(alive);
+            }
+            let _ = tx.send(Envelope::SlotHealth { slots });
+        }
         Envelope::RequestTelegramStatus => {
             let cfg = s.app.config.read().clone();
             match crate::db::telegram::link_for_peer(&s.app.db.pool, context_peer).await {
@@ -639,7 +667,8 @@ async fn run_chat_turn(
     // Bare `/fast` / `/deep` → mode switch confirmation, no LLM turn.
     // Otherwise the normal slash handlers (/pic, /picHQ, /help, ?).
     let slash_reply = if route_pick.bare_switch {
-        Some(crate::slash::switch_confirmation(&cfg, &route_pick))
+        let alive = crate::slash::slot_alive_cached(&s.app, route_pick.slot_label).await;
+        Some(crate::slash::switch_confirmation(&cfg, &route_pick, Some(alive)))
     } else if let Some(arg) = crate::telegram::router::strip_voice(&llm_route_content) {
         // /voice typed in a family member's KinAI app — toggles THEIR
         // Telegram voice-note opt-in (context_peer scoping), same as
@@ -717,13 +746,11 @@ async fn run_chat_turn(
     let tool_runtime = registry::ToolRuntime::from_tool_settings(&cfg.tools)
         .with_memory(s.app.db.clone(), context_peer)
         .with_source_msg(client_msg_id.to_string());
-    let max_tokens = compute_max_tokens(route_pick.settings, &messages);
-    // Construct the LLM client from the active route's settings (fast
-    // or deep), NOT the cached `state.llm` — that one always holds
-    // the fast slot. Cheap allocation: LlmClient is a reqwest wrapper
-    // around the URL + key, and gets re-used by the pipeline below.
+    // Route from the active slot's settings (fast or deep), NOT the
+    // cached `state.llm` — that one always holds the fast slot. The
+    // LLM client itself is built per attempt inside
+    // run_turn_with_slot_failover.
     let active_llm_settings = route_pick.settings.clone();
-    let llm = crate::llm::LlmClient::new(active_llm_settings.clone());
     let cancel = CancellationToken::new();
 
     // Register THIS turn's cancel token keyed by the client's msg id so an
@@ -796,18 +823,20 @@ async fn run_chat_turn(
     let route = crate::vision::decide(&active_llm_settings.model, attachments, &cfg.vision)?;
     // Runtime copy for post-turn image recovery (run_with_route consumes it).
     let recover_runtime = tool_runtime.clone();
-    let mut result = crate::vision::run_with_route(
+    let served = crate::slash::run_turn_with_slot_failover(
         route,
-        llm,
-        &active_llm_settings,
+        &s.app,
+        &cfg,
+        route_pick.slot_label,
         messages,
         tools,
         tool_runtime,
-        max_tokens,
         handlers,
         cancel,
+        |s, msgs| compute_max_tokens(s, msgs),
     )
     .await?;
+    let mut result = served.result;
     // Parity with the host-app (commands.rs) and Telegram paths — family
     // CLIENTS hit this WS path, and it was missed when both fixes landed:
     //  * recover fabricated image URLs (small models invent them instead of
@@ -845,8 +874,10 @@ async fn run_chat_turn(
         total_ms,
         output_tokens,
         tps,
-        model: active_llm_settings.model.clone(),
-        slot: route_pick.slot_label.to_string(),
+        // The slot/model that ACTUALLY answered (differs from route_pick
+        // after a failover).
+        model: served.settings.model.clone(),
+        slot: served.slot_label.clone(),
     };
     let metrics_json = serde_json::to_value(&metrics).unwrap_or(serde_json::Value::Null);
     let _ = s.app.db.set_message_metrics(&assistant_msg.id, &metrics_json).await;

@@ -23,6 +23,18 @@ class AppStore {
   streaming = $state<Record<string, string>>({}); // client_msg_id -> partial content
   reasoning = $state<Record<string, string>>({}); // client_msg_id -> reasoning trace
   toolActivity = $state<Record<string, { name: string; ok?: boolean }[]>>({});
+  /** Failed turns that produced NO assistant message, keyed by
+   *  client_msg_id. Rendered as an inline (ephemeral, not persisted)
+   *  error bubble in the thread the turn belonged to — previously a
+   *  failed turn only flashed a 5s toast and left the thread looking
+   *  like the AI silently ignored the question. Entries for a thread
+   *  are dropped when the user sends the next message there. */
+  turnErrors = $state<Record<string, { threadId: string | null; message: string }>>({});
+  /** Thread of the in-flight turn. In CLIENT mode a failure arrives as a
+   *  kinai://error event long after send() returned — attribute its error
+   *  bubble to the thread the turn ran in, not whatever thread the user
+   *  happens to be looking at by then. */
+  activeTurnThreadId: string | null = null;
   /** Per-message metrics keyed by the persisted assistant message id. */
   metricsByMsgId = $state<Record<string, TurnMetrics>>({});
   stats = $state<RuntimeStats | null>(null);
@@ -65,8 +77,8 @@ class AppStore {
      *  client peers. */
     host_telegram_bot?: string;
     /** Active model slots the host serves — builds the client's slash
-     *  menu (absent on hosts ≤0.2.79). */
-    host_slots?: Array<{ slug: string; model: string }>;
+     *  menu (absent on hosts ≤0.2.79; `alive` absent on ≤0.2.80). */
+    host_slots?: Array<{ slug: string; model: string; alive?: boolean | null }>;
   } | null>(null);
   /** mDNS-discovered KinAI hosts on the local network. Kept at the store
    *  level (not inside /client/+page.svelte) because the discovery event
@@ -252,7 +264,7 @@ class AppStore {
   async send(
     content: string,
     attachments: Attachment[] = [],
-    opts: { threadId?: string } = {}
+    opts: { threadId?: string; fromQueue?: boolean } = {}
   ) {
     if (!content.trim() && attachments.length === 0) return;
     this.rememberPrompt(content);
@@ -278,6 +290,16 @@ class AppStore {
     // has since switched threads. Fall back to the active thread, and
     // self-heal a fresh one only if there's genuinely none.
     let targetThreadId = opts.threadId ?? this.activeThreadId;
+    // A fresh USER-TYPED attempt in a thread clears its stale error
+    // bubbles — the user is retrying; the old notice served its purpose.
+    // Queue-drained sends skip this: they fire immediately AFTER a
+    // failure records its bubble, which the user hasn't seen yet.
+    if (!opts.fromQueue) {
+      for (const [k, v] of Object.entries(this.turnErrors)) {
+        if (v.threadId === targetThreadId) delete this.turnErrors[k];
+      }
+      this.turnErrors = { ...this.turnErrors };
+    }
     if (targetThreadId && !this.threads.some((t) => t.id === targetThreadId)) {
       // The captured thread was deleted while the message waited in queue.
       targetThreadId = this.activeThreadId;
@@ -326,6 +348,7 @@ class AppStore {
       }
     }
 
+    this.activeTurnThreadId = targetThreadId;
     try {
       await api.sendMessage({
         thread_id: targetThreadId,
@@ -343,13 +366,17 @@ class AppStore {
       this.busy = false;
       this.activeTurnId = null;
       // In HOST mode a pipeline/tool error rejects right here (there's no
-      // kinai://error event for local turns), so surface it — otherwise the
-      // turn just produces no answer with no explanation.
-      window.dispatchEvent(
-        new CustomEvent('kin-toast', {
-          detail: { msg: `✗ ${String(e).replace(/^Error:\s*/, '')}`, ms: 5000 },
-        })
-      );
+      // kinai://error event for local turns). Surface it as an INLINE
+      // error bubble in the thread — a 5s toast was too easy to miss and
+      // left the thread looking like the question was silently ignored.
+      const emsg = String(e).replace(/^Error:\s*/, '');
+      // A deliberate Stop is not a failure — no error bubble for it.
+      if (!/cancelled before LLM responded/i.test(emsg)) {
+        this.turnErrors = {
+          ...this.turnErrors,
+          [clientMsgId]: { threadId: targetThreadId, message: emsg },
+        };
+      }
       // Don't CLEAR the queue (a transient error mustn't discard the user's
       // other messages — a real disconnect does that). But DO advance it, so
       // an errored turn doesn't leave the next message stranded as "Queued".
@@ -395,6 +422,7 @@ class AppStore {
     this.queued = rest;
     void this.send(next.content, next.attachments, {
       threadId: next.threadId ?? undefined,
+      fromQueue: true,
     });
   }
 
@@ -433,7 +461,18 @@ class AppStore {
     this.toolActivity = { ...this.toolActivity };
     this.busy = false;
     this.activeTurnId = null;
+    this.activeTurnThreadId = null;
     this.queued = [];
+    // Same inline error bubble as send()'s catch — without it a failed
+    // regenerate/edit-resend (e.g. every model server down) silently
+    // reverted the thread as if nothing was ever asked.
+    const emsg = String(e).replace(/^Error:\s*/, '');
+    if (!/cancelled before LLM responded/i.test(emsg)) {
+      this.turnErrors = {
+        ...this.turnErrors,
+        [clientMsgId]: { threadId: this.activeThreadId, message: emsg },
+      };
+    }
     await this.loadActive();
   }
 
@@ -744,14 +783,23 @@ class AppStore {
           this.streaming = { ...this.streaming };
           this.reasoning = { ...this.reasoning };
           this.toolActivity = { ...this.toolActivity };
+          // Inline error bubble in the TURN'S thread (latched at send
+          // time — the user may have switched threads while the host ran
+          // the turn). Same rationale as send()'s catch: a transient
+          // toast reads as "no response". Deliberate Stops are silent.
+          const emsg = String(msg).replace(/^Error:\s*/, '');
+          if (!/cancelled before LLM responded/i.test(emsg)) {
+            this.turnErrors = {
+              ...this.turnErrors,
+              [id]: {
+                threadId: this.activeTurnThreadId ?? this.activeThreadId,
+                message: emsg,
+              },
+            };
+          }
         }
         this.busy = false;
         this.activeTurnId = null;
-        window.dispatchEvent(
-          new CustomEvent('kin-toast', {
-            detail: { msg: `✗ ${String(msg).replace(/^Error:\s*/, '')}`, ms: 5000 },
-          })
-        );
         this.drainQueue();
       })
     );

@@ -68,9 +68,213 @@ pub fn slot_settings<'cfg>(cfg: &'cfg AppConfig, label: &str) -> &'cfg LlmSettin
     }
 }
 
+/// A finished chat turn plus which slot actually served it — the routed
+/// slot, or a failover slot when the routed server was down.
+pub struct ServedTurn {
+    pub slot_label: String,
+    pub settings: LlmSettings,
+    pub result: crate::tools::loop_pipeline::PipelineResult,
+}
+
+/// Run a chat turn on the routed slot; when that slot's SERVER is down
+/// (connection refused, DNS/timeout, 503-loading, stall watchdog —
+/// `llm::is_server_down_error`), automatically retry on the next active
+/// slot in SLOTS order with a user-visible notice, instead of dying
+/// silently. Tries each active slot at most once; when every slot is
+/// down, returns one honest, actionable error for all surfaces.
+///
+/// Vision routes pass through untouched — they have their own
+/// endpoint-level failover inside `vision::run_with_route`.
+///
+/// Deliberately does NOT rewrite the per-thread sticky slot: the sticky
+/// records the user's wish; when their model comes back, the thread
+/// routes to it again on its own.
+pub async fn run_turn_with_slot_failover<F>(
+    route: crate::vision::Route,
+    state: &crate::AppState,
+    cfg: &AppConfig,
+    routed_slot: &str,
+    messages: Vec<crate::context::ChatMessage>,
+    tools: Vec<crate::tools::registry::ToolDef>,
+    tool_runtime: crate::tools::registry::ToolRuntime,
+    handlers: crate::tools::loop_pipeline::PipelineHandlers,
+    cancel: tokio_util::sync::CancellationToken,
+    max_tokens_for: F,
+) -> anyhow::Result<ServedTurn>
+where
+    F: Fn(&LlmSettings, &[crate::context::ChatMessage]) -> Option<usize>,
+{
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    if matches!(route, crate::vision::Route::Vision { .. }) {
+        let settings = slot_settings(cfg, routed_slot).clone();
+        let llm = crate::llm::LlmClient::new(settings.clone());
+        let max_tokens = max_tokens_for(&settings, &messages);
+        let result = crate::vision::run_with_route(
+            route,
+            llm,
+            &settings,
+            messages,
+            tools,
+            tool_runtime,
+            max_tokens,
+            handlers,
+            cancel,
+        )
+        .await?;
+        return Ok(ServedTurn {
+            slot_label: routed_slot.to_string(),
+            settings,
+            result,
+        });
+    }
+
+    let next_untried = |tried: &[String]| {
+        SLOTS
+            .iter()
+            .find(|s| !tried.iter().any(|t| t == **s) && slot_settings(cfg, s).is_active())
+            .copied()
+    };
+    let all_down_error = |tried: &[String]| {
+        anyhow::anyhow!(
+            "🔌 No model server is answering right now (tried: {}). \
+Check that your model server(s) are running — Settings → Models shows each \
+slot's address — then try again.",
+            tried.join(", ")
+        )
+    };
+
+    let mut label = routed_slot.to_string();
+    let mut notice = String::new();
+    let mut tried: Vec<String> = Vec::new();
+    loop {
+        tried.push(label.clone());
+        let settings = slot_settings(cfg, &label).clone();
+
+        // Known-dead skip: the cached probe is bounded at 1.5s, versus a
+        // full connect-timeout of silent thinking-dots per dead attempt
+        // (SYN-dropping servers: host asleep, firewall drop). A stale
+        // "alive" cache entry just falls through to the real attempt,
+        // whose own error handling remains the safety net.
+        if !slot_alive_cached(state, &label).await {
+            let Some(next) = next_untried(&tried) else {
+                return Err(all_down_error(&tried));
+            };
+            let next_model = slot_settings(cfg, next).model.clone();
+            tracing::warn!("slot '{label}' failed liveness probe; skipping to '{next}'");
+            let line = format!(
+                "⚠️ _The **{label}** model isn't responding (server unreachable) — \
+answering with **{next}** (`{next_model}`) instead._\n\n"
+            );
+            (handlers.on_token)(line.clone());
+            notice.push_str(&line);
+            label = next.to_string();
+            continue;
+        }
+
+        // Re-trim the prompt for THIS slot's window. The context was
+        // built against the ROUTED slot; replaying a 32k-window prompt
+        // into an 8k-window failover slot would overflow its context and
+        // drive computed max_tokens to zero.
+        let mut attempt_msgs = messages.clone();
+        crate::context::token_guard::trim_to_fit(
+            &mut attempt_msgs,
+            crate::context::builder::prompt_budget(settings.context_window, settings.max_tokens),
+        );
+        let max_tokens = max_tokens_for(&settings, &attempt_msgs);
+
+        // Tool side effects aren't idempotent (memory writes, metered
+        // web search). Track whether THIS attempt ran any tool; if the
+        // server dies after tools already executed, we surface an honest
+        // retry request instead of silently re-running the whole turn.
+        let tools_ran = std::sync::Arc::new(AtomicBool::new(false));
+        let attempt_handlers = {
+            let inner = handlers.on_tool.clone();
+            let flag = tools_ran.clone();
+            crate::tools::loop_pipeline::PipelineHandlers {
+                on_token: handlers.on_token.clone(),
+                on_reasoning: handlers.on_reasoning.clone(),
+                on_tool: std::sync::Arc::new(move |e| {
+                    if matches!(e, crate::tools::loop_pipeline::ToolEvent::Started { .. }) {
+                        flag.store(true, Ordering::SeqCst);
+                    }
+                    inner(e);
+                }),
+            }
+        };
+
+        let llm = crate::llm::LlmClient::new(settings.clone());
+        let attempt = crate::vision::run_with_route(
+            crate::vision::Route::Chat,
+            llm,
+            &settings,
+            attempt_msgs,
+            tools.clone(),
+            tool_runtime.clone(),
+            max_tokens,
+            attempt_handlers,
+            cancel.clone(),
+        )
+        .await;
+        match attempt {
+            Ok(mut result) => {
+                // A rescue model can still return an EMPTY completion (a
+                // reasoning model burning its budget "thinking"). The
+                // callers' empty-reply guards run BEFORE our prepend
+                // would land, so handle emptiness here — the notice must
+                // always be followed by an answer or an explanation.
+                if result.final_content.trim().is_empty() {
+                    result.final_content =
+                        crate::tools::loop_pipeline::EMPTY_REPLY_NOTE.to_string();
+                }
+                if !notice.is_empty() {
+                    // The streamed copy of the notice lives only in the live
+                    // bubble; final_content is what gets persisted / edited
+                    // into Telegram — prepend so the notice survives.
+                    result.final_content = format!("{notice}{}", result.final_content);
+                }
+                return Ok(ServedTurn {
+                    slot_label: label,
+                    settings,
+                    result,
+                });
+            }
+            Err(e) => {
+                let msg = e.to_string();
+                if cancel.is_cancelled() || !crate::llm::is_server_down_error(&msg) {
+                    return Err(e);
+                }
+                if tools_ran.load(Ordering::SeqCst) {
+                    return Err(anyhow::anyhow!(
+                        "🔌 The **{label}** model stopped responding partway through \
+your question, after it had already run tools (searches, memory). To avoid \
+running those twice, KinAI didn't retry automatically — please send your \
+message again."
+                    ));
+                }
+                let Some(next) = next_untried(&tried) else {
+                    return Err(all_down_error(&tried));
+                };
+                let reason = crate::llm::short_server_down_reason(&msg);
+                let next_model = slot_settings(cfg, next).model.clone();
+                tracing::warn!("slot '{label}' down ({msg}); failing over to '{next}'");
+                let line = format!(
+                    "⚠️ _The **{label}** model isn't responding ({reason}) — \
+answering with **{next}** (`{next_model}`) instead._\n\n"
+                );
+                (handlers.on_token)(line.clone());
+                notice.push_str(&line);
+                label = next.to_string();
+            }
+        }
+    }
+}
+
 /// Active slots advertised to client peers in the `Welcome` envelope,
 /// in SLOTS order. Clients have no local LLM config, so this is the
 /// only way their slash menu can know which model switches exist.
+/// `alive` starts as `None` (unknown) — callers with async room fill it
+/// via [`slot_alive_cached`] before sending.
 pub fn active_slot_wires(cfg: &AppConfig) -> Vec<crate::network::protocol::HostSlotWire> {
     SLOTS
         .iter()
@@ -78,8 +282,37 @@ pub fn active_slot_wires(cfg: &AppConfig) -> Vec<crate::network::protocol::HostS
         .map(|s| crate::network::protocol::HostSlotWire {
             slug: (*s).into(),
             model: slot_settings(cfg, s).model.clone(),
+            alive: None,
         })
         .collect()
+}
+
+/// Cached liveness for a slot's model server (15s TTL). Cheap enough
+/// for menus and switch confirmations without hammering the servers;
+/// stale by at most the TTL, and the turn-level failover is the safety
+/// net when a server dies inside that window. Inactive slots are always
+/// `false`. Never holds the config lock across the probe await.
+pub async fn slot_alive_cached(state: &crate::AppState, label: &str) -> bool {
+    const TTL: std::time::Duration = std::time::Duration::from_secs(15);
+    let settings = {
+        let cfg = state.config.read();
+        let s = slot_settings(&cfg, label);
+        if !s.is_active() {
+            return false;
+        }
+        s.clone()
+    };
+    if let Some((probed_at, alive)) = state.slot_health.lock().get(label).copied() {
+        if probed_at.elapsed() < TTL {
+            return alive;
+        }
+    }
+    let alive = crate::llm::detect::probe_alive(&settings).await;
+    state
+        .slot_health
+        .lock()
+        .insert(label.to_string(), (std::time::Instant::now(), alive));
+    alive
 }
 
 /// The slot to actually serve a request aimed at `wanted`: the wanted
@@ -156,7 +389,11 @@ pub async fn route_for<'cfg>(
 /// switching models gives visible feedback. Only ACTIVE other slots are
 /// advertised as switch targets — naming a command that would silently
 /// fall back is worse than naming none.
-pub fn switch_confirmation(cfg: &AppConfig, route: &ResolvedRoute) -> String {
+pub fn switch_confirmation(
+    cfg: &AppConfig,
+    route: &ResolvedRoute,
+    wanted_alive: Option<bool>,
+) -> String {
     let label = route.slot_label;
     let model = &route.settings.model;
     let others: Vec<String> = SLOTS
@@ -164,14 +401,32 @@ pub fn switch_confirmation(cfg: &AppConfig, route: &ResolvedRoute) -> String {
         .filter(|s| **s != label && slot_settings(cfg, s).is_active())
         .map(|s| format!("`/{s}`"))
         .collect();
-    if others.is_empty() {
+    let mut msg = if others.is_empty() {
         format!("Switched to the **{label}** model (`{model}`).")
     } else {
         format!(
             "Switched to the **{label}** model (`{model}`). It stays active for this conversation until you switch again with {}.",
             others.join(" or ")
         )
+    };
+    // Honest heads-up when the wanted slot's server failed its liveness
+    // probe — the switch still sticks (the wish is recorded), but the
+    // user learns NOW rather than after their next message fails over.
+    if wanted_alive == Some(false) {
+        if others.is_empty() {
+            // Don't promise a failover that can't happen.
+            msg.push_str(
+                "\n\n⚠️ Heads-up: this model's server isn't responding right now, \
+and no other model is configured — messages will fail until it's back.",
+            );
+        } else {
+            msg.push_str(
+                "\n\n⚠️ Heads-up: this model's server isn't responding right now. \
+Your messages will automatically use another available model until it's back.",
+            );
+        }
     }
+    msg
 }
 
 /// Remove a leading slash command (`/fast` / `/deep`) plus the one
@@ -380,6 +635,25 @@ mod routing_tests {
         crate::db::Db { pool }
     }
 
+    async fn fresh_state(cfg: &AppConfig) -> crate::AppState {
+        crate::AppState {
+            handle: parking_lot::RwLock::new(None),
+            config: parking_lot::RwLock::new(cfg.clone()),
+            db: fresh_db().await,
+            llm: tokio::sync::Mutex::new(crate::llm::LlmClient::new(cfg.llm.clone())),
+            net: std::sync::Arc::new(tokio::sync::Mutex::new(
+                crate::network::NetState::default(),
+            )),
+            stats: parking_lot::RwLock::new(crate::RuntimeStats::default()),
+            telegram: std::sync::Arc::new(crate::telegram::TelegramSupervisor::default()),
+            pending_turns: std::sync::Arc::new(parking_lot::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
+            slot_health: parking_lot::Mutex::new(std::collections::HashMap::new()),
+            tts_child: parking_lot::Mutex::new(None),
+        }
+    }
+
     fn cfg_three_slots() -> AppConfig {
         let mut cfg = AppConfig::default(); // fast active by default
         cfg.llm_balanced.base_url = "http://192.168.1.50:8084".into();
@@ -450,8 +724,78 @@ mod routing_tests {
         let r = route_for(&db, &cfg, "host", &t.id, "/balanced").await;
         assert!(r.bare_switch);
         assert_eq!(r.slot_label, "balanced");
-        let msg = switch_confirmation(&cfg, &r);
+        let msg = switch_confirmation(&cfg, &r, None);
         assert!(msg.contains("balanced") && msg.contains("balanced-33b"));
+        assert!(!msg.contains("Heads-up"), "no liveness warning when unknown");
+
+        // Probe says the wanted slot is down → the confirmation carries
+        // the heads-up but the switch itself still sticks.
+        let warned = switch_confirmation(&cfg, &r, Some(false));
+        assert!(warned.contains("Heads-up") && warned.contains("another available model"));
+        let healthy = switch_confirmation(&cfg, &r, Some(true));
+        assert!(!healthy.contains("Heads-up"));
+    }
+
+    #[test]
+    fn server_down_classification() {
+        use crate::llm::is_server_down_error;
+        // The three real dead-slot shapes seen in production logs.
+        assert!(is_server_down_error(
+            "error sending request for url (http://192.168.1.91:8081/v1/chat/completions)"
+        ));
+        assert!(is_server_down_error("LLM error 503 Service Unavailable: Loading model"));
+        assert!(is_server_down_error(
+            "llm stream: tcp connect error: Connection refused (os error 61)"
+        ));
+        assert!(is_server_down_error("the model server went silent for 5 minutes"));
+        // Content-level failures must NOT trigger slot failover.
+        assert!(!is_server_down_error("LLM error 400 Bad Request: context length exceeded"));
+        assert!(!is_server_down_error("LLM error 404: model not found"));
+    }
+
+    /// Both slots point at dead localhost ports → the failover walks
+    /// them, then returns the honest all-down error (fast: connection
+    /// refused fails in milliseconds on loopback).
+    #[tokio::test]
+    async fn failover_all_slots_down_yields_honest_error() {
+        let mut cfg = AppConfig::default();
+        cfg.llm.base_url = "http://127.0.0.1:1".into();
+        cfg.llm.model = "dead-fast".into();
+        cfg.llm.enabled = true;
+        cfg.llm_deep.base_url = "http://127.0.0.1:2".into();
+        cfg.llm_deep.model = "dead-deep".into();
+        cfg.llm_deep.enabled = true;
+
+        let noop = std::sync::Arc::new(|_: String| {});
+        let handlers = crate::tools::loop_pipeline::PipelineHandlers {
+            on_token: noop.clone(),
+            on_reasoning: noop,
+            on_tool: std::sync::Arc::new(|_| {}),
+        };
+        let state = fresh_state(&cfg).await;
+        let result = run_turn_with_slot_failover(
+            crate::vision::Route::Chat,
+            &state,
+            &cfg,
+            "fast",
+            vec![crate::context::ChatMessage::User {
+                content: "hi".into(),
+                name: None,
+                image_data_urls: vec![],
+            }],
+            vec![],
+            crate::tools::registry::ToolRuntime::default(),
+            handlers,
+            tokio_util::sync::CancellationToken::new(),
+            |_, _| None,
+        )
+        .await;
+        let Err(err) = result else {
+            panic!("all slots dead must error")
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("No model server is answering"), "got: {msg}");
+        assert!(msg.contains("fast") && msg.contains("deep"), "lists tried slots: {msg}");
     }
 
     #[tokio::test]

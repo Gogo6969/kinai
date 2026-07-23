@@ -6,7 +6,7 @@
   import ToolPill from './ToolPill.svelte';
   import { app } from '$lib/stores/app.svelte';
   import { renderMarkdown as renderStreamMarkdown } from '$lib/markdown';
-  import type { Attachment } from '$lib/api';
+  import { api, type Attachment } from '$lib/api';
   import { fileToDataUrl } from '$lib/image';
   import { Send, Square, Paperclip, X, FileText, Image as ImageIcon } from '@lucide/svelte';
 
@@ -104,27 +104,42 @@
     balanced: { label: 'balanced', hint: 'The middle ground — smarter than fast, quicker than deep.' },
     deep: { label: 'deep', hint: 'Slower but typically higher quality.' },
   };
+  // Host-mode slot liveness, refreshed when the slash menu opens (the
+  // backend caches probes for 15s, so this stays cheap). Client mode
+  // reads liveness from the host's Welcome advertisement instead.
+  let slotHealth = $state<Record<string, boolean> | null>(null);
+  let lastHealthFetch = 0;
   const SLASH_COMMANDS = $derived.by(() => {
     const cfg = app.config;
     // Wire list only while actually IN client mode — app.hostInfo is
     // never cleared, so after a live client→host reconfiguration a
     // stale advertisement would otherwise beat the fresh local config.
     const wire = cfg?.mode === 'client' ? app.hostInfo?.host_slots : undefined;
-    const slots: Array<{ slug: string; model: string }> = wire?.length
-      ? wire.filter((s) => Object.hasOwn(SLOT_MENU_TEXT, s.slug))
+    const slots: Array<{ slug: string; model: string; alive?: boolean | null }> = wire?.length
+      ? wire
+          .filter((s) => Object.hasOwn(SLOT_MENU_TEXT, s.slug))
+          // Fresh liveness (fetched when the menu opened) beats the
+          // connect-time snapshot from the Welcome advertisement.
+          .map((s) => ({ ...s, alive: slotHealth?.[s.slug] ?? s.alive }))
       : [
           { slug: 'fast', llm: cfg?.llm },
           { slug: 'balanced', llm: cfg?.llm_balanced },
           { slug: 'deep', llm: cfg?.llm_deep },
         ]
           .filter(({ llm }) => isSlotActive(llm))
-          .map(({ slug, llm }) => ({ slug, model: llm!.model }));
+          .map(({ slug, llm }) => ({ slug, model: llm!.model, alive: slotHealth?.[slug] }));
     // Model switches only appear when there's an actual choice (≥2 slots).
+    // A configured-but-offline slot stays LISTED (hiding it while its
+    // server restarts would make the menu flicker confusingly) but is
+    // marked, and the turn-level failover covers actually picking it.
     const extra =
       slots.length >= 2
-        ? slots.map(({ slug, model }) => ({
+        ? slots.map(({ slug, model, alive }) => ({
             cmd: `/${slug}`,
-            desc: `Use the ${SLOT_MENU_TEXT[slug].label} model (${model})`,
+            desc:
+              alive === false
+                ? `⚠️ ${SLOT_MENU_TEXT[slug].label} model (${model}) — offline right now, auto-switches`
+                : `Use the ${SLOT_MENU_TEXT[slug].label} model (${model})`,
             hint: SLOT_MENU_TEXT[slug].hint,
           }))
         : [];
@@ -144,6 +159,20 @@
   $effect(() => {
     void slashFiltered.length;
     slashIndex = 0;
+  });
+  // While the slash menu is showing, refresh slot liveness (throttled —
+  // the backend's own cache makes repeat calls ~free, this throttle just
+  // avoids an IPC call per keystroke). Hosts probe locally; clients ask
+  // the host over the WS (slot_health handles both).
+  $effect(() => {
+    if (slashFiltered.length === 0) return;
+    const now = Date.now();
+    if (now - lastHealthFetch < 5000) return;
+    lastHealthFetch = now;
+    api
+      .slotHealth()
+      .then((h) => (slotHealth = h))
+      .catch(() => {});
   });
   function applySlash(cmd: string) {
     input = cmd + ' ';
@@ -254,6 +283,12 @@
     )
   );
   const toolIds = $derived(Object.keys(app.toolActivity));
+  /** Failed-turn error bubbles belonging to the ACTIVE thread. Also
+   *  gates the empty-state welcome screen — a brand-new thread whose
+   *  first message failed must show the error, not the welcome. */
+  const threadErrors = $derived(
+    Object.entries(app.turnErrors).filter(([, v]) => v.threadId === app.activeThreadId)
+  );
 
   // Two-part autoscroll:
   //   * When the message count changes (user sent, assistant arrived) →
@@ -319,7 +354,7 @@
 
 <section class="flex flex-col h-full">
   <div bind:this={scrollEl} class="flex-1 overflow-y-auto px-6 py-6 space-y-4">
-    {#if messages.length === 0 && streamingIds.length === 0}
+    {#if messages.length === 0 && streamingIds.length === 0 && threadErrors.length === 0}
       {@const isHost = app.config?.mode === 'host'}
       {@const peerCount = app.stats?.peers_connected ?? 0}
       <div class="h-full flex flex-col items-center justify-center text-center max-w-md mx-auto px-6 gap-3">
@@ -397,6 +432,22 @@
           </div>
           <div class="flex gap-2 text-xs text-white/40 px-1.5">
             <span>KinAI</span>
+          </div>
+        </div>
+      {/each}
+      {#each threadErrors as [id, err] (id)}
+        <!-- A turn that failed without producing an answer. Ephemeral (not
+             persisted, not part of the model's context) — cleared when the
+             user sends the next message in this thread. -->
+        <div class="flex flex-col gap-1 items-start">
+          <div
+            class="max-w-[85%] rounded-2xl rounded-bl-md px-4 py-2.5 bg-red-500/10
+                   border border-red-400/25 text-red-100/90 text-sm whitespace-pre-wrap break-words"
+          >
+            {err.message}
+          </div>
+          <div class="flex gap-2 text-xs text-white/40 px-1.5">
+            <span>KinAI · error — this answer wasn't saved</span>
           </div>
         </div>
       {/each}

@@ -599,3 +599,44 @@ mod port_coverage_tests {
         assert!(list.iter().all(|p| p.port > 0));
     }
 }
+
+/// Quick "is this model server answering?" probe — bounded at 1.5s so
+/// menu/status surfaces stay snappy (LAN endpoints answer in <50ms;
+/// connection-refused fails in ms). Provider-aware:
+///   * llamacpp — `GET /health`: returns 503 while a model is loading,
+///     200 when ready. Treat only 2xx as alive so "loading" reads as
+///     not-ready (which is exactly what routing/menus need to know).
+///   * ollama   — `GET /api/tags`: daemon up ⇒ will serve (models load
+///     on demand; cold load just adds latency).
+///   * others   — `GET /v1/models` (the universal OpenAI-compat surface).
+pub async fn probe_alive(settings: &LlmSettings) -> bool {
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_millis(1500))
+        .danger_accept_invalid_certs(true)
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let base = settings.base_url.trim_end_matches('/');
+    match settings.provider.as_str() {
+        "llamacpp" => {
+            let url = format!("{base}/health");
+            match client.get(&url).send().await {
+                Ok(r) if r.status().is_success() => true,
+                // A 404 means an older llama.cpp without /health — fall
+                // back to the OpenAI-compat surface before giving up.
+                Ok(r) if r.status().as_u16() == 404 => {
+                    list_via_openai(&client, &settings.base_url, settings.api_key.as_deref())
+                        .await
+                        .is_ok()
+                }
+                _ => false,
+            }
+        }
+        "ollama" => list_via_ollama(&client, &settings.base_url).await.is_ok(),
+        _ => list_via_openai(&client, &settings.base_url, settings.api_key.as_deref())
+            .await
+            .is_ok(),
+    }
+}

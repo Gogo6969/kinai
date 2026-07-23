@@ -64,7 +64,11 @@ impl LlmClient {
             // in the pump (src/llm/stream.rs); a runaway request is bounded by
             // the user's Stop (CancellationToken). Non-streaming `complete()`
             // calls set their own per-request ceiling below.
-            .connect_timeout(std::time::Duration::from_secs(20))
+            // 4s: governs only the TCP connect phase — LAN model servers
+            // connect in <100ms, and a SYN-dropping endpoint (host asleep,
+            // firewall drop) previously left the user staring at
+            // thinking-dots for 20s per dead slot before failover kicked in.
+            .connect_timeout(std::time::Duration::from_secs(4))
             .build()
             .expect("reqwest client");
         Self { settings, http }
@@ -264,5 +268,51 @@ fn serialize_message(m: &ChatMessage) -> serde_json::Value {
             "content": content,
             "tool_call_id": tool_call_id,
         }),
+    }
+}
+
+/// True when an LLM-turn error means the model SERVER itself is
+/// unreachable or not ready — the failure class another slot can rescue
+/// (connection refused, connect/DNS trouble, 5xx incl. llama.cpp's
+/// "503 Loading model", timeouts, and the stall watchdog). Deliberately
+/// narrower than `vision::is_transient_failure`: content-level failures
+/// (bad request, context overflow) are NOT another slot's business.
+pub fn is_server_down_error(err: &str) -> bool {
+    let lc = err.to_ascii_lowercase();
+    [
+        "connection refused",
+        "error sending request",
+        "connect error",
+        "tcp connect",
+        "dns error",
+        "no route",
+        "timed out",
+        "timeout",
+        "went silent",
+        "llm error 5",
+        "service unavailable",
+        "loading model",
+    ]
+    .iter()
+    .any(|n| lc.contains(n))
+}
+
+/// Compress a raw server-down error into a 2-3 word reason for the
+/// user-facing failover notice ("isn't responding (still loading)").
+pub fn short_server_down_reason(err: &str) -> &'static str {
+    let lc = err.to_ascii_lowercase();
+    if lc.contains("loading model") || lc.contains("503") {
+        "model still loading"
+    } else if lc.contains("timed out") || lc.contains("timeout") || lc.contains("went silent") {
+        "not answering"
+    } else if lc.contains("refused")
+        || lc.contains("connect")
+        || lc.contains("sending request")
+        || lc.contains("dns")
+        || lc.contains("no route")
+    {
+        "server unreachable"
+    } else {
+        "server error"
     }
 }

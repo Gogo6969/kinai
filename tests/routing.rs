@@ -65,7 +65,7 @@ async fn switch_confirmation_names_the_model() {
     let cfg = two_slot_cfg();
 
     let r = route_for(&db, &cfg, HOST_PEER, &thread.id, "/deep").await;
-    let msg = kinai::slash::switch_confirmation(&r);
+    let msg = kinai::slash::switch_confirmation(&cfg, &r, None);
     assert!(msg.contains("deep"), "confirmation should name the slot: {msg}");
     assert!(msg.contains("deep-model"), "confirmation should name the model: {msg}");
 }

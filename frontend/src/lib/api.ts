@@ -283,8 +283,9 @@ export interface HostInfo {
   /** Active model slots the host serves, in fast→balanced→deep order.
    *  Builds the client's `/fast` / `/balanced` / `/deep` slash-menu
    *  entries (a client's local LLM config is empty). Optional because
-   *  hosts ≤0.2.79 don't send it. */
-  host_slots?: Array<{ slug: string; model: string }>;
+   *  hosts ≤0.2.79 don't send it. `alive` is the connect-time liveness
+   *  probe result (absent on hosts ≤0.2.80). */
+  host_slots?: Array<{ slug: string; model: string; alive?: boolean | null }>;
 }
 
 export interface RuntimeStats {
@@ -522,6 +523,10 @@ export const api = {
     invoke<string>('test_tool', { args: { name, args_json: argsJson } }),
 
   runtimeStats: () => invoke<RuntimeStats>('runtime_stats'),
+  /** Liveness of the host's ACTIVE model slots (label -> alive), served
+   *  from a short-TTL cache. Empty map on client instances — their menu
+   *  reads liveness from the host's Welcome advertisement instead. */
+  slotHealth: () => invoke<Record<string, boolean>>('slot_health'),
   checkUpdates: () => invoke<void>('check_updates'),
   installUpdate: () => invoke<void>('install_update'),
 };

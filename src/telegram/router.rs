@@ -350,7 +350,7 @@ async fn run_turn_for_peer<R: Runtime>(
             .filter(|s| **s != slot && crate::slash::slot_settings(&cfg, s).is_active())
             .map(|s| format!("`/{s}`"))
             .collect();
-        let body = if active_model.trim().is_empty() {
+        let mut body = if active_model.trim().is_empty() {
             format!("{icon} Switched to **{slot}** model — but no model is configured for this slot. Open KinAI → Settings to add one.")
         } else if others.is_empty() {
             format!("{icon} Switched to **{slot}** model (`{active_model}`).")
@@ -360,6 +360,21 @@ async fn run_turn_for_peer<R: Runtime>(
                 others.join(" or ")
             )
         };
+        // Same heads-up as the app's switch_confirmation: warn NOW when
+        // the wanted slot's server is down, not after the next message.
+        if !active_model.trim().is_empty() && !crate::slash::slot_alive_cached(state, slot).await {
+            if others.is_empty() {
+                body.push_str(
+                    "\n\n⚠️ Heads-up: this model's server isn't responding right now, \
+and no other model is configured — messages will fail until it's back.",
+                );
+            } else {
+                body.push_str(
+                    "\n\n⚠️ Heads-up: this model's server isn't responding right now. \
+Your messages will automatically use another available model until it's back.",
+                );
+            }
+        }
         api.send_message(chat_id, &body).await?;
         return Ok(());
     }
@@ -427,7 +442,8 @@ async fn run_turn_for_peer<R: Runtime>(
     // instant handlers (the /pic usage hint, the "not configured"
     // message) never flash a placeholder.
     let slash_reply = if route_pick.bare_switch {
-        Some(crate::slash::switch_confirmation(&cfg, &route_pick))
+        let alive = crate::slash::slot_alive_cached(state, route_pick.slot_label).await;
+        Some(crate::slash::switch_confirmation(&cfg, &route_pick, Some(alive)))
     } else {
         // Only /pic and /picHQ are slow enough to warrant a placeholder;
         // every other slash handler answers instantly.
@@ -581,10 +597,9 @@ async fn run_turn_for_peer<R: Runtime>(
         .with_memory(state.db.clone(), peer_id)
         .with_source_msg(user_msg.id.clone());
     let active_llm_settings = route_pick.settings.clone();
-    let max_tokens = compute_max_tokens(&active_llm_settings, &messages);
-    // Build the LLM client from the routed slot's settings, not the
-    // cached state.llm which is always the fast slot.
-    let llm = crate::llm::LlmClient::new(active_llm_settings.clone());
+    // Route from the routed slot's settings, not the cached state.llm
+    // which is always the fast slot. The LLM client itself is built per
+    // attempt inside run_turn_with_slot_failover.
     let cancel = CancellationToken::new();
 
     // Live-streaming reply: accumulate visible tokens into `buf` and let a
@@ -694,16 +709,17 @@ async fn run_turn_for_peer<R: Runtime>(
     let started = std::time::Instant::now();
     // Runtime copy for post-turn image recovery (run_with_route consumes it).
     let recover_runtime = tool_runtime.clone();
-    let result = crate::vision::run_with_route(
+    let served = crate::slash::run_turn_with_slot_failover(
         route,
-        llm,
-        &active_llm_settings,
+        state,
+        &cfg,
+        route_pick.slot_label,
         messages,
         tools,
         tool_runtime,
-        max_tokens,
         handlers,
         cancel,
+        |s, msgs| compute_max_tokens(s, msgs),
     )
     .await;
     // Stop both keep-alives, then join the editor to recover the placeholder
@@ -711,7 +727,24 @@ async fn run_turn_for_peer<R: Runtime>(
     typing_cancel.cancel();
     edit_cancel.cancel();
     let stream_msg_id = editor.await.ok().flatten();
-    let mut result = result?;
+    let served = match served {
+        Ok(s) => s,
+        Err(e) => {
+            // A failover notice may already sit in the streamed placeholder
+            // ("answering with X instead") — if every slot then died, that
+            // bubble would forever promise an answer that never came. Edit
+            // it into the honest error instead of leaving it + sending a
+            // second message.
+            if let Some(msg_id) = stream_msg_id {
+                let _ = api
+                    .edit_message_text(chat_id, msg_id, &humanize_turn_error(&e.to_string()))
+                    .await;
+                return Ok(());
+            }
+            return Err(e);
+        }
+    };
+    let mut result = served.result;
     // Verify + recover any fabricated image URLs the model embedded before we
     // send/store the reply (same as the app path).
     result.final_content =
@@ -741,8 +774,10 @@ async fn run_turn_for_peer<R: Runtime>(
         total_ms,
         output_tokens,
         tps,
-        model: active_llm_settings.model.clone(),
-        slot: route_pick.slot_label.to_string(),
+        // The slot/model that ACTUALLY answered (differs from
+        // route_pick after a failover).
+        model: served.settings.model.clone(),
+        slot: served.slot_label.clone(),
     };
 
     send_assistant_reply(
@@ -779,7 +814,9 @@ fn compute_max_tokens(
     }
     let used = crate::context::token_guard::estimate_messages(messages);
     let remaining = llm.context_window.saturating_sub(used);
-    Some(llm.max_tokens.min(remaining))
+    // Floor: a failover to a smaller-window slot can push `remaining`
+    // toward zero, and `"max_tokens": 0` makes servers emit nothing.
+    Some(llm.max_tokens.min(remaining).max(256))
 }
 
 /// Send the assistant reply back to Telegram. For slash-command
@@ -1112,6 +1149,12 @@ async fn send_reply_remote_image(api: &BotApi, reply: &str, chat_id: i64) -> boo
 /// Anything unrecognized falls back to the generic message so we never hide
 /// a real bug.
 fn humanize_turn_error(e: &str) -> String {
+    // The slot-failover already writes user-facing errors — don't wrap
+    // them in "Something went wrong on KinAI's end:" boilerplate.
+    if e.contains("No model server is answering") || e.contains("stopped responding partway") {
+        return e.to_string();
+    }
+
     let lc = e.to_ascii_lowercase();
     // Server up but the model is still loading into memory (llama.cpp returns
     // HTTP 503 "Loading model" until the weights are resident).

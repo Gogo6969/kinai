@@ -96,3 +96,79 @@ async fn followup_deep() {
     let cfg = AppConfig::load_or_default();
     followup_scenario(cfg.llm_deep.clone(), "deep").await;
 }
+
+/// Slot failover, end-to-end through the REAL wrapper: the routed slot
+/// points at a dead port, balanced is the live Laguna server. Expect a
+/// visible failover notice prepended AND a real answer served by
+/// balanced.
+#[tokio::test]
+#[ignore = "live server + real config; run explicitly"]
+async fn dead_fast_slot_fails_over_to_balanced() {
+    let mut cfg = AppConfig::load_or_default();
+    assert!(cfg.llm_balanced.is_active(), "balanced slot must be configured");
+    // Sabotage fast: configured (active) but nothing listens there.
+    cfg.llm.base_url = "http://127.0.0.1:9".into();
+    cfg.llm.model = "dead-model".into();
+    cfg.llm.enabled = true;
+
+    let tools = registry::enabled(&cfg.tools);
+    let runtime = ToolRuntime::from_tool_settings(&cfg.tools);
+    let messages = vec![
+        system_prompt(&cfg.host.family_name, ""),
+        kinai::context::ChatMessage::User {
+            content: "In one short sentence: what is the capital of Spain?".into(),
+            name: Some("Wolf".into()),
+            image_data_urls: vec![],
+        },
+    ];
+    let notice_seen = Arc::new(std::sync::Mutex::new(String::new()));
+    let notice_clone = notice_seen.clone();
+    let handlers = PipelineHandlers {
+        on_token: Arc::new(move |t| {
+            notice_clone.lock().unwrap().push_str(&t);
+        }),
+        on_reasoning: Arc::new(|_| {}),
+        on_tool: Arc::new(|_| {}),
+    };
+    let state = kinai::AppState {
+        handle: parking_lot::RwLock::new(None),
+        config: parking_lot::RwLock::new(cfg.clone()),
+        db: kinai::db::Db::open(
+            tempfile::tempdir().expect("tmpdir").path().join("t.db"),
+        )
+        .await
+        .expect("db"),
+        llm: tokio::sync::Mutex::new(LlmClient::new(cfg.llm.clone())),
+        net: Arc::new(tokio::sync::Mutex::new(kinai::network::NetState::default())),
+        stats: parking_lot::RwLock::new(kinai::RuntimeStats::default()),
+        telegram: Arc::new(kinai::telegram::TelegramSupervisor::default()),
+        pending_turns: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
+        slot_health: parking_lot::Mutex::new(std::collections::HashMap::new()),
+        tts_child: parking_lot::Mutex::new(None),
+    };
+    let served = kinai::slash::run_turn_with_slot_failover(
+        kinai::vision::Route::Chat,
+        &state,
+        &cfg,
+        "fast",
+        messages,
+        tools,
+        runtime,
+        handlers,
+        CancellationToken::new(),
+        |_, _| Some(2048),
+    )
+    .await
+    .expect("failover must produce an answer");
+    eprintln!("served by slot: {}", served.slot_label);
+    eprintln!("FINAL[0..400]: {}", served.result.final_content.chars().take(400).collect::<String>());
+    assert_eq!(served.slot_label, "balanced", "must have failed over to balanced");
+    assert!(
+        served.result.final_content.contains("isn't responding"),
+        "failover notice must be in the final content"
+    );
+    assert!(
+        served.result.final_content.to_lowercase().contains("madrid"),
+        "the failover slot must actually answer"
+    );
+}

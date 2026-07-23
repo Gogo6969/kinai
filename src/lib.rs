@@ -51,6 +51,10 @@ pub struct AppState {
     /// abort a hung turn instead of leaving the user with a perpetual
     /// "typing…" indicator. Cleaned up in send_message's finish path.
     pub pending_turns: Arc<parking_lot::Mutex<HashMap<String, CancellationToken>>>,
+    /// Cached per-slot liveness (label -> (probed_at, alive)) with a
+    /// short TTL — feeds the slash menu's offline markers and the
+    /// switch-confirmation heads-up without hammering the model servers.
+    pub slot_health: parking_lot::Mutex<HashMap<String, (std::time::Instant, bool)>>,
     /// Currently-playing desktop TTS process (the speak button / voice
     /// previews). One at a time: starting a new playback kills the old.
     pub tts_child: parking_lot::Mutex<Option<tokio::process::Child>>,
@@ -302,6 +306,7 @@ pub fn run() {
         stats: RwLock::new(RuntimeStats::default()),
         telegram: Arc::new(telegram::TelegramSupervisor::default()),
         pending_turns: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+        slot_health: parking_lot::Mutex::new(HashMap::new()),
         tts_child: parking_lot::Mutex::new(None),
     });
 
@@ -406,6 +411,7 @@ pub fn run() {
             commands::list_tools,
             commands::test_tool,
             commands::runtime_stats,
+            commands::slot_health,
             commands::check_updates,
             commands::install_update,
             commands::kinai_version,

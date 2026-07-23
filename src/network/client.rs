@@ -403,6 +403,20 @@ pub async fn connect(
                     }),
                 );
             }
+            Envelope::SlotHealth { slots } => {
+                // Keep the stored advertisement current so later
+                // runtime_stats hydrations see fresh liveness too.
+                {
+                    let mut stats = state.stats.write();
+                    if let Some(info) = stats.host_info.as_mut() {
+                        info.host_slots = slots.clone();
+                    }
+                }
+                let mut net = state.net.lock().await;
+                if let Some(tx) = net.slot_health_pending.take() {
+                    let _ = tx.send(slots.clone());
+                }
+            }
             Envelope::TelegramStatus {
                 bot_configured,
                 bot_username,

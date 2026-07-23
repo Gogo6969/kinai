@@ -110,7 +110,7 @@ pub async fn build_context(
 /// inexplicably dumb. Floor the prompt budget at a quarter of the window so
 /// every model keeps meaningful context; the same floor also rescues a
 /// user-pinned max_tokens larger than the window.
-fn prompt_budget(context_window: usize, max_tokens: usize) -> usize {
+pub(crate) fn prompt_budget(context_window: usize, max_tokens: usize) -> usize {
     let reserve = if max_tokens > 0 {
         max_tokens
     } else {

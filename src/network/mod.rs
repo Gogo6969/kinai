@@ -77,6 +77,10 @@ pub struct NetState {
     /// pipes back. One slot is enough because the Settings → Memory
     /// UI only ever has one in-flight request at a time.
     pub user_facts_pending: Option<oneshot::Sender<Vec<crate::db::UserFact>>>,
+    /// Pending slot-health round-trip: `RequestSlotHealth` → `SlotHealth`.
+    /// Refreshes the client slash menu's offline markers on demand (the
+    /// Welcome snapshot goes stale the moment a server restarts).
+    pub slot_health_pending: Option<oneshot::Sender<Vec<protocol::HostSlotWire>>>,
 }
 
 impl Default for NetState {
@@ -93,6 +97,7 @@ impl Default for NetState {
             threads_pending: None,
             thread_messages_pending: None,
             user_facts_pending: None,
+            slot_health_pending: None,
         }
     }
 }

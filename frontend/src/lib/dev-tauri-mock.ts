@@ -80,20 +80,24 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
       host_vision: 'off',
       host_telegram_bot: '',
       host_slots: [
-        { slug: 'fast', model: 'mock-fast-20b' },
-        { slug: 'balanced', model: 'mock-balanced-33b' },
-        { slug: 'deep', model: 'mock-deep-35b' },
+        { slug: 'fast', model: 'mock-fast-20b', alive: true },
+        { slug: 'balanced', model: 'mock-balanced-33b', alive: true },
+        // One offline slot so the client menu's "offline" marker is
+        // visible in this scenario.
+        { slug: 'deep', model: 'mock-deep-35b', alive: false },
       ],
     };
   } else if (scenario === 'host-one-slot' || scenario === 'host-three-slots') {
     // Host-mode scenarios for the slash menu's local-config path:
-    // one active slot → no model switches (≥2 gate); three → all shown.
+    // one active slot → no model switches (≥2 gate); three → all shown
+    // (with `balanced` marked offline via the mocked slot_health).
     cfg.mode = 'host';
     cfg.setup_completed = true;
     cfg.llm.model = 'local-fast-8b';
     if (scenario === 'host-three-slots') {
       Object.assign(cfg.llm_balanced, { base_url: 'http://192.168.1.50:8084', model: 'local-balanced-33b', enabled: true });
       Object.assign(cfg.llm_deep, { base_url: 'http://192.168.1.50:8081', model: 'local-deep-35b', enabled: true });
+      w.__mockSlotHealth = { fast: true, balanced: false, deep: true };
     }
   }
   const calls: { cmd: string; args: any }[] = [];
@@ -110,6 +114,15 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
   const handlers: Record<string, (args: any) => any> = {
     get_config: () => cfg,
     runtime_stats: () => stats,
+    // Host-mode slot liveness; override via __mockPreset.slotHealth or a
+    // URL scenario to test the menu's offline markers.
+    slot_health: () => w.__mockSlotHealth ?? {},
+    // Set `window.__mockSendFail = "message"` to make the next send
+    // reject — exercises the inline turn-error bubble path.
+    send_message: () => {
+      if (w.__mockSendFail) throw new Error(w.__mockSendFail);
+      return null;
+    },
     kinai_version: () => ({ version: 'dev-mock', build_time: 0, git_commit: 'mock', target: 'browser', repository: '' }),
     get_changelog_payload: () => changelogPayload,
     tts_supported: () => true,
