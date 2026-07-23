@@ -1268,7 +1268,7 @@
 
     {@render modelCard(
       'Fact-check model (optional, online)',
-      'An independent ONLINE model behind the per-message “fact check” button — it verifies answers with fresh web searches, so pick a different provider than your chat models. Any OpenAI-compatible API works (DeepSeek: Base URL https://api.deepseek.com, model deepseek-chat; or OpenAI, Groq, …). The button appears once Base URL, model AND API key are filled. Never used for normal chat.',
+      'An independent ONLINE model behind the per-message “fact check” button — it verifies answers with fresh web searches, so pick a different provider than your chat models. Any OpenAI-compatible API works (DeepSeek: Base URL https://api.deepseek.com, model deepseek-v4-flash; or OpenAI, Groq, …). The button appears once Base URL, model AND API key are filled. Never used for normal chat.',
       'factcheck',
       () => llmFactcheck,
       (v) => (llmFactcheck = v)

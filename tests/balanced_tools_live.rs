@@ -202,3 +202,32 @@ async fn factcheck_pipeline_against_live_server() {
         "report should start with a verdict line: {report}"
     );
 }
+
+/// The reworked evidence-first fact check against the REAL configured
+/// checker slot (DeepSeek) — the exact field case from 0.2.82: raw DSML
+/// tool markup leaked because the model was asked to drive tools. Now
+/// KinAI runs the searches; the model only judges.
+#[tokio::test]
+#[ignore = "live: uses the configured online checker (billed)"]
+async fn factcheck_against_configured_online_slot() {
+    let cfg = AppConfig::load_or_default();
+    if !kinai::factcheck::is_configured(&cfg.llm_factcheck) {
+        eprintln!("SKIP: fact-check slot not configured");
+        return;
+    }
+    let report = kinai::factcheck::run(
+        &cfg,
+        "Tell me about Adam Ries, the German arithmetic teacher",
+        "Adam Ries was born 24 July 1492 in the town of Mühlburg, near Heilbronn. \
+His most famous works were published in 1528, 1538, and 1544. He died 17 April 1559 in Stuttgart.",
+        CancellationToken::new(),
+    )
+    .await
+    .expect("fact check must produce a report");
+    eprintln!("REPORT:\n{report}");
+    assert!(report.contains('✅') || report.contains('⚠') || report.contains('❌'));
+    assert!(
+        !report.contains("DSML") && !report.contains("tool_calls"),
+        "no raw tool markup may leak: {report}"
+    );
+}

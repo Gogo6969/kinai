@@ -5,6 +5,18 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.83] — 2026-07-23
+
+### Fixed
+
+- **Fact check now works with every OpenAI-compatible provider.** The
+  checker no longer relies on the provider's function-calling dialect
+  (DeepSeek V4 answered in its own tool markup, which surfaced as raw
+  `DSML` fragments in the panel). KinAI now runs the verification web
+  searches itself and hands the checker the evidence to judge — more
+  robust, faster, and cheaper. Settings example updated to the current
+  `deepseek-v4-flash` model name.
+
 ## [0.2.82] — 2026-07-23
 
 ### Added
