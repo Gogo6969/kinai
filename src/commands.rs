@@ -2806,6 +2806,70 @@ pub async fn slot_health(
 }
 
 #[tauri::command]
+pub async fn set_llm_factcheck_settings(
+    state: tauri::State<'_, SharedState>,
+    llm: crate::config::LlmSettings,
+) -> Result<AppConfig> {
+    let cfg = {
+        let mut cfg = state.config.write();
+        cfg.llm_factcheck = llm;
+        cfg.clone()
+    };
+    cfg.save().map_err(err)?;
+    Ok(cfg)
+}
+
+/// Fact-check one assistant message with the ONLINE checker slot.
+/// Host mode runs it locally; client mode round-trips to the host
+/// (which re-verifies thread ownership). Returns the markdown report.
+#[tauri::command]
+pub async fn fact_check_message(
+    state: tauri::State<'_, SharedState>,
+    message_id: String,
+) -> Result<String> {
+    if matches!(state.config.read().mode, crate::config::Mode::Client) {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let tx = {
+            let mut net = state.net.lock().await;
+            net.fact_check_pending = Some(sender);
+            net.client_tx.clone()
+        };
+        let Some(tx) = tx else {
+            state.net.lock().await.fact_check_pending = None;
+            return Err("Not connected to your family's KinAI host.".into());
+        };
+        if tx
+            .send(crate::network::protocol::Envelope::FactCheckRequest {
+                message_id: message_id.clone(),
+            })
+            .is_err()
+        {
+            state.net.lock().await.fact_check_pending = None;
+            return Err("Lost the host connection before the fact check could start.".into());
+        }
+        let (ok, report) =
+            tokio::time::timeout(std::time::Duration::from_secs(120), receiver)
+                .await
+                .map_err(|_| "The fact check timed out — try again.".to_string())?
+                .map_err(|_| "The host dropped the fact-check request.".to_string())?;
+        return if ok { Ok(report) } else { Err(report) };
+    }
+
+    let cfg = state.config.read().clone();
+    let pair = state
+        .db
+        .question_answer_for_fact_check(db::HOST_PEER, &message_id)
+        .await
+        .map_err(err)?;
+    let Some((question, answer)) = pair else {
+        return Err("That message can't be fact-checked.".into());
+    };
+    crate::factcheck::run(&cfg, &question, &answer, CancellationToken::new())
+        .await
+        .map_err(err)
+}
+
+#[tauri::command]
 pub async fn check_updates(app: AppHandle) -> Result<()> {
     updater::check_once(&app).await;
     Ok(())

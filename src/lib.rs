@@ -10,6 +10,7 @@ pub mod config;
 pub mod context;
 pub mod db;
 pub mod discovery;
+pub mod factcheck;
 pub mod hotkey;
 pub mod llm;
 pub mod network;
@@ -98,6 +99,9 @@ pub struct HostInfo {
     /// client's slash menu is built from this — its local LLM config is
     /// empty, so without it `/fast`-style switches never appeared.
     pub host_slots: Vec<crate::network::protocol::HostSlotWire>,
+    /// Host has the ONLINE fact-check model configured — gates the
+    /// per-message "fact check" button on client peers.
+    pub host_fact_check: bool,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -412,6 +416,8 @@ pub fn run() {
             commands::test_tool,
             commands::runtime_stats,
             commands::slot_health,
+            commands::set_llm_factcheck_settings,
+            commands::fact_check_message,
             commands::check_updates,
             commands::install_update,
             commands::kinai_version,

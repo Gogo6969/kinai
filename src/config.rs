@@ -410,6 +410,12 @@ pub struct AppConfig {
     /// default so existing configs are untouched by the upgrade.
     #[serde(default = "LlmSettings::default_empty")]
     pub llm_balanced: LlmSettings,
+    /// Fourth, ONLINE model used ONLY by the per-message "fact check"
+    /// button (never part of /fast /balanced /deep routing or failover).
+    /// OpenAI-compatible API — DeepSeek, OpenAI, Groq, etc. The button
+    /// appears once credentials (base URL + API key + model) are set.
+    #[serde(default = "LlmSettings::default_empty")]
+    pub llm_factcheck: LlmSettings,
     #[serde(default)]
     pub host: HostSettings,
     #[serde(default)]
@@ -466,6 +472,7 @@ impl Default for AppConfig {
             llm: LlmSettings::default(),
             llm_deep: LlmSettings::default_empty(),
             llm_balanced: LlmSettings::default_empty(),
+            llm_factcheck: LlmSettings::default_empty(),
             host: HostSettings::default(),
             client: ClientSettings::default(),
             overlay: OverlaySettings::default(),

@@ -70,6 +70,19 @@
     system_addendum: '',
     enabled: false,
   });
+  // Fact-check model — ONLINE, OpenAI-compatible; powers the per-message
+  // "fact check" button only. Never used for chat routing.
+  let llmFactcheck = $state<LlmSettings>({
+    provider: 'openai-compat',
+    base_url: '',
+    model: '',
+    context_window: 65536,
+    api_key: null,
+    temperature: 0.2,
+    max_tokens: 0,
+    system_addendum: '',
+    enabled: false,
+  });
   let overlay = $state<OverlaySettings>({
     hotkey: 'CmdOrCtrl+Space',
     always_on_top: true,
@@ -386,6 +399,7 @@
       llm,
       llmDeep,
       llmBalanced,
+      llmFactcheck,
       overlay,
       theme,
       tools,
@@ -425,6 +439,9 @@
       }
       if (app.config.llm_balanced) {
         llmBalanced = { ...app.config.llm_balanced };
+      }
+      if (app.config.llm_factcheck) {
+        llmFactcheck = { ...app.config.llm_factcheck };
       }
       overlay = { ...app.config.overlay };
       theme = app.config.theme;
@@ -617,6 +634,13 @@
         await api.setLlmBalancedSettings({
           ...llmBalanced,
           enabled: !!llmBalanced.base_url.trim() && !!llmBalanced.model.trim() && llmBalanced.enabled,
+        });
+        await api.setLlmFactcheckSettings({
+          ...llmFactcheck,
+          enabled:
+            !!llmFactcheck.base_url.trim() &&
+            !!llmFactcheck.model.trim() &&
+            !!(llmFactcheck.api_key ?? '').trim(),
         });
         if (app.config) {
           await api.setMode({ mode: app.config.mode, tools });
@@ -1053,7 +1077,7 @@
     {#snippet modelCard(
       title: string,
       subtitle: string,
-      slug: 'fast' | 'deep' | 'balanced',
+      slug: 'fast' | 'deep' | 'balanced' | 'factcheck',
       get: () => LlmSettings,
       set: (v: LlmSettings) => void
     )}
@@ -1240,6 +1264,14 @@
       'deep',
       () => llmDeep,
       (v) => (llmDeep = v)
+    )}
+
+    {@render modelCard(
+      'Fact-check model (optional, online)',
+      'An independent ONLINE model behind the per-message “fact check” button — it verifies answers with fresh web searches, so pick a different provider than your chat models. Any OpenAI-compatible API works (DeepSeek: Base URL https://api.deepseek.com, model deepseek-chat; or OpenAI, Groq, …). The button appears once Base URL, model AND API key are filled. Never used for normal chat.',
+      'factcheck',
+      () => llmFactcheck,
+      (v) => (llmFactcheck = v)
     )}
 
     <div class="kin-card space-y-4">

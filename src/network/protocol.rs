@@ -83,6 +83,10 @@ pub enum Envelope {
         /// reconnect if the host owner re-configures slots.
         #[serde(default)]
         host_slots: Vec<HostSlotWire>,
+        /// Whether the host has the ONLINE fact-check model configured —
+        /// gates the per-message "fact check" button on client peers.
+        #[serde(default)]
+        host_fact_check: bool,
     },
     /// Client → Host: please mint a pairing token for me (the requesting
     /// client peer). The host responds with `TelegramPair`. No payload —
@@ -201,6 +205,19 @@ pub enum Envelope {
     // The host responds to ALL four mutations with a fresh `UserFacts`
     // list. That keeps the client UI in sync with one round-trip per
     // action and removes the need for separate ack envelopes.
+    /// Client → Host: fact-check the assistant message `message_id`
+    /// with the host's ONLINE checker model. The host verifies the
+    /// message belongs to THIS peer's threads before running anything.
+    FactCheckRequest {
+        message_id: String,
+    },
+    /// Host → Client: the checker's markdown report (or a plain-language
+    /// error with `ok: false`). Ephemeral — never persisted.
+    FactCheckResult {
+        message_id: String,
+        ok: bool,
+        report: String,
+    },
     /// Client → Host: fresh liveness for the advertised slots (the
     /// Welcome snapshot is connect-time only). Host answers `SlotHealth`
     /// from its short-TTL probe cache, so this is cheap to call when the

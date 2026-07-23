@@ -3,7 +3,7 @@
   import { renderMarkdown } from '$lib/markdown';
   import { app } from '$lib/stores/app.svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { Check, Copy, FileText, Search, RefreshCw, Pencil, Volume2, Square } from '@lucide/svelte';
+  import { Check, Copy, FileText, Search, RefreshCw, Pencil, Volume2, Square, ShieldCheck, Loader2 } from '@lucide/svelte';
 
   let {
     message,
@@ -30,6 +30,21 @@
   // by AUTO-speak still shows "stop" on its bubble, and only one bubble
   // ever shows it.
   const ttsEnabled = $derived(app.ttsSupported && (app.config?.tts?.enabled ?? false));
+
+  // "Fact check" — only when the ONLINE checker model has credentials.
+  // Hosts read their own config; clients rely on the host's Welcome
+  // advertisement (absent on hosts ≤0.2.81 → no button, graceful).
+  const factCheckAvailable = $derived.by(() => {
+    if (message.role !== 'assistant' || streaming || !message.id) return false;
+    if (isHost) {
+      const fc = app.config?.llm_factcheck;
+      return Boolean(
+        fc && fc.base_url?.trim() && fc.model?.trim() && (fc.api_key ?? '').trim()
+      );
+    }
+    return app.hostInfo?.host_fact_check === true;
+  });
+  const factCheck = $derived(message.id ? app.factChecks[message.id] : undefined);
   const speaking = $derived(message.id != null && app.speakingMsgId === message.id);
   function toggleSpeak() {
     if (!message.id) return;
@@ -395,6 +410,24 @@
             <span>copy</span>
           {/if}
         </button>
+        {#if factCheckAvailable}
+          <button
+            type="button"
+            class="inline-flex items-center gap-1 text-white/40 hover:text-teal-300 transition-colors cursor-pointer disabled:opacity-50"
+            onclick={() => message.id && app.factCheck(message.id)}
+            disabled={factCheck?.status === 'loading'}
+            title="Verify this reply with the independent online fact-check model (uses fresh web searches)"
+            aria-label="Fact check reply"
+          >
+            {#if factCheck?.status === 'loading'}
+              <Loader2 size={11} class="animate-spin" />
+              <span>checking…</span>
+            {:else}
+              <ShieldCheck size={11} />
+              <span>fact check</span>
+            {/if}
+          </button>
+        {/if}
         {#if canRegenerate && isHost}
           <button
             type="button"
@@ -409,6 +442,26 @@
           </button>
         {/if}
       </span>
+    </div>
+  {/if}
+  {#if factCheck && factCheck.status !== 'loading'}
+    <!-- Ephemeral fact-check panel — never persisted, never sent to the
+         chat model. Re-running the check replaces it. -->
+    <div
+      class="mt-1 max-w-[85%] rounded-xl px-4 py-3 text-sm border kin-prose
+             {factCheck.status === 'error'
+        ? 'bg-red-500/10 border-red-400/25 text-red-100/90'
+        : 'bg-sky-500/10 border-sky-400/25 text-ink-50'}"
+    >
+      <div class="flex items-center gap-1.5 text-xs text-white/50 mb-1.5">
+        <ShieldCheck size={12} />
+        <span>Fact check · independent online model · not saved</span>
+      </div>
+      {#if factCheck.status === 'error'}
+        <div class="whitespace-pre-wrap break-words">{factCheck.report}</div>
+      {:else}
+        {@html renderMarkdown(factCheck.report)}
+      {/if}
     </div>
   {/if}
 </div>

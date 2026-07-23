@@ -117,6 +117,14 @@ impl Db {
     ) -> Result<Message> {
         messages::append(&self.pool, thread_id, role, sender, content, attachments).await
     }
+    /// (question, answer) for the fact-check button — peer-scoped.
+    pub async fn question_answer_for_fact_check(
+        &self,
+        peer_id: &str,
+        message_id: &str,
+    ) -> Result<Option<(String, String)>> {
+        messages::question_answer_for_fact_check(&self.pool, peer_id, message_id).await
+    }
     pub async fn update_message(&self, id: &str, new_content: &str) -> Result<()> {
         messages::update_content(&self.pool, id, new_content).await
     }

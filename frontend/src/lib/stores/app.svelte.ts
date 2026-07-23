@@ -35,6 +35,11 @@ class AppStore {
    *  bubble to the thread the turn ran in, not whatever thread the user
    *  happens to be looking at by then. */
   activeTurnThreadId: string | null = null;
+  /** Per-message fact-check panels, keyed by assistant message id.
+   *  Ephemeral — never persisted, never part of model context. */
+  factChecks = $state<
+    Record<string, { status: 'loading' | 'done' | 'error'; report: string }>
+  >({});
   /** Per-message metrics keyed by the persisted assistant message id. */
   metricsByMsgId = $state<Record<string, TurnMetrics>>({});
   stats = $state<RuntimeStats | null>(null);
@@ -79,6 +84,8 @@ class AppStore {
     /** Active model slots the host serves — builds the client's slash
      *  menu (absent on hosts ≤0.2.79; `alive` absent on ≤0.2.80). */
     host_slots?: Array<{ slug: string; model: string; alive?: boolean | null }>;
+    /** Host has the online fact-check model configured. */
+    host_fact_check?: boolean;
   } | null>(null);
   /** mDNS-discovered KinAI hosts on the local network. Kept at the store
    *  level (not inside /client/+page.svelte) because the discovery event
@@ -451,6 +458,31 @@ class AppStore {
 
   /** Tear down a turn's placeholders after an IPC error and re-sync the
    *  thread from the authoritative DB so the UI can't get stuck. */
+  /** Run the online fact-check for one assistant message; the result
+   *  renders as a panel under the bubble. Single-flight per message. */
+  async factCheck(messageId: string) {
+    if (this.factChecks[messageId]?.status === 'loading') return;
+    this.factChecks = {
+      ...this.factChecks,
+      [messageId]: { status: 'loading', report: '' },
+    };
+    try {
+      const report = await api.factCheckMessage(messageId);
+      this.factChecks = {
+        ...this.factChecks,
+        [messageId]: { status: 'done', report },
+      };
+    } catch (e) {
+      this.factChecks = {
+        ...this.factChecks,
+        [messageId]: {
+          status: 'error',
+          report: String(e).replace(/^Error:\s*/, ''),
+        },
+      };
+    }
+  }
+
   private async failTurn(clientMsgId: string, e: unknown) {
     console.error(e);
     delete this.streaming[clientMsgId];

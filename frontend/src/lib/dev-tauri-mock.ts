@@ -33,6 +33,10 @@ function defaultConfig() {
       provider: 'llamacpp', base_url: '', model: '', context_window: 32768,
       api_key: null, temperature: 0.7, max_tokens: 0, system_addendum: '', enabled: false,
     },
+    llm_factcheck: {
+      provider: 'openai-compat', base_url: '', model: '', context_window: 65536,
+      api_key: null, temperature: 0.2, max_tokens: 0, system_addendum: '', enabled: false,
+    },
     host: { bind_addr: '0.0.0.0', port: 4847, family_name: 'Our Family', mdns_enabled: true, rate_limit_rpm: 60 },
     client: { host_url: null, host_token: null, host_label: null, display_name: 'You', pinned_hosts: [] },
     overlay: { hotkey: 'CmdOrCtrl+Space', always_on_top: true, font_size: 14, auto_close_on_blur: true },
@@ -86,6 +90,7 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
         // visible in this scenario.
         { slug: 'deep', model: 'mock-deep-35b', alive: false },
       ],
+      host_fact_check: true,
     };
   } else if (scenario === 'host-one-slot' || scenario === 'host-three-slots') {
     // Host-mode scenarios for the slash menu's local-config path:
@@ -98,8 +103,29 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
       Object.assign(cfg.llm_balanced, { base_url: 'http://192.168.1.50:8084', model: 'local-balanced-33b', enabled: true });
       Object.assign(cfg.llm_deep, { base_url: 'http://192.168.1.50:8081', model: 'local-deep-35b', enabled: true });
       w.__mockSlotHealth = { fast: true, balanced: false, deep: true };
+      // Credentials present -> the per-message "fact check" button shows.
+      Object.assign(cfg.llm_factcheck, {
+        base_url: 'https://api.deepseek.com', model: 'deepseek-chat', api_key: 'sk-mock', enabled: true,
+      });
     }
   }
+  // Both scenarios get one canned Q/A so message-level UI (fact-check
+  // button, panel) is exercisable in a plain browser.
+  const cannedMessages = scenario
+    ? [
+        {
+          id: 'mock-msg-user-1', thread_id: 'mock-thread-1', role: 'user', sender: 'You',
+          content: 'When did the Eiffel Tower open?', attachments: [],
+          created_at: new Date(Date.now() - 60000).toISOString(), summarized_into: null,
+        },
+        {
+          id: 'mock-msg-assistant-1', thread_id: 'mock-thread-1', role: 'assistant', sender: 'KinAI',
+          content: 'The Eiffel Tower opened in 1887 and is 330 m tall.', attachments: [],
+          created_at: new Date(Date.now() - 55000).toISOString(), summarized_into: null,
+          metrics: { first_token_ms: 300, total_ms: 1800, output_tokens: 18, tps: 12, model: 'local-fast-8b', slot: 'fast' },
+        },
+      ]
+    : [];
   const calls: { cmd: string; args: any }[] = [];
   w.__mockCalls = calls;
   w.__mockConfig = cfg;
@@ -154,6 +180,19 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
     set_llm_settings: (a) => { Object.assign(cfg.llm, a.llm); return cfg; },
     set_llm_deep_settings: (a) => { Object.assign(cfg.llm_deep, a.llm); return cfg; },
     set_llm_balanced_settings: (a) => { Object.assign(cfg.llm_balanced, a.llm); return cfg; },
+    set_llm_factcheck_settings: (a) => { Object.assign(cfg.llm_factcheck, a.llm); return cfg; },
+    // Canned fact-check report after a short delay; set
+    // `window.__mockFactCheckFail = "reason"` to exercise the error path.
+    fact_check_message: async () => {
+      await new Promise((r) => setTimeout(r, 1200));
+      if (w.__mockFactCheckFail) throw new Error(w.__mockFactCheckFail);
+      return [
+        '⚠️ Partly accurate — one date is off.',
+        '',
+        '- "The Eiffel Tower opened in 1887" — construction STARTED 1887; it opened **31 March 1889**. (Source: web_search — britannica.com)',
+        '- Height and visitor figures check out against current sources.',
+      ].join('\n');
+    },
     set_vision_settings: (a) => { Object.assign(cfg.vision, a.vision); return cfg; },
     set_comfy_config: (a) => { Object.assign(cfg.comfyui, a.comfyui); return cfg; },
     set_overlay_settings: (a) => { Object.assign(cfg.overlay, a.overlay); return cfg; },
@@ -175,12 +214,16 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
       qr_payload: 'kinai://join?host=mock&code=k7m3px&token=mock',
       created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 30 * 864e5).toISOString(), revoked: false,
     }),
-    list_threads: () => [],
+    list_threads: () =>
+      scenario
+        ? [{ id: 'mock-thread-1', title: 'Eiffel Tower', created_at: new Date().toISOString(), updated_at: new Date().toISOString(), peer_id: 'host' }]
+        : [],
     create_thread: (a: any) => ({
       id: 'mock-thread-1', title: a?.title ?? 'New conversation',
       created_at: new Date().toISOString(), updated_at: new Date().toISOString(), peer_id: 'host',
     }),
-    load_messages: () => [],
+    load_messages: () => cannedMessages,
+    load_thread: () => cannedMessages,
     thread_active_slot: () => null,
     list_invites: () => [],
     list_peers: () => [],

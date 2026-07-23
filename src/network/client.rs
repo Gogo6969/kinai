@@ -275,6 +275,7 @@ pub async fn connect(
                 host_vision,
                 host_telegram_bot,
                 host_slots,
+                host_fact_check,
             } => {
                 {
                     let mut stats = state.stats.write();
@@ -286,6 +287,7 @@ pub async fn connect(
                         host_vision: host_vision.clone(),
                         host_telegram_bot: host_telegram_bot.clone(),
                         host_slots: host_slots.clone(),
+                        host_fact_check,
                     });
                 }
                 let _ = app.emit(
@@ -298,6 +300,7 @@ pub async fn connect(
                         "host_vision": host_vision,
                         "host_telegram_bot": host_telegram_bot,
                         "host_slots": host_slots,
+                        "host_fact_check": host_fact_check,
                     }),
                 );
             }
@@ -402,6 +405,12 @@ pub async fn connect(
                         "bot_username": bot_username,
                     }),
                 );
+            }
+            Envelope::FactCheckResult { ok, report, .. } => {
+                let mut net = state.net.lock().await;
+                if let Some(tx) = net.fact_check_pending.take() {
+                    let _ = tx.send((ok, report));
+                }
             }
             Envelope::SlotHealth { slots } => {
                 // Keep the stored advertisement current so later

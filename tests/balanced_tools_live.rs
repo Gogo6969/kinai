@@ -172,3 +172,32 @@ async fn dead_fast_slot_fails_over_to_balanced() {
         "the failover slot must actually answer"
     );
 }
+
+/// Fact-check plumbing end-to-end: the checker slot pointed at the live
+/// LAN server (standing in for DeepSeek — same OpenAI-compatible API).
+/// Proves factcheck::run builds the prompt, runs the tool pipeline, and
+/// returns a verdict-shaped report.
+#[tokio::test]
+#[ignore = "live server + real config; run explicitly"]
+async fn factcheck_pipeline_against_live_server() {
+    let mut cfg = AppConfig::load_or_default();
+    assert!(cfg.llm_balanced.is_active(), "balanced slot must be configured");
+    cfg.llm_factcheck = cfg.llm_balanced.clone();
+    cfg.llm_factcheck.api_key = Some("local-test".into());
+    cfg.llm_factcheck.enabled = true;
+
+    let report = kinai::factcheck::run(
+        &cfg,
+        "When did the Eiffel Tower open?",
+        "The Eiffel Tower opened in 1887 and is 330 m tall.",
+        CancellationToken::new(),
+    )
+    .await
+    .expect("fact check must produce a report");
+    eprintln!("REPORT:\n{report}");
+    assert!(!report.trim().is_empty());
+    assert!(
+        report.contains('✅') || report.contains('⚠') || report.contains('❌'),
+        "report should start with a verdict line: {report}"
+    );
+}

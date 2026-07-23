@@ -725,3 +725,43 @@ mod tests {
         assert!(full[0].attachments[0].data_url.is_some(), "UI listing keeps payloads");
     }
 }
+
+/// The (question, answer) pair for a fact-check: the assistant message
+/// `id` plus the closest preceding user message in the same thread.
+/// Peer-scoped through the thread's owner — a WS peer can only check
+/// messages in its own threads (same isolation rule as user_facts).
+pub async fn question_answer_for_fact_check(
+    pool: &SqlitePool,
+    peer_id: &str,
+    message_id: &str,
+) -> Result<Option<(String, String)>> {
+    let row: Option<(String, String, String, String)> = sqlx::query_as(
+        "SELECT m.thread_id, m.role, m.content, m.created_at
+         FROM messages m JOIN threads t ON t.id = m.thread_id
+         WHERE m.id = ? AND t.peer_id = ?",
+    )
+    .bind(message_id)
+    .bind(peer_id)
+    .fetch_optional(pool)
+    .await?;
+    let Some((thread_id, role, answer, created_at)) = row else {
+        return Ok(None);
+    };
+    if role != "assistant" {
+        return Ok(None);
+    }
+    let question: Option<(String,)> = sqlx::query_as(
+        "SELECT content FROM messages
+         WHERE thread_id = ? AND role = 'user' AND created_at <= ? AND id != ?
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(&thread_id)
+    .bind(&created_at)
+    .bind(message_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(Some((
+        question.map(|q| q.0).unwrap_or_default(),
+        answer,
+    )))
+}

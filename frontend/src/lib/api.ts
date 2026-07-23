@@ -159,6 +159,8 @@ export interface AppConfig {
   llm_deep: LlmSettings;
   /** Optional "balanced" middle slot. Reachable as `/balanced <prompt>`. */
   llm_balanced: LlmSettings;
+  /** ONLINE fact-check model (per-message button; not a chat slot). */
+  llm_factcheck: LlmSettings;
   host: HostSettings;
   client: ClientSettings;
   overlay: OverlaySettings;
@@ -286,6 +288,9 @@ export interface HostInfo {
    *  hosts ≤0.2.79 don't send it. `alive` is the connect-time liveness
    *  probe result (absent on hosts ≤0.2.80). */
   host_slots?: Array<{ slug: string; model: string; alive?: boolean | null }>;
+  /** Host has the online fact-check model configured (gates the button
+   *  on client peers). Absent on hosts ≤0.2.81. */
+  host_fact_check?: boolean;
 }
 
 export interface RuntimeStats {
@@ -356,6 +361,13 @@ export const api = {
    *  setLlmSettings, separate command server-side. */
   setLlmBalancedSettings: (llm: LlmSettings) =>
     invoke<AppConfig>('set_llm_balanced_settings', { llm }),
+  setLlmFactcheckSettings: (llm: LlmSettings) =>
+    invoke<AppConfig>('set_llm_factcheck_settings', { llm }),
+  /** Markdown fact-check report for one assistant message (throws with a
+   *  plain-language message on failure). Host runs locally; clients
+   *  round-trip to the host. */
+  factCheckMessage: (messageId: string) =>
+    invoke<string>('fact_check_message', { messageId }),
   setLlmDeepSettings: (llm: LlmSettings) =>
     invoke<AppConfig>('set_llm_deep_settings', { llm }),
   setOverlaySettings: (overlay: OverlaySettings) =>

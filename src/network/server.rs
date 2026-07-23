@@ -319,6 +319,7 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
     for (w, alive) in host_slots.iter_mut().zip(probes) {
         w.alive = Some(alive);
     }
+    let host_fact_check = crate::factcheck::is_configured(&s.app.config.read().llm_factcheck);
     let _ = tx.send(Envelope::Welcome {
         family_name,
         host_version: env!("CARGO_PKG_VERSION").into(),
@@ -327,6 +328,7 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
         host_vision,
         host_telegram_bot,
         host_slots,
+        host_fact_check,
     });
 
     let writer = tokio::spawn(async move {
@@ -554,6 +556,45 @@ async fn dispatch(
                     }
                 }
             }
+        }
+        Envelope::FactCheckRequest { message_id } => {
+            // Spawned — a fact check can take tens of seconds and must not
+            // block this peer's WS read loop (chat turns spawn the same
+            // way). Ownership check happens inside the peer-scoped DB
+            // lookup — a peer can only fact-check its own threads.
+            let s2 = s.clone();
+            let tx2 = tx.clone();
+            let peer = context_peer.to_string();
+            tokio::spawn(async move {
+                let cfg = s2.app.config.read().clone();
+                let pair = s2
+                    .app
+                    .db
+                    .question_answer_for_fact_check(&peer, &message_id)
+                    .await;
+                let (ok, report) = match pair {
+                    Ok(Some((question, answer))) => {
+                        match crate::factcheck::run(
+                            &cfg,
+                            &question,
+                            &answer,
+                            CancellationToken::new(),
+                        )
+                        .await
+                        {
+                            Ok(report) => (true, report),
+                            Err(e) => (false, format!("Fact check failed: {e}")),
+                        }
+                    }
+                    Ok(None) => (false, "That message can't be fact-checked.".to_string()),
+                    Err(e) => (false, format!("Fact check failed: {e}")),
+                };
+                let _ = tx2.send(Envelope::FactCheckResult {
+                    message_id,
+                    ok,
+                    report,
+                });
+            });
         }
         Envelope::RequestSlotHealth => {
             // Fresh liveness for the client's slash-menu markers, served
