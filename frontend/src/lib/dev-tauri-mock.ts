@@ -91,6 +91,25 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
         { slug: 'deep', model: 'mock-deep-35b', alive: false },
       ],
       host_fact_check: true,
+      host_reports: true,
+    };
+  } else if (scenario === 'client-old-host') {
+    // A client connected to a host that predates a capability (here:
+    // reports). Everything version-gated must degrade to hidden, never
+    // to a button that hangs until it times out.
+    cfg.mode = 'client';
+    cfg.setup_completed = true;
+    stats.client_connected = true;
+    stats.host_info = {
+      family_name: 'Old Host',
+      host_version: '0.2.84',
+      host_model: 'mock-fast-20b',
+      host_search_engine: 'exa',
+      host_vision: 'off',
+      host_telegram_bot: '',
+      host_slots: [{ slug: 'fast', model: 'mock-fast-20b', alive: true }],
+      host_fact_check: false,
+      // host_reports deliberately absent — an older host never sends it.
     };
   } else if (scenario === 'host-one-slot' || scenario === 'host-three-slots') {
     // Host-mode scenarios for the slash menu's local-config path:
@@ -171,6 +190,11 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
         r.id === a.id ? { ...r, reviewed_at: a.reviewed ? new Date().toISOString() : null } : r
       );
       return null;
+    },
+    delete_reviewed_reports: () => {
+      const before = (w.__mockReports ?? []).length;
+      w.__mockReports = (w.__mockReports ?? []).filter((r: any) => !r.reviewed_at);
+      return before - w.__mockReports.length;
     },
     delete_report: (a) => {
       w.__mockReports = (w.__mockReports ?? []).filter((r: any) => r.id !== a.id);

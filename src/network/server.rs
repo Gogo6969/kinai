@@ -165,7 +165,11 @@ async fn ws_upgrade(
     State(s): State<AxumState>,
     ws: WebSocketUpgrade,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(s, socket))
+    // 4 MiB per frame: comfortably above a big pasted question with an
+    // image data URL, far below tungstenite's 64 MiB default (which let
+    // one `ReportAnswer` write 64 MiB straight into the host's DB).
+    ws.max_message_size(4 * 1024 * 1024)
+        .on_upgrade(move |socket| handle_socket(s, socket))
 }
 
 async fn handle_socket(s: AxumState, socket: WebSocket) {
@@ -329,6 +333,7 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
         host_telegram_bot,
         host_slots,
         host_fact_check,
+        host_reports: true,
     });
 
     let writer = tokio::spawn(async move {
@@ -356,9 +361,23 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
                 continue;
             }
         };
+        // Keyed on `claims.sub` (the invite, stable across reconnects) —
+        // NOT the per-connection UUID. With the session key a peer got a
+        // fresh full bucket by reconnecting, which made the limit
+        // decorative for anything a client can trigger in a loop.
         if matches!(env, Envelope::SendMessage { .. } | Envelope::FactCheckRequest { .. }
             | Envelope::ReportAnswer { .. })
-            && !s.rate.allow(&peer_id) {
+            && !s.rate.allow(&claims.sub) {
+            // A rejected REPORT still needs its ack, or the client's
+            // round-trip waits out the full timeout and then blames a
+            // timeout for what was really a rate limit.
+            if let Envelope::ReportAnswer { message_id, .. } = &env {
+                let _ = tx.send(Envelope::ReportAck {
+                    message_id: message_id.clone(),
+                    ok: false,
+                    message: "Too many requests just now — wait a moment and try again.".into(),
+                });
+            }
             let _ = tx.send(Envelope::Error {
                 message: "rate limit exceeded; slow down a moment".into(),
             });
@@ -368,7 +387,7 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
         // and used as the storage-level peer_id. `peer_id` is the per-WS
         // session UUID, only used for rate-limiting + peer-list bookkeeping.
         if let Err(e) =
-            dispatch(env, &s, &tx, &peer_id, &claims.sub, &display_name).await
+            dispatch(env, &s, &tx, &peer_id, &claims.sub, &display_name, &claims.label).await
         {
             let _ = tx.send(Envelope::Error {
                 message: e.to_string(),
@@ -401,6 +420,7 @@ async fn dispatch(
     peer_id: &str,
     context_peer: &str,
     display_name: &str,
+    invite_label: &str,
 ) -> anyhow::Result<()> {
     match env {
         Envelope::Ping => {
@@ -560,15 +580,25 @@ async fn dispatch(
             }
         }
         Envelope::ReportAnswer { message_id, question, answer, model, slot } => {
-            // Rate-limited like chat: a report is cheap, but nothing a
-            // peer can trigger should be unbounded.
+            // Identity comes from the HOST-authored invite label, not the
+            // client's self-chosen display name — otherwise a peer could
+            // file a report as "Grandma". The display name is appended
+            // only as an unauthenticated hint.
             let reporter = {
-                let net = s.app.net.lock().await;
-                net.peers
-                    .get(peer_id)
-                    .map(|p| p.display_name.clone())
-                    .unwrap_or_else(|| "Family member".to_string())
+                let claimed = display_name.to_string();
+                match (invite_label.trim(), claimed.trim()) {
+                    ("", "") => "Family member".to_string(),
+                    ("", c) => format!("{c} (unverified name)"),
+                    (l, c) if c.is_empty() || c == l => l.to_string(),
+                    (l, c) => format!("{l} (calls themself \"{c}\")"),
+                }
             };
+            // Truncate before storage: the wire cap bounds one frame, this
+            // bounds what a peer can accumulate in the host's database.
+            let question: String = question.chars().take(4_000).collect();
+            let answer: String = answer.chars().take(20_000).collect();
+            let model: String = model.chars().take(200).collect();
+            let slot: String = slot.chars().take(40).collect();
             let (ok, msg) = match s
                 .app
                 .db

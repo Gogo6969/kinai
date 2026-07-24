@@ -94,6 +94,8 @@ class AppStore {
     host_slots?: Array<{ slug: string; model: string; alive?: boolean | null }>;
     /** Host has the online fact-check model configured. */
     host_fact_check?: boolean;
+    /** Host speaks the report protocol (0.2.85+). */
+    host_reports?: boolean;
   } | null>(null);
   /** mDNS-discovered KinAI hosts on the local network. Kept at the store
    *  level (not inside /client/+page.svelte) because the discovery event
@@ -485,6 +487,13 @@ class AppStore {
       };
       // Host reporting its own answer: refresh its list immediately.
       if (this.config?.mode === 'host') await this.loadReports();
+      // Let the confirmation be read, then release the button — the
+      // backend supports re-reporting (it re-opens a reviewed row), so a
+      // permanently disabled button would strand that path.
+      setTimeout(() => {
+        const { [messageId]: _gone, ...rest } = this.reportState;
+        this.reportState = rest;
+      }, 5000);
     } catch (e) {
       this.reportState = {
         ...this.reportState,
@@ -501,7 +510,11 @@ class AppStore {
     if (this.config?.mode !== 'host') return;
     try {
       this.reports = await api.listReports();
-      this.openReports = this.reports.filter((r) => !r.reviewed_at).length;
+      // Count from the DB, not the (capped) page — the badge must stay
+      // truthful past the list limit.
+      this.openReports = await api
+        .openReportCount()
+        .catch(() => this.reports.filter((r) => !r.reviewed_at).length);
     } catch (e) {
       console.warn('reports', e);
     }
@@ -514,6 +527,11 @@ class AppStore {
 
   async deleteReport(id: string) {
     await api.deleteReport(id);
+    await this.loadReports();
+  }
+
+  async deleteReviewedReports() {
+    await api.deleteReviewedReports();
     await this.loadReports();
   }
 

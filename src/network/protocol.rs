@@ -90,6 +90,12 @@ pub enum Envelope {
         /// gates the per-message "fact check" button on client peers.
         #[serde(default)]
         host_fact_check: bool,
+        /// Host understands `ReportAnswer` (0.2.85+). Absent/false on
+        /// older hosts, whose envelope parser would reject the frame with
+        /// a generic error the client can't correlate — the report would
+        /// hang until its timeout. Gate the button on this.
+        #[serde(default)]
+        host_reports: bool,
     },
     /// Client → Host: please mint a pairing token for me (the requesting
     /// client peer). The host responds with `TelegramPair`. No payload —

@@ -105,6 +105,9 @@ pub struct HostInfo {
     /// Host has the ONLINE fact-check model configured — gates the
     /// per-message "fact check" button on client peers.
     pub host_fact_check: bool,
+    /// Host speaks the report protocol (0.2.85+) — gates the report
+    /// button so it never hangs against an older host.
+    pub host_reports: bool,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -425,6 +428,7 @@ pub fn run() {
             commands::open_report_count,
             commands::set_report_reviewed,
             commands::delete_report,
+            commands::delete_reviewed_reports,
             commands::set_llm_factcheck_settings,
             commands::fact_check_message,
             commands::check_updates,

@@ -65,29 +65,48 @@ pub async fn add(
     slot: &str,
 ) -> Result<Report> {
     let now = Utc::now().to_rfc3339();
-    let existing: Option<String> = sqlx::query_scalar(
+    // Per-peer ceiling on OPEN reports. Without it a peer looping the
+    // button with random message ids fills the table and leaves the host
+    // with a badge they can only clear one row at a time.
+    const MAX_OPEN_PER_PEER: i64 = 25;
+    let open_for_peer: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM reports WHERE peer_id = ? AND reviewed_at IS NULL",
+    )
+    .bind(peer_id)
+    .fetch_one(pool)
+    .await?;
+    let known: Option<String> = sqlx::query_scalar(
         "SELECT id FROM reports WHERE peer_id = ? AND message_id = ?",
     )
     .bind(peer_id)
     .bind(message_id)
     .fetch_optional(pool)
     .await?;
+    if known.is_none() && open_for_peer >= MAX_OPEN_PER_PEER {
+        anyhow::bail!(
+            "You already have {MAX_OPEN_PER_PEER} reports waiting — the host \
+needs to look at those first."
+        );
+    }
 
-    let id = existing.unwrap_or_else(|| Uuid::new_v4().to_string());
-    sqlx::query(
+    // ONE statement, conflict resolved by the unique (peer_id, message_id)
+    // index: two sessions sharing an invite can race here, and the second
+    // updates the first's row instead of creating a twin.
+    let id: String = sqlx::query_scalar(
         "INSERT INTO reports (id, peer_id, reporter, message_id, question, answer,
                               model, slot, created_at, reviewed_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
-         ON CONFLICT(id) DO UPDATE SET
+         ON CONFLICT(peer_id, message_id) DO UPDATE SET
             reporter = excluded.reporter,
             question = excluded.question,
             answer   = excluded.answer,
             model    = excluded.model,
             slot     = excluded.slot,
             created_at = excluded.created_at,
-            reviewed_at = NULL",
+            reviewed_at = NULL
+         RETURNING id",
     )
-    .bind(&id)
+    .bind(Uuid::new_v4().to_string())
     .bind(peer_id)
     .bind(reporter)
     .bind(message_id)
@@ -96,7 +115,7 @@ pub async fn add(
     .bind(model)
     .bind(slot)
     .bind(&now)
-    .execute(pool)
+    .fetch_one(pool)
     .await?;
 
     Ok(Report {
@@ -144,6 +163,15 @@ pub async fn set_reviewed(pool: &SqlitePool, id: &str, reviewed: bool) -> Result
         .execute(pool)
         .await?;
     Ok(())
+}
+
+/// Clear every already-reviewed report in one action — the host's way
+/// out if a peer files a pile of them.
+pub async fn delete_reviewed(pool: &SqlitePool) -> Result<u64> {
+    let r = sqlx::query("DELETE FROM reports WHERE reviewed_at IS NOT NULL")
+        .execute(pool)
+        .await?;
+    Ok(r.rows_affected())
 }
 
 pub async fn delete(pool: &SqlitePool, id: &str) -> Result<()> {
@@ -207,5 +235,36 @@ mod tests {
 
         delete(&p, &r.id).await.unwrap();
         assert_eq!(list(&p, 50).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn open_reports_are_capped_per_peer() {
+        let p = pool().await;
+        for i in 0..25 {
+            add(&p, "spammer", "Peer", &format!("m{i}"), "q", "a", "", "")
+                .await
+                .expect("under the cap");
+        }
+        // 26th NEW message is refused with a message the peer can act on…
+        let err = add(&p, "spammer", "Peer", "m25", "q", "a", "", "")
+            .await
+            .expect_err("cap enforced");
+        assert!(err.to_string().contains("waiting"), "got: {err}");
+        // …but re-reporting an EXISTING one still works (it's an update).
+        add(&p, "spammer", "Peer", "m0", "q", "a2", "", "")
+            .await
+            .expect("update of an existing row is not blocked");
+        // Another peer is unaffected by the first peer's pile.
+        add(&p, "other", "Peer2", "m0", "q", "a", "", "")
+            .await
+            .expect("cap is per peer");
+        // Reviewing frees capacity again.
+        let rows = list(&p, 100).await.unwrap();
+        let first = rows.iter().find(|r| r.peer_id == "spammer").unwrap();
+        set_reviewed(&p, &first.id, true).await.unwrap();
+        add(&p, "spammer", "Peer", "m25", "q", "a", "", "")
+            .await
+            .expect("space freed by review");
+        assert_eq!(delete_reviewed(&p).await.unwrap(), 1);
     }
 }

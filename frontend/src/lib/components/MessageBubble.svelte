@@ -50,8 +50,14 @@
   // assistant messages everywhere: family members send it to the host,
   // the host files it into the same list for its own review.
   const reportState = $derived(message.id ? app.reportState[message.id] : undefined);
+  // Client peers only get the button when the host actually speaks the
+  // report protocol — an older host rejects the frame with an error the
+  // client can't correlate, so the button would spin until it timed out.
   const canReport = $derived(
-    message.role === 'assistant' && !streaming && Boolean(message.id)
+    message.role === 'assistant' &&
+      !streaming &&
+      Boolean(message.id) &&
+      (isHost || app.hostInfo?.host_reports === true)
   );
   /** The question this answer replied to — sent with the report so the
    *  host sees the exchange, not a dangling answer. Uses the pairing the
@@ -59,16 +65,24 @@
    *  user message in the rendered thread. */
   function questionForReport(): string {
     const msgs = app.activeThreadId ? app.messages[app.activeThreadId] ?? [] : [];
+    const describe = (m: { content: string; attachments?: unknown[] }) => {
+      const text = m.content.trim();
+      if (text) return text;
+      // Attachment-only turns ("what is this?" + photo) have empty text;
+      // an empty question would read as "no question was asked".
+      return m.attachments?.length ? '(photo or file, no text)' : '';
+    };
     const qid = metrics?.question_msg_id;
     if (qid) {
-      const hit = msgs.find((m) => m.id === qid);
-      if (hit) return hit.content;
+      const hit = msgs.find((m) => m.id === qid && m.role === 'user');
+      if (hit) return describe(hit) || '(question not captured)';
     }
     const idx = msgs.findIndex((m) => m.id === message.id);
     for (let i = idx - 1; i >= 0; i--) {
-      if (msgs[i].role === 'user') return msgs[i].content;
+      if (msgs[i].role === 'user') return describe(msgs[i]) || '(question not captured)';
     }
-    return '';
+    // Far enough back in a long thread that the question isn't loaded.
+    return '(question not captured)';
   }
   function sendReport() {
     if (!message.id) return;
@@ -392,8 +406,8 @@
          that row ran out of width — so the layout shifted depending on
          how long the model name happened to be. A deliberate second row
          is stable, and leaves room for buttons like Report. -->
+    {#if !isUser}
     <div class="flex gap-2 text-xs text-white/40 px-1.5 items-center flex-wrap">
-      <span class="inline-flex items-center gap-2 flex-wrap">
         {#if ttsEnabled && !streaming}
           <button
             type="button"
@@ -505,8 +519,8 @@
             {/if}
           </button>
         {/if}
-      </span>
     </div>
+    {/if}
     {#if reportState && reportState.status !== 'sending'}
       <div
         class="px-1.5 text-[11px] {reportState.status === 'error'

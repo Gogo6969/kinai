@@ -278,6 +278,13 @@ const STATEMENTS: &[&str] = &[
     CREATE INDEX IF NOT EXISTS reports_open
         ON reports(reviewed_at, created_at)
     "#,
+    // One row per (reporter, message): the dedup guarantee belongs to the
+    // database, not to a SELECT-then-INSERT that two concurrent sessions
+    // sharing an invite can both win.
+    r#"
+    CREATE UNIQUE INDEX IF NOT EXISTS reports_peer_msg
+        ON reports(peer_id, message_id)
+    "#,
 ];
 
 pub async fn run(pool: &SqlitePool) -> Result<()> {

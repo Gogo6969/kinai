@@ -2850,6 +2850,12 @@ pub async fn set_report_reviewed(
     state.db.set_report_reviewed(&id, reviewed).await.map_err(err)
 }
 
+/// Host-only: clear every reviewed report at once.
+#[tauri::command]
+pub async fn delete_reviewed_reports(state: tauri::State<'_, SharedState>) -> Result<u64> {
+    state.db.delete_reviewed_reports().await.map_err(err)
+}
+
 #[tauri::command]
 pub async fn delete_report(state: tauri::State<'_, SharedState>, id: String) -> Result<()> {
     state.db.delete_report(&id).await.map_err(err)

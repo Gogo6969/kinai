@@ -142,6 +142,9 @@ impl Db {
     pub async fn set_report_reviewed(&self, id: &str, reviewed: bool) -> Result<()> {
         reports::set_reviewed(&self.pool, id, reviewed).await
     }
+    pub async fn delete_reviewed_reports(&self) -> Result<u64> {
+        reports::delete_reviewed(&self.pool).await
+    }
     pub async fn delete_report(&self, id: &str) -> Result<()> {
         reports::delete(&self.pool, id).await
     }

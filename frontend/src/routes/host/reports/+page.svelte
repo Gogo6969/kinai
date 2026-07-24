@@ -2,7 +2,6 @@
   import { app } from '$lib/stores/app.svelte';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { renderMarkdown } from '$lib/markdown';
   import { Check, RefreshCw, Trash2, Undo2, Flag } from '@lucide/svelte';
 
   onMount(() => {
@@ -28,9 +27,20 @@
         <button class="kin-btn" onclick={() => goto('/')} title="Back to chat">←</button>
         <h1 class="text-2xl font-bold tracking-tight">Reported answers</h1>
       </div>
-      <button class="kin-btn" onclick={() => app.loadReports()}>
-        <RefreshCw size={14} /> Refresh
-      </button>
+      <div class="flex gap-2">
+        {#if done.length > 0}
+          <button
+            class="kin-btn text-white/60"
+            onclick={() => app.deleteReviewedReports()}
+            title="Delete every report already marked reviewed"
+          >
+            <Trash2 size={14} /> Clear reviewed ({done.length})
+          </button>
+        {/if}
+        <button class="kin-btn" onclick={() => app.loadReports()}>
+          <RefreshCw size={14} /> Refresh
+        </button>
+      </div>
     </header>
 
     <p class="text-sm text-white/50 -mt-2">
@@ -87,21 +97,26 @@
           </div>
         </div>
 
-        {#if r.question}
-          <div>
-            <div class="text-[11px] uppercase tracking-wider text-white/40 mb-1">Question</div>
-            <div class="rounded-lg bg-teal-500/10 border border-teal-300/20 px-3 py-2 text-sm whitespace-pre-wrap break-words">
-              {r.question}
-            </div>
+        <div>
+          <div class="text-[11px] uppercase tracking-wider text-white/40 mb-1">Question</div>
+          <div class="rounded-lg bg-teal-500/10 border border-teal-300/20 px-3 py-2 text-sm whitespace-pre-wrap break-words
+                      {r.question ? '' : 'text-white/40 italic'}">
+            {r.question || '(question not captured)'}
           </div>
-        {/if}
+        </div>
 
         <div>
           <div class="text-[11px] uppercase tracking-wider text-white/40 mb-1">
             Answer that didn't work
           </div>
-          <div class="rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm kin-prose">
-            {@html renderMarkdown(r.answer)}
+          <!-- Rendered as PLAIN TEXT on purpose. This is the only place
+               peer-authored content reaches the host's window, and
+               markdown would let a reported "answer" pull remote images
+               (a read receipt / IP beacon) or plant clickable open and
+               download affordances. Formatting isn't worth that. -->
+          <div class="rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm
+                      whitespace-pre-wrap break-words">
+            {r.answer}
           </div>
         </div>
       </div>

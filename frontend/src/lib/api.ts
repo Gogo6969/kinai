@@ -291,6 +291,9 @@ export interface HostInfo {
   /** Host has the online fact-check model configured (gates the button
    *  on client peers). Absent on hosts ≤0.2.81. */
   host_fact_check?: boolean;
+  /** Host understands the report protocol (0.2.85+). Absent/false on
+   *  older hosts — the report button stays hidden rather than hanging. */
+  host_reports?: boolean;
 }
 
 /** An answer a family member flagged with the Report button. The host
@@ -568,6 +571,7 @@ export const api = {
   setReportReviewed: (id: string, reviewed: boolean) =>
     invoke<void>('set_report_reviewed', { id, reviewed }),
   deleteReport: (id: string) => invoke<void>('delete_report', { id }),
+  deleteReviewedReports: () => invoke<number>('delete_reviewed_reports'),
 
   runtimeStats: () => invoke<RuntimeStats>('runtime_stats'),
   /** Liveness of the host's ACTIVE model slots (label -> alive), served
