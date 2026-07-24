@@ -8,6 +8,7 @@ import {
   type RuntimeStats,
   type ThreadMeta,
   type SearchHit,
+  type Report,
   type TurnMetrics,
 } from '$lib/api';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -35,6 +36,13 @@ class AppStore {
    *  bubble to the thread the turn ran in, not whatever thread the user
    *  happens to be looking at by then. */
   activeTurnThreadId: string | null = null;
+  /** Per-message report state, keyed by assistant message id: the
+   *  button confirms in place instead of opening a dialog. */
+  reportState = $state<Record<string, { status: 'sending' | 'sent' | 'error'; message: string }>>({});
+  /** Reported answers the HOST has received (host mode only). */
+  reports = $state<Report[]>([]);
+  /** Open (unreviewed) report count — drives the sidebar badge. */
+  openReports = $state(0);
   /** Per-message fact-check panels, keyed by assistant message id.
    *  Ephemeral — never persisted, never part of model context. */
   factChecks = $state<
@@ -124,6 +132,7 @@ class AppStore {
       await this.loadActive();
     }
     await this.refreshStats();
+    await this.loadReports();
   }
 
   async refreshStats() {
@@ -458,6 +467,56 @@ class AppStore {
 
   /** Tear down a turn's placeholders after an IPC error and re-sync the
    *  thread from the authoritative DB so the UI can't get stuck. */
+  /** Flag an answer for the host. Sends only this question/answer pair
+   *  — the rest of the conversation stays private, which is the promise
+   *  the whole product rests on. */
+  async report(messageId: string, question: string, answer: string,
+               model: string, slot: string) {
+    if (this.reportState[messageId]?.status === 'sending') return;
+    this.reportState = {
+      ...this.reportState,
+      [messageId]: { status: 'sending', message: '' },
+    };
+    try {
+      const msg = await api.reportAnswer({ messageId, question, answer, model, slot });
+      this.reportState = {
+        ...this.reportState,
+        [messageId]: { status: 'sent', message: msg },
+      };
+      // Host reporting its own answer: refresh its list immediately.
+      if (this.config?.mode === 'host') await this.loadReports();
+    } catch (e) {
+      this.reportState = {
+        ...this.reportState,
+        [messageId]: {
+          status: 'error',
+          message: String(e).replace(/^Error:\s*/, ''),
+        },
+      };
+    }
+  }
+
+  /** Host: pull the reported answers + open count for the sidebar. */
+  async loadReports() {
+    if (this.config?.mode !== 'host') return;
+    try {
+      this.reports = await api.listReports();
+      this.openReports = this.reports.filter((r) => !r.reviewed_at).length;
+    } catch (e) {
+      console.warn('reports', e);
+    }
+  }
+
+  async setReportReviewed(id: string, reviewed: boolean) {
+    await api.setReportReviewed(id, reviewed);
+    await this.loadReports();
+  }
+
+  async deleteReport(id: string) {
+    await api.deleteReport(id);
+    await this.loadReports();
+  }
+
   /** Run the online fact-check for one assistant message; the result
    *  renders as a panel under the bubble. Single-flight per message. */
   async factCheck(messageId: string) {
@@ -833,6 +892,11 @@ class AppStore {
         this.busy = false;
         this.activeTurnId = null;
         this.drainQueue();
+      })
+    );
+    this.cleanups.push(
+      await events.onReport(() => {
+        void this.loadReports();
       })
     );
     this.cleanups.push(await events.onStats((s) => (this.stats = s)));

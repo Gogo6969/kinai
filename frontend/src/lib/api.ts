@@ -293,6 +293,22 @@ export interface HostInfo {
   host_fact_check?: boolean;
 }
 
+/** An answer a family member flagged with the Report button. The host
+ *  sees ONLY this snapshot of the exchange — never the rest of the
+ *  reporter's conversation. */
+export interface Report {
+  id: string;
+  peer_id: string;
+  reporter: string;
+  message_id: string;
+  question: string;
+  answer: string;
+  model: string;
+  slot: string;
+  created_at: string;
+  reviewed_at: string | null;
+}
+
 export interface RuntimeStats {
   model_loaded: string | null;
   peers_connected: number;
@@ -332,6 +348,10 @@ export interface TurnMetrics {
   /** "fast", "balanced", "deep", or "" — used to render a small slot badge
    *  alongside the model name. */
   slot?: string;
+  /** Id of the user message this reply answered, recorded at generation
+   *  time (0.2.82+). Pairs an answer with its question for fact checks
+   *  and reports even after edits or regenerates. */
+  question_msg_id?: string | null;
 }
 
 export interface AssistantDone {
@@ -534,6 +554,21 @@ export const api = {
   testTool: (name: string, argsJson: string) =>
     invoke<string>('test_tool', { args: { name, args_json: argsJson } }),
 
+  /** Flag an answer for the host. Sends exactly this Q&A pair — nothing
+   *  else from the thread. Resolves with the host's confirmation text. */
+  reportAnswer: (args: {
+    messageId: string;
+    question: string;
+    answer: string;
+    model: string;
+    slot: string;
+  }) => invoke<string>('report_answer', args),
+  listReports: () => invoke<Report[]>('list_reports'),
+  openReportCount: () => invoke<number>('open_report_count'),
+  setReportReviewed: (id: string, reviewed: boolean) =>
+    invoke<void>('set_report_reviewed', { id, reviewed }),
+  deleteReport: (id: string) => invoke<void>('delete_report', { id }),
+
   runtimeStats: () => invoke<RuntimeStats>('runtime_stats'),
   /** Liveness of the host's ACTIVE model slots (label -> alive), served
    *  from a short-TTL cache. Empty map on client instances — their menu
@@ -544,6 +579,9 @@ export const api = {
 };
 
 export const events = {
+  /** Host-side: a report just arrived (or the host filed one). */
+  onReport: (cb: (p: { reporter: string }) => void): Promise<UnlistenFn> =>
+    listen<{ reporter: string }>('kinai://report', (e) => cb(e.payload)),
   onMessage: (cb: (m: Message) => void): Promise<UnlistenFn> =>
     listen<Message>('kinai://message', (e) => cb(e.payload)),
   onToken: (cb: (d: TokenDelta) => void): Promise<UnlistenFn> =>

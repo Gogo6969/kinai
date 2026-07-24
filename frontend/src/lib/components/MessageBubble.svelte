@@ -3,7 +3,7 @@
   import { renderMarkdown } from '$lib/markdown';
   import { app } from '$lib/stores/app.svelte';
   import { invoke } from '@tauri-apps/api/core';
-  import { Check, Copy, FileText, Search, RefreshCw, Pencil, Volume2, Square, ShieldCheck, Loader2 } from '@lucide/svelte';
+  import { Check, Copy, FileText, Search, RefreshCw, Pencil, Volume2, Square, ShieldCheck, Loader2, Flag } from '@lucide/svelte';
 
   let {
     message,
@@ -45,6 +45,36 @@
     return app.hostInfo?.host_fact_check === true;
   });
   const factCheck = $derived(message.id ? app.factChecks[message.id] : undefined);
+
+  // "Report" — tell the host this answer is wrong. Shown on finished
+  // assistant messages everywhere: family members send it to the host,
+  // the host files it into the same list for its own review.
+  const reportState = $derived(message.id ? app.reportState[message.id] : undefined);
+  const canReport = $derived(
+    message.role === 'assistant' && !streaming && Boolean(message.id)
+  );
+  /** The question this answer replied to — sent with the report so the
+   *  host sees the exchange, not a dangling answer. Uses the pairing the
+   *  backend recorded at generation time, else the closest preceding
+   *  user message in the rendered thread. */
+  function questionForReport(): string {
+    const msgs = app.activeThreadId ? app.messages[app.activeThreadId] ?? [] : [];
+    const qid = metrics?.question_msg_id;
+    if (qid) {
+      const hit = msgs.find((m) => m.id === qid);
+      if (hit) return hit.content;
+    }
+    const idx = msgs.findIndex((m) => m.id === message.id);
+    for (let i = idx - 1; i >= 0; i--) {
+      if (msgs[i].role === 'user') return msgs[i].content;
+    }
+    return '';
+  }
+  function sendReport() {
+    if (!message.id) return;
+    void app.report(message.id, questionForReport(), message.content,
+                    metrics?.model ?? '', metrics?.slot ?? '');
+  }
   const speaking = $derived(message.id != null && app.speakingMsgId === message.id);
   function toggleSpeak() {
     if (!message.id) return;
@@ -356,11 +386,14 @@
           title="LLM model that produced this reply{metrics?.slot ? ` (${metrics.slot} slot)` : ''} — full id: {metrics?.model}"
         >{slotIcon ? slotIcon + ' ' : ''}{modelAbbrev}</span>
       {/if}
-      <!-- Action cluster: kept in ONE non-wrapping group so the buttons
-           never scatter across two lines when the metrics row is long
-           enough to force a flex wrap — the whole cluster moves to the
-           next line together instead. -->
-      <span class="ml-auto inline-flex items-center gap-2 whitespace-nowrap">
+    </div>
+    <!-- Actions get their OWN line, left-aligned under the metrics. They
+         used to sit at the end of the metrics row and only wrapped when
+         that row ran out of width — so the layout shifted depending on
+         how long the model name happened to be. A deliberate second row
+         is stable, and leaves room for buttons like Report. -->
+    <div class="flex gap-2 text-xs text-white/40 px-1.5 items-center flex-wrap">
+      <span class="inline-flex items-center gap-2 flex-wrap">
         {#if ttsEnabled && !streaming}
           <button
             type="button"
@@ -441,8 +474,48 @@
             <span>regenerate</span>
           </button>
         {/if}
+        {#if canReport}
+          <button
+            type="button"
+            class="inline-flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50
+                   {reportState?.status === 'sent'
+                     ? 'text-amber-300/80'
+                     : reportState?.status === 'error'
+                       ? 'text-red-300/80'
+                       : 'text-white/40 hover:text-amber-300'}"
+            onclick={sendReport}
+            disabled={reportState?.status === 'sending' || reportState?.status === 'sent'}
+            title={isHost
+              ? "Flag this answer — it lands in your Reported answers list"
+              : "Tell the host this answer is wrong. Sends ONLY this question and answer — the rest of your conversation stays private."}
+            aria-label="Report this answer to the host"
+          >
+            {#if reportState?.status === 'sending'}
+              <Loader2 size={11} class="animate-spin" />
+              <span>reporting…</span>
+            {:else if reportState?.status === 'sent'}
+              <Check size={11} />
+              <span>reported</span>
+            {:else if reportState?.status === 'error'}
+              <Flag size={11} />
+              <span>retry report</span>
+            {:else}
+              <Flag size={11} />
+              <span>report</span>
+            {/if}
+          </button>
+        {/if}
       </span>
     </div>
+    {#if reportState && reportState.status !== 'sending'}
+      <div
+        class="px-1.5 text-[11px] {reportState.status === 'error'
+          ? 'text-red-300/80'
+          : 'text-amber-300/70'}"
+      >
+        {reportState.message}
+      </div>
+    {/if}
   {/if}
   {#if factCheck && factCheck.status !== 'loading'}
     <!-- Ephemeral fact-check panel — never persisted, never sent to the

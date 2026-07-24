@@ -254,6 +254,30 @@ const STATEMENTS: &[&str] = &[
     r#"
     ALTER TABLE invites ADD COLUMN revoked_at TEXT
     "#,
+    // Answers a family member flagged as wrong/nonsensical with the
+    // Report button. The row carries a SNAPSHOT of the question and the
+    // answer the reporter chose to share — the host never reads a peer's
+    // thread to fill this in, which is what keeps the "your chats are
+    // invisible to the host" promise intact: reporting is the user
+    // deliberately handing over one exchange.
+    r#"
+    CREATE TABLE IF NOT EXISTS reports (
+        id           TEXT PRIMARY KEY,
+        peer_id      TEXT NOT NULL,
+        reporter     TEXT NOT NULL,
+        message_id   TEXT NOT NULL,
+        question     TEXT NOT NULL,
+        answer       TEXT NOT NULL,
+        model        TEXT NOT NULL DEFAULT '',
+        slot         TEXT NOT NULL DEFAULT '',
+        created_at   TEXT NOT NULL,
+        reviewed_at  TEXT
+    )
+    "#,
+    r#"
+    CREATE INDEX IF NOT EXISTS reports_open
+        ON reports(reviewed_at, created_at)
+    "#,
 ];
 
 pub async fn run(pool: &SqlitePool) -> Result<()> {

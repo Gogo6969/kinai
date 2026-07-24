@@ -2755,6 +2755,106 @@ pub async fn runtime_stats(state: tauri::State<'_, SharedState>) -> Result<crate
     Ok(state.stats.read().clone())
 }
 
+/// Flag an answer as wrong / nonsensical so the HOST can look at it.
+///
+/// Privacy: this is the ONE place a family member's conversation content
+/// crosses to the host, and it happens only because they pressed the
+/// button. The caller passes the exact question + answer being shared —
+/// nothing else from that thread travels, and the host never reads the
+/// peer's thread to fill in the gaps.
+#[tauri::command]
+pub async fn report_answer(
+    state: tauri::State<'_, SharedState>,
+    message_id: String,
+    question: String,
+    answer: String,
+    model: String,
+    slot: String,
+) -> Result<String> {
+    if matches!(state.config.read().mode, crate::config::Mode::Client) {
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let tx = {
+            let mut net = state.net.lock().await;
+            net.report_pending.insert(message_id.clone(), sender);
+            net.client_tx.clone()
+        };
+        let Some(tx) = tx else {
+            state.net.lock().await.report_pending.remove(&message_id);
+            return Err("Not connected to your family's KinAI host.".into());
+        };
+        if tx
+            .send(crate::network::protocol::Envelope::ReportAnswer {
+                message_id: message_id.clone(),
+                question,
+                answer,
+                model,
+                slot,
+            })
+            .is_err()
+        {
+            state.net.lock().await.report_pending.remove(&message_id);
+            return Err("Lost the host connection before the report could be sent.".into());
+        }
+        let outcome = match tokio::time::timeout(std::time::Duration::from_secs(20), receiver).await
+        {
+            Err(_) => Err("The report timed out — please try again.".to_string()),
+            Ok(Err(_)) => Err("The host dropped the report.".to_string()),
+            Ok(Ok((true, msg))) => Ok(msg),
+            Ok(Ok((false, msg))) => Err(msg),
+        };
+        state.net.lock().await.report_pending.remove(&message_id);
+        return outcome;
+    }
+
+    // Host flagging one of its own answers — same list, no network hop.
+    let reporter = state.config.read().client.display_name.clone();
+    state
+        .db
+        .add_report(
+            db::HOST_PEER,
+            if reporter.trim().is_empty() { "Host" } else { &reporter },
+            &message_id,
+            &question,
+            &answer,
+            &model,
+            &slot,
+        )
+        .await
+        .map_err(err)?;
+    if let Some(app) = state.handle.read().clone() {
+        let _ = app.emit("kinai://report", serde_json::json!({"reporter": "you"}));
+    }
+    Ok("Saved to your reported answers.".into())
+}
+
+/// Host-only: reported answers, newest first, open ones first.
+#[tauri::command]
+pub async fn list_reports(
+    state: tauri::State<'_, SharedState>,
+) -> Result<Vec<crate::db::Report>> {
+    state.db.list_reports(200).await.map_err(err)
+}
+
+/// Host-only: how many reports still need attention (sidebar badge).
+#[tauri::command]
+pub async fn open_report_count(state: tauri::State<'_, SharedState>) -> Result<i64> {
+    state.db.open_report_count().await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn set_report_reviewed(
+    state: tauri::State<'_, SharedState>,
+    id: String,
+    reviewed: bool,
+) -> Result<()> {
+    state.db.set_report_reviewed(&id, reviewed).await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn delete_report(state: tauri::State<'_, SharedState>, id: String) -> Result<()> {
+    state.db.delete_report(&id).await.map_err(err)
+}
+
 #[tauri::command]
 pub async fn slot_health(
     state: tauri::State<'_, SharedState>,

@@ -208,6 +208,26 @@ pub enum Envelope {
     // The host responds to ALL four mutations with a fresh `UserFacts`
     // list. That keeps the client UI in sync with one round-trip per
     // action and removes the need for separate ack envelopes.
+    /// Client → Host: "this answer doesn't make sense". Carries a
+    /// SNAPSHOT of the exchange the reporter chose to share — the host
+    /// does not go read the peer's thread, which is what keeps the
+    /// "your conversations are invisible to the host" promise true:
+    /// reporting is the one deliberate hand-over, scoped to one answer.
+    ReportAnswer {
+        message_id: String,
+        question: String,
+        answer: String,
+        #[serde(default)]
+        model: String,
+        #[serde(default)]
+        slot: String,
+    },
+    /// Host → Client: the report was stored (or refused, with a reason).
+    ReportAck {
+        message_id: String,
+        ok: bool,
+        message: String,
+    },
     /// Client → Host: fact-check the assistant message `message_id`
     /// with the host's ONLINE checker model. The host verifies the
     /// message belongs to THIS peer's threads before running anything.

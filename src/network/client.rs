@@ -406,6 +406,12 @@ pub async fn connect(
                     }),
                 );
             }
+            Envelope::ReportAck { message_id, ok, message } => {
+                let mut net = state.net.lock().await;
+                if let Some(tx) = net.report_pending.remove(&message_id) {
+                    let _ = tx.send((ok, message));
+                }
+            }
             Envelope::FactCheckResult { message_id, ok, report } => {
                 let mut net = state.net.lock().await;
                 if let Some(tx) = net.fact_check_pending.remove(&message_id) {
@@ -480,6 +486,12 @@ pub async fn connect(
             let _ = tx.send((
                 false,
                 "Lost the connection to your KinAI host during the fact check.".to_string(),
+            ));
+        }
+        for (_, tx) in net.report_pending.drain() {
+            let _ = tx.send((
+                false,
+                "Lost the connection to your KinAI host — the report wasn't sent.".to_string(),
             ));
         }
     }

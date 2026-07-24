@@ -2,6 +2,7 @@
 
 mod memory;
 pub mod messages;
+pub mod reports;
 pub(crate) mod migrate;
 pub mod telegram;
 pub mod user_facts;
@@ -12,6 +13,7 @@ use anyhow::Result;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 
 pub use memory::MemoryNote;
+pub use reports::Report;
 pub use messages::{Attachment, Message, SearchHit, ThreadMeta, HOST_PEER};
 pub use user_facts::UserFact;
 
@@ -117,6 +119,33 @@ impl Db {
     ) -> Result<Message> {
         messages::append(&self.pool, thread_id, role, sender, content, attachments).await
     }
+    // ---- Reports (answers a family member flagged) --------------------
+    #[allow(clippy::too_many_arguments)]
+    pub async fn add_report(
+        &self,
+        peer_id: &str,
+        reporter: &str,
+        message_id: &str,
+        question: &str,
+        answer: &str,
+        model: &str,
+        slot: &str,
+    ) -> Result<Report> {
+        reports::add(&self.pool, peer_id, reporter, message_id, question, answer, model, slot).await
+    }
+    pub async fn list_reports(&self, limit: i64) -> Result<Vec<Report>> {
+        reports::list(&self.pool, limit).await
+    }
+    pub async fn open_report_count(&self) -> Result<i64> {
+        reports::open_count(&self.pool).await
+    }
+    pub async fn set_report_reviewed(&self, id: &str, reviewed: bool) -> Result<()> {
+        reports::set_reviewed(&self.pool, id, reviewed).await
+    }
+    pub async fn delete_report(&self, id: &str) -> Result<()> {
+        reports::delete(&self.pool, id).await
+    }
+
     /// (question, answer) for the fact-check button — peer-scoped.
     pub async fn question_answer_for_fact_check(
         &self,

@@ -85,6 +85,9 @@ pub struct NetState {
     /// single-flight is per MESSAGE, so two bubbles can legitimately be
     /// checking at once and results must not cross-wire.
     pub fact_check_pending: HashMap<String, oneshot::Sender<(bool, String)>>,
+    /// Pending report round-trips keyed by message_id: `ReportAnswer` →
+    /// `ReportAck`, so the button can confirm ("reported") or explain.
+    pub report_pending: HashMap<String, oneshot::Sender<(bool, String)>>,
 }
 
 impl Default for NetState {
@@ -103,6 +106,7 @@ impl Default for NetState {
             user_facts_pending: None,
             slot_health_pending: None,
             fact_check_pending: HashMap::new(),
+            report_pending: HashMap::new(),
         }
     }
 }

@@ -356,7 +356,8 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
                 continue;
             }
         };
-        if matches!(env, Envelope::SendMessage { .. } | Envelope::FactCheckRequest { .. })
+        if matches!(env, Envelope::SendMessage { .. } | Envelope::FactCheckRequest { .. }
+            | Envelope::ReportAnswer { .. })
             && !s.rate.allow(&peer_id) {
             let _ = tx.send(Envelope::Error {
                 message: "rate limit exceeded; slow down a moment".into(),
@@ -557,6 +558,45 @@ async fn dispatch(
                     }
                 }
             }
+        }
+        Envelope::ReportAnswer { message_id, question, answer, model, slot } => {
+            // Rate-limited like chat: a report is cheap, but nothing a
+            // peer can trigger should be unbounded.
+            let reporter = {
+                let net = s.app.net.lock().await;
+                net.peers
+                    .get(peer_id)
+                    .map(|p| p.display_name.clone())
+                    .unwrap_or_else(|| "Family member".to_string())
+            };
+            let (ok, msg) = match s
+                .app
+                .db
+                .add_report(
+                    context_peer,
+                    &reporter,
+                    &message_id,
+                    &question,
+                    &answer,
+                    &model,
+                    &slot,
+                )
+                .await
+            {
+                Ok(_) => {
+                    // Wake the host UI: sidebar badge + list refresh.
+                    let _ = s.tauri.emit("kinai://report", serde_json::json!({
+                        "reporter": reporter,
+                    }));
+                    tracing::info!("answer reported by {reporter}");
+                    (true, "Thanks — the host can see this answer now.".to_string())
+                }
+                Err(e) => {
+                    tracing::warn!("storing report failed: {e:#}");
+                    (false, "Couldn't send the report — please try again.".to_string())
+                }
+            };
+            let _ = tx.send(Envelope::ReportAck { message_id, ok, message: msg });
         }
         Envelope::FactCheckRequest { message_id } => {
             // Spawned — a fact check can take tens of seconds and must not

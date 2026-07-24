@@ -143,6 +143,39 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
     // Host-mode slot liveness; override via __mockPreset.slotHealth or a
     // URL scenario to test the menu's offline markers.
     slot_health: () => w.__mockSlotHealth ?? {},
+    // Reports: an in-memory list so the button, the badge and the
+    // host page can all be exercised in a plain browser.
+    report_answer: (a) => {
+      if (w.__mockReportFail) throw new Error(w.__mockReportFail);
+      w.__mockReports = [
+        {
+          id: 'rep-' + (w.__mockReports?.length ?? 0),
+          peer_id: cfg.mode === 'host' ? 'host' : 'peer-1',
+          reporter: cfg.mode === 'host' ? 'You' : 'Mom',
+          message_id: a.messageId,
+          question: a.question,
+          answer: a.answer,
+          model: a.model ?? '',
+          slot: a.slot ?? '',
+          created_at: new Date().toISOString(),
+          reviewed_at: null,
+        },
+        ...(w.__mockReports ?? []),
+      ];
+      return 'Thanks — the host can see this answer now.';
+    },
+    list_reports: () => w.__mockReports ?? [],
+    open_report_count: () => (w.__mockReports ?? []).filter((r: any) => !r.reviewed_at).length,
+    set_report_reviewed: (a) => {
+      w.__mockReports = (w.__mockReports ?? []).map((r: any) =>
+        r.id === a.id ? { ...r, reviewed_at: a.reviewed ? new Date().toISOString() : null } : r
+      );
+      return null;
+    },
+    delete_report: (a) => {
+      w.__mockReports = (w.__mockReports ?? []).filter((r: any) => r.id !== a.id);
+      return null;
+    },
     // Set `window.__mockSendFail = "message"` to make the next send
     // reject — exercises the inline turn-error bubble path.
     send_message: () => {

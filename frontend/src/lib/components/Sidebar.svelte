@@ -3,7 +3,7 @@
   import { api } from '$lib/api';
   import { goto } from '$app/navigation';
   import Logo from './Logo.svelte';
-  import { Plus, Settings as Cog, Users, Trash2, Cpu, RefreshCw, Pencil, Search, X } from '@lucide/svelte';
+  import { Plus, Settings as Cog, Users, Trash2, Cpu, RefreshCw, Pencil, Search, X, Flag } from '@lucide/svelte';
   import { tick } from 'svelte';
 
   async function newChat() {
@@ -286,6 +286,17 @@
       </button>
       <button class="w-full kin-btn justify-start" onclick={() => goto('/host/family')}>
         <Users size={14} /> Manage family
+      </button>
+      <!-- Answers a family member flagged. Badge counts only the ones
+           still waiting on the host, so a reviewed pile stays quiet. -->
+      <button
+        class="w-full kin-btn justify-start {app.openReports > 0 ? '!text-amber-300' : ''}"
+        onclick={() => goto('/host/reports')}
+      >
+        <Flag size={14} /> Reported answers
+        {#if app.openReports > 0}
+          <span class="kin-badge ml-auto !bg-amber-400/20 !text-amber-200">{app.openReports}</span>
+        {/if}
       </button>
     {/if}
     <button class="w-full kin-btn justify-start" onclick={() => goto('/settings')}>
