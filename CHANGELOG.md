@@ -5,6 +5,25 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.85] — 2026-07-24
+
+### Added
+
+- **Report a bad answer.** Every reply now has a small **report** button.
+  When an answer doesn't make sense, one tap tells the host — who gets a
+  new **Reported answers** entry in the sidebar (with a badge for the ones
+  still needing a look) showing the question, the answer, and which model
+  produced it, plus Reviewed / Reopen / Delete.
+  Your privacy is unchanged: a report shares **only that one question and
+  answer** — the rest of your conversation stays invisible to the host,
+  and the button says so before you tap it.
+
+### Changed
+
+- The buttons under a reply (speak, copy, fact check, regenerate, report)
+  now sit on their own line under the message details instead of being
+  pushed onto a second line only when the details row ran out of space.
+
 ## [0.2.84] — 2026-07-23
 
 ### Fixed
