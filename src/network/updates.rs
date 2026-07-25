@@ -271,7 +271,16 @@ pub(crate) async fn manifest(
     let mut platforms: BTreeMap<String, PlatformBundle> = BTreeMap::new();
     let mut latest_mtime: Option<std::time::SystemTime> = None;
 
-    for &target in SUPPORTED_TARGETS {
+    // With a target asked for, list ONLY that platform. The version we
+    // picked is the newest for THAT target; other platforms' newest may
+    // differ, and their bundle endpoints now resolve per target — so
+    // listing them here would pair this version's signature with a
+    // different version's bytes and fail signature verification.
+    let listed: Vec<&str> = match asked {
+        Some(t) => vec![t],
+        None => SUPPORTED_TARGETS.to_vec(),
+    };
+    for &target in &listed {
         let Some((bundle_path, sig_path, _)) = resolve_bundle(&root, target) else {
             continue;
         };
@@ -339,9 +348,13 @@ async fn serve_target(target: &str, want_signature: bool) -> Result<Response, (S
             format!("Unsupported target '{target}'. Expected one of: {}", SUPPORTED_TARGETS.join(", ")),
         ));
     }
-    let (_, root) = latest_version_root().ok_or((
+    // Resolve within the newest version staged FOR THIS TARGET — the same
+    // choice the manifest makes. Serving from the globally-newest root
+    // instead would 404 exactly when the manifest correctly pointed an
+    // older-but-installable version at this endpoint.
+    let (_, root) = newest_version_for_target(&updates_dir(), target).ok_or((
         StatusCode::NOT_FOUND,
-        "No bundle staged".into(),
+        format!("No bundle staged for target '{target}'"),
     ))?;
     let (bundle_path, sig_path, fname) = resolve_bundle(&root, target).ok_or_else(|| {
         (

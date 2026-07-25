@@ -62,6 +62,12 @@ and "published".
 ## 6 — After publish
 
 - [ ] `./scripts/deploy.sh stage-windows` and `stage-linux`.
+      **Stage BEFORE bumping to the next version.** Both commands read the
+      version from the working tree, so once you bump, they target the new
+      (unpublished) version and silently warn instead of staging — the
+      release you just published never reaches Windows/Linux family
+      devices. If that happens, don't back-stage: ship the newer version
+      and let those platforms jump to it.
 - [ ] X post on @Gogo6969 (short + catchy + screenshot; GitHub/website
       links go in a **reply**, never in tweet 1) — only after step 5's
       public-endpoint check passed. **At most ONE post per day**: on
