@@ -277,6 +277,7 @@ pub async fn connect(
                 host_slots,
                 host_fact_check,
                 host_reports,
+                host_thread_ops,
             } => {
                 {
                     let mut stats = state.stats.write();
@@ -290,6 +291,7 @@ pub async fn connect(
                         host_slots: host_slots.clone(),
                         host_fact_check,
                         host_reports,
+                        host_thread_ops,
                     });
                 }
                 let _ = app.emit(
@@ -304,6 +306,7 @@ pub async fn connect(
                         "host_slots": host_slots,
                         "host_fact_check": host_fact_check,
                         "host_reports": host_reports,
+                        "host_thread_ops": host_thread_ops,
                     }),
                 );
             }
@@ -409,6 +412,12 @@ pub async fn connect(
                     }),
                 );
             }
+            Envelope::ThreadOpAck { thread_id, ok, message } => {
+                let mut net = state.net.lock().await;
+                if let Some(tx) = net.thread_op_pending.remove(&thread_id) {
+                    let _ = tx.send((ok, message));
+                }
+            }
             Envelope::ReportAck { message_id, ok, message } => {
                 let mut net = state.net.lock().await;
                 if let Some(tx) = net.report_pending.remove(&message_id) {
@@ -489,6 +498,12 @@ pub async fn connect(
             let _ = tx.send((
                 false,
                 "Lost the connection to your KinAI host during the fact check.".to_string(),
+            ));
+        }
+        for (_, tx) in net.thread_op_pending.drain() {
+            let _ = tx.send((
+                false,
+                "Lost the connection to your KinAI host — the change wasn't saved.".to_string(),
             ));
         }
         for (_, tx) in net.report_pending.drain() {

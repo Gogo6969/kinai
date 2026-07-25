@@ -96,6 +96,8 @@ class AppStore {
     host_fact_check?: boolean;
     /** Host speaks the report protocol (0.2.85+). */
     host_reports?: boolean;
+    /** Host applies client-initiated thread delete/rename (0.2.86+). */
+    host_thread_ops?: boolean;
   } | null>(null);
   /** mDNS-discovered KinAI hosts on the local network. Kept at the store
    *  level (not inside /client/+page.svelte) because the discovery event
@@ -232,7 +234,16 @@ class AppStore {
   async renameThread(id: string, title: string) {
     const trimmed = title.trim();
     if (!trimmed) return;
-    await api.renameThread(id, trimmed);
+    try {
+      await api.renameThread(id, trimmed);
+    } catch (e) {
+      window.dispatchEvent(
+        new CustomEvent('kin-toast', {
+          detail: { msg: `✗ ${String(e).replace(/^Error:\s*/, '')}`, ms: 6000 },
+        })
+      );
+      return;
+    }
     const idx = this.threads.findIndex((t) => t.id === id);
     if (idx >= 0) {
       this.threads[idx] = { ...this.threads[idx], title: trimmed };
@@ -271,7 +282,18 @@ class AppStore {
   }
 
   async deleteThread(id: string) {
-    await api.deleteThread(id);
+    try {
+      await api.deleteThread(id);
+    } catch (e) {
+      // Don't hide a conversation the host still has — that's exactly
+      // what made the old bug invisible until the next restart.
+      window.dispatchEvent(
+        new CustomEvent('kin-toast', {
+          detail: { msg: `✗ ${String(e).replace(/^Error:\s*/, '')}`, ms: 6000 },
+        })
+      );
+      return;
+    }
     this.threads = this.threads.filter((t) => t.id !== id);
     if (this.activeThreadId === id) {
       this.activeThreadId = this.threads[0]?.id ?? null;

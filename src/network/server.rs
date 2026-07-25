@@ -334,6 +334,7 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
         host_slots,
         host_fact_check,
         host_reports: true,
+        host_thread_ops: true,
     });
 
     let writer = tokio::spawn(async move {
@@ -366,7 +367,8 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
         // fresh full bucket by reconnecting, which made the limit
         // decorative for anything a client can trigger in a loop.
         if matches!(env, Envelope::SendMessage { .. } | Envelope::FactCheckRequest { .. }
-            | Envelope::ReportAnswer { .. })
+            | Envelope::ReportAnswer { .. } | Envelope::DeleteThread { .. }
+            | Envelope::RenameThread { .. })
             && !s.rate.allow(&claims.sub) {
             // A rejected REPORT still needs its ack, or the client's
             // round-trip waits out the full timeout and then blames a
@@ -374,6 +376,15 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
             if let Envelope::ReportAnswer { message_id, .. } = &env {
                 let _ = tx.send(Envelope::ReportAck {
                     message_id: message_id.clone(),
+                    ok: false,
+                    message: "Too many requests just now — wait a moment and try again.".into(),
+                });
+            }
+            if let Envelope::DeleteThread { thread_id } | Envelope::RenameThread { thread_id, .. } =
+                &env
+            {
+                let _ = tx.send(Envelope::ThreadOpAck {
+                    thread_id: thread_id.clone(),
                     ok: false,
                     message: "Too many requests just now — wait a moment and try again.".into(),
                 });
@@ -578,6 +589,31 @@ async fn dispatch(
                     }
                 }
             }
+        }
+        Envelope::DeleteThread { thread_id } => {
+            // Scoped by context_peer: the SQL deletes only where the row's
+            // peer_id matches, so one family member can never delete
+            // another's conversation by guessing an id.
+            let (ok, message) = match s.app.db.delete_thread(context_peer, &thread_id).await {
+                Ok(()) => (true, "Conversation deleted.".to_string()),
+                Err(e) => {
+                    tracing::warn!("client thread delete failed: {e:#}");
+                    (false, "The host couldn't delete that conversation.".to_string())
+                }
+            };
+            let _ = tx.send(Envelope::ThreadOpAck { thread_id, ok, message });
+        }
+        Envelope::RenameThread { thread_id, title } => {
+            let title: String = title.chars().take(200).collect();
+            let (ok, message) = match s.app.db.rename_thread(context_peer, &thread_id, &title).await
+            {
+                Ok(()) => (true, "Conversation renamed.".to_string()),
+                Err(e) => {
+                    tracing::warn!("client thread rename failed: {e:#}");
+                    (false, "The host couldn't rename that conversation.".to_string())
+                }
+            };
+            let _ = tx.send(Envelope::ThreadOpAck { thread_id, ok, message });
         }
         Envelope::ReportAnswer { message_id, question, answer, model, slot } => {
             // Identity comes from the HOST-authored invite label, not the

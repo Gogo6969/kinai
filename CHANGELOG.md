@@ -5,6 +5,19 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.86] — 2026-07-24
+
+### Fixed
+
+- **Deleted conversations stay deleted on family devices.** Deleting (or
+  renaming) a conversation on a joined device only changed that device's
+  own copy — the host still had the original and sent it back on the next
+  launch, so everything reappeared. Those actions now go to the host,
+  which owns the conversation, and the device says so plainly if the
+  change couldn't be saved instead of hiding it and forgetting. The host's
+  own conversations were never affected. Requires host and device on
+  0.2.86+.
+
 ## [0.2.85] — 2026-07-24
 
 ### Added

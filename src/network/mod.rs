@@ -88,6 +88,8 @@ pub struct NetState {
     /// Pending report round-trips keyed by message_id: `ReportAnswer` →
     /// `ReportAck`, so the button can confirm ("reported") or explain.
     pub report_pending: HashMap<String, oneshot::Sender<(bool, String)>>,
+    /// Pending thread delete/rename round-trips keyed by thread_id.
+    pub thread_op_pending: HashMap<String, oneshot::Sender<(bool, String)>>,
 }
 
 impl Default for NetState {
@@ -107,6 +109,7 @@ impl Default for NetState {
             slot_health_pending: None,
             fact_check_pending: HashMap::new(),
             report_pending: HashMap::new(),
+            thread_op_pending: HashMap::new(),
         }
     }
 }

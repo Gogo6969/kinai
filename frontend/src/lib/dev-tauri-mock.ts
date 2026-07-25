@@ -92,6 +92,7 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
       ],
       host_fact_check: true,
       host_reports: true,
+      host_thread_ops: true,
     };
   } else if (scenario === 'client-old-host') {
     // A client connected to a host that predates a capability (here:

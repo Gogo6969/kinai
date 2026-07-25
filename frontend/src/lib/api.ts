@@ -294,6 +294,9 @@ export interface HostInfo {
   /** Host understands the report protocol (0.2.85+). Absent/false on
    *  older hosts — the report button stays hidden rather than hanging. */
   host_reports?: boolean;
+  /** Host applies client-initiated thread delete/rename (0.2.86+).
+   *  Absent/false means such changes would silently revert on restart. */
+  host_thread_ops?: boolean;
 }
 
 /** An answer a family member flagged with the Report button. The host

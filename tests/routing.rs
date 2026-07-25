@@ -69,3 +69,33 @@ async fn switch_confirmation_names_the_model() {
     assert!(msg.contains("deep"), "confirmation should name the slot: {msg}");
     assert!(msg.contains("deep-model"), "confirmation should name the model: {msg}");
 }
+
+/// A client's thread delete must be PEER-SCOPED on the host: one family
+/// member can never delete another's conversation, even knowing its id.
+/// (The client-side bug that motivated this — deletes never reaching the
+/// host at all — is covered by the mode-aware command; this guards the
+/// blast radius of the new host-side handler.)
+#[tokio::test]
+async fn thread_delete_is_peer_scoped() {
+    let tmp = tempfile::tempdir().unwrap();
+    let db = Db::open(tmp.path().join("t.db")).await.unwrap();
+
+    let mine = db.create_thread("peer-a", Some("mine")).await.unwrap();
+    let theirs = db.create_thread("peer-b", Some("theirs")).await.unwrap();
+
+    // peer-a tries to delete peer-b's thread using the right id.
+    db.delete_thread("peer-a", &theirs.id).await.unwrap();
+    assert_eq!(
+        db.list_threads("peer-b").await.unwrap().len(),
+        1,
+        "another peer's thread must survive"
+    );
+
+    // Deleting its own works.
+    db.delete_thread("peer-a", &mine.id).await.unwrap();
+    assert!(db.list_threads("peer-a").await.unwrap().is_empty());
+
+    // Rename is scoped the same way.
+    db.rename_thread("peer-a", &theirs.id, "hijacked").await.unwrap();
+    assert_eq!(db.list_threads("peer-b").await.unwrap()[0].title, "theirs");
+}

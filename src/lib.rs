@@ -108,6 +108,8 @@ pub struct HostInfo {
     /// Host speaks the report protocol (0.2.85+) — gates the report
     /// button so it never hangs against an older host.
     pub host_reports: bool,
+    /// Host applies client-initiated thread delete/rename (0.2.86+).
+    pub host_thread_ops: bool,
 }
 
 pub type SharedState = Arc<AppState>;

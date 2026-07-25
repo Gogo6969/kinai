@@ -90,6 +90,11 @@ pub enum Envelope {
         /// gates the per-message "fact check" button on client peers.
         #[serde(default)]
         host_fact_check: bool,
+        /// Host applies thread delete/rename sent by a client (0.2.86+).
+        /// Older hosts silently kept the thread, so the client's delete
+        /// came back on the next launch.
+        #[serde(default)]
+        host_thread_ops: bool,
         /// Host understands `ReportAnswer` (0.2.85+). Absent/false on
         /// older hosts, whose envelope parser would reject the frame with
         /// a generic error the client can't correlate — the report would
@@ -214,6 +219,24 @@ pub enum Envelope {
     // The host responds to ALL four mutations with a fresh `UserFacts`
     // list. That keeps the client UI in sync with one round-trip per
     // action and removes the need for separate ack envelopes.
+    /// Client → Host: delete one of MY threads on the host. Clients hold
+    /// no authoritative copy — their list comes from the host on every
+    /// launch — so a delete that only touched the local DB looked like
+    /// it worked and then reappeared after a restart (field report).
+    DeleteThread {
+        thread_id: String,
+    },
+    /// Client → Host: rename one of MY threads. Same reasoning as above.
+    RenameThread {
+        thread_id: String,
+        title: String,
+    },
+    /// Host → Client: the thread operation landed (or why it didn't).
+    ThreadOpAck {
+        thread_id: String,
+        ok: bool,
+        message: String,
+    },
     /// Client → Host: "this answer doesn't make sense". Carries a
     /// SNAPSHOT of the exchange the reporter chose to share — the host
     /// does not go read the peer's thread, which is what keeps the

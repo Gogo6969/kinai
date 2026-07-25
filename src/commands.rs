@@ -1442,11 +1442,76 @@ pub async fn delete_thread(
     state: tauri::State<'_, SharedState>,
     thread_id: String,
 ) -> Result<()> {
+    // Mode-aware, like list_threads. A CLIENT's thread list is served by
+    // the host on every launch, so deleting only in the local DB looked
+    // like it worked and then came back on restart — the host still had
+    // the row and re-sent it (field report, 0.2.85).
+    if matches!(state.config.read().mode, Mode::Client) {
+        client_thread_op(
+            &state,
+            &thread_id,
+            crate::network::protocol::Envelope::DeleteThread {
+                thread_id: thread_id.clone(),
+            },
+        )
+        .await?;
+        // Also drop the local copy so the offline fallback list (used when
+        // the WS is down) doesn't show a conversation the host no longer has.
+        let _ = state.db.delete_thread(db::HOST_PEER, &thread_id).await;
+        return Ok(());
+    }
     state
         .db
         .delete_thread(db::HOST_PEER, &thread_id)
         .await
         .map_err(err)
+}
+
+/// Send a thread delete/rename to the host and wait for its ack. The
+/// host is the only authority on a client's threads, so a failure here
+/// must surface — silently "succeeding" is what made the original bug
+/// invisible until the next restart.
+async fn client_thread_op(
+    state: &tauri::State<'_, SharedState>,
+    thread_id: &str,
+    envelope: crate::network::protocol::Envelope,
+) -> Result<String> {
+    // An older host doesn't understand these envelopes: it answers with a
+    // generic parse error the client can't correlate, so the wait would
+    // burn its whole timeout. Refuse up front with something actionable.
+    let host_ok = state
+        .stats
+        .read()
+        .host_info
+        .as_ref()
+        .map(|h| h.host_thread_ops)
+        .unwrap_or(false);
+    if !host_ok {
+        return Err("Your family's KinAI host needs updating before conversations can be deleted or renamed from this device."
+            .into());
+    }
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let tx = {
+        let mut net = state.net.lock().await;
+        net.thread_op_pending.insert(thread_id.to_string(), sender);
+        net.client_tx.clone()
+    };
+    let Some(tx) = tx else {
+        state.net.lock().await.thread_op_pending.remove(thread_id);
+        return Err("Not connected to your family's KinAI host.".into());
+    };
+    if tx.send(envelope).is_err() {
+        state.net.lock().await.thread_op_pending.remove(thread_id);
+        return Err("Lost the host connection before the change could be saved.".into());
+    }
+    let outcome = match tokio::time::timeout(std::time::Duration::from_secs(15), receiver).await {
+        Err(_) => Err("The host didn't confirm the change — please try again.".to_string()),
+        Ok(Err(_)) => Err("The host dropped the request.".to_string()),
+        Ok(Ok((true, msg))) => Ok(msg),
+        Ok(Ok((false, msg))) => Err(msg),
+    };
+    state.net.lock().await.thread_op_pending.remove(thread_id);
+    outcome
 }
 
 #[tauri::command]
@@ -1455,6 +1520,21 @@ pub async fn rename_thread(
     thread_id: String,
     title: String,
 ) -> Result<()> {
+    // Same authority split as delete_thread — a client rename that only
+    // touched the local DB reverted on the next launch.
+    if matches!(state.config.read().mode, Mode::Client) {
+        client_thread_op(
+            &state,
+            &thread_id,
+            crate::network::protocol::Envelope::RenameThread {
+                thread_id: thread_id.clone(),
+                title: title.clone(),
+            },
+        )
+        .await?;
+        let _ = state.db.rename_thread(db::HOST_PEER, &thread_id, &title).await;
+        return Ok(());
+    }
     state
         .db
         .rename_thread(db::HOST_PEER, &thread_id, &title)
