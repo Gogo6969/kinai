@@ -5,6 +5,21 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.87] — 2026-07-25
+
+### Fixed
+
+- **Windows and Linux devices could briefly not update at all.** For the
+  30–60 minutes between a new version being installed on the host and its
+  Windows/Linux bundles being staged, the host offered those devices a
+  version it had no download for — and because the updater resolves the
+  download before comparing versions, their update check failed outright
+  instead of falling back. They could not even install a version that was
+  ready for them. The host now answers each platform with the newest
+  version staged *for that platform*, so a device is never offered
+  something it can't install. Macs are unaffected and keep updating
+  immediately.
+
 ## [0.2.86] — 2026-07-24
 
 ### Fixed

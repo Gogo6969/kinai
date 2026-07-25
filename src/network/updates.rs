@@ -140,6 +140,66 @@ fn host_target_id() -> &'static str {
 /// one supported target. The deploy script stages by version, so this
 /// is the "latest staged release."
 fn latest_version_root() -> Option<(String, PathBuf)> {
+    latest_version_root_in(&updates_dir())
+}
+
+/// Newest staged version that has a bundle for THIS target.
+///
+/// The manifest carries a single version, so without knowing the asking
+/// client's platform the host has to pick one — and it used to pick the
+/// newest version staged for ANY platform. Between `deploy.sh` (which
+/// stages only the host's own arch) and `stage-windows`/`stage-linux`
+/// (which run after the release publishes), that version has no entry
+/// for the other platforms. A client whose target is missing from
+/// `platforms` doesn't just skip the update: tauri-plugin-updater
+/// resolves the download URL BEFORE comparing versions, so `check()`
+/// fails outright and the client can't update to ANY version until
+/// staging finishes.
+///
+/// Selecting per target removes that window entirely, and can only ever
+/// move a target forward — never withhold an update it could install.
+fn newest_version_for_target(base: &Path, target: &str) -> Option<(String, PathBuf)> {
+    let mut hits: Vec<(String, PathBuf)> = staged_version_dirs(base)
+        .into_iter()
+        .filter(|(_, dir)| resolve_bundle(dir, target).is_some())
+        .collect();
+    hits.sort_by(|a, b| natural_version_cmp(&a.0, &b.0));
+    hits.pop()
+}
+
+/// Every `<base>/<version>/` directory that holds at least one bundle.
+fn staged_version_dirs(base: &Path) -> Vec<(String, PathBuf)> {
+    std::fs::read_dir(base)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                && !e.file_name().to_string_lossy().starts_with("latest-")
+                && !e.file_name().to_string_lossy().starts_with("shot-backup-")
+        })
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            if !name.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                return None;
+            }
+            let dir = e.path();
+            SUPPORTED_TARGETS
+                .iter()
+                .any(|t| resolve_bundle(&dir, t).is_some())
+                .then_some((name, dir))
+        })
+        .collect()
+}
+
+fn latest_version_root_in(base: &Path) -> Option<(String, PathBuf)> {
+    let mut versions = staged_version_dirs(base);
+    versions.sort_by(|a, b| natural_version_cmp(&a.0, &b.0));
+    versions.pop()
+}
+
+#[allow(dead_code)]
+fn legacy_latest_version_root() -> Option<(String, PathBuf)> {
     let base = updates_dir();
     let mut versions: Vec<(String, PathBuf)> = std::fs::read_dir(&base)
         .ok()?
@@ -180,11 +240,32 @@ fn natural_version_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     parts(a).cmp(&parts(b))
 }
 
-pub(crate) async fn manifest(State(s): State<AxumState>) -> Result<Response, (StatusCode, String)> {
-    let (version, root) = latest_version_root().ok_or((
-        StatusCode::NOT_FOUND,
-        "No update bundle has been staged on this host yet. Run `scripts/deploy.sh` to publish one.".into(),
-    ))?;
+#[derive(Deserialize)]
+pub struct ManifestQuery {
+    /// Sent by KinAI clients from 0.2.87 on (`?target={{target}}`).
+    /// Absent for older clients — they get the previous whole-host
+    /// behavior, so this can never make an existing client worse.
+    pub target: Option<String>,
+}
+
+pub(crate) async fn manifest(
+    State(s): State<AxumState>,
+    Query(q): Query<ManifestQuery>,
+) -> Result<Response, (StatusCode, String)> {
+    let asked = q
+        .target
+        .as_deref()
+        .filter(|t| SUPPORTED_TARGETS.contains(t));
+    let (version, root) = match asked {
+        Some(t) => newest_version_for_target(&updates_dir(), t).ok_or((
+            StatusCode::NOT_FOUND,
+            format!("No update bundle staged for {t} on this host yet."),
+        ))?,
+        None => latest_version_root().ok_or((
+            StatusCode::NOT_FOUND,
+            "No update bundle has been staged on this host yet. Run `scripts/deploy.sh` to publish one.".into(),
+        ))?,
+    };
     let host_http_base = http_base_for(&s).unwrap_or_else(|| "http://127.0.0.1".into());
 
     let mut platforms: BTreeMap<String, PlatformBundle> = BTreeMap::new();
@@ -320,4 +401,62 @@ fn http_base_for(s: &AxumState) -> Option<String> {
         .map(|ip| ip.to_string())
         .unwrap_or_else(|_| cfg.host.bind_addr.clone());
     Some(format!("http://{host}:{}", cfg.host.port))
+}
+
+#[cfg(test)]
+mod target_selection_tests {
+    use super::*;
+
+    fn stage(base: &Path, version: &str, target: &str) {
+        let dir = base.join(version).join(target);
+        std::fs::create_dir_all(&dir).unwrap();
+        let name = bundle_filenames(target)[0];
+        std::fs::write(dir.join(name), b"bundle").unwrap();
+        std::fs::write(dir.join(format!("{name}.sig")), b"sig").unwrap();
+    }
+
+    /// The exact shape that broke Windows/Linux clients: a newer version
+    /// staged for the host's own arch only, while the previous version
+    /// has everything. Each target must be offered the newest bundle IT
+    /// can actually install — never a version with no entry for it.
+    #[test]
+    fn each_target_gets_its_own_newest_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        for t in SUPPORTED_TARGETS {
+            stage(base, "0.2.85", t);
+        }
+        stage(base, "0.2.86", "darwin-aarch64");
+
+        assert_eq!(
+            newest_version_for_target(base, "darwin-aarch64").unwrap().0,
+            "0.2.86",
+            "the platform that IS staged gets the newest"
+        );
+        for t in ["windows-x86_64", "linux-x86_64", "darwin-x86_64"] {
+            assert_eq!(
+                newest_version_for_target(base, t).unwrap().0,
+                "0.2.85",
+                "{t} must still be offered the version it can install"
+            );
+        }
+        // Whole-host view (what pre-0.2.87 clients get) is unchanged.
+        assert_eq!(latest_version_root_in(base).unwrap().0, "0.2.86");
+    }
+
+    #[test]
+    fn version_order_is_numeric_and_gaps_are_fine() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        // 0.2.9 must not beat 0.2.10 (string order would).
+        stage(base, "0.2.9", "linux-x86_64");
+        stage(base, "0.2.10", "linux-x86_64");
+        assert_eq!(newest_version_for_target(base, "linux-x86_64").unwrap().0, "0.2.10");
+        // A target never staged has no answer — the client then falls
+        // back to GitHub rather than being handed something broken.
+        assert!(newest_version_for_target(base, "windows-x86_64").is_none());
+        // Directories with no bundle at all are ignored entirely.
+        std::fs::create_dir_all(base.join("0.2.99")).unwrap();
+        assert_eq!(newest_version_for_target(base, "linux-x86_64").unwrap().0, "0.2.10");
+    }
 }

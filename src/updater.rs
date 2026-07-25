@@ -68,7 +68,11 @@ async fn try_host_check<R: Runtime>(app: &AppHandle<R>) -> bool {
         Some(u) => u,
         None => return false,
     };
-    let endpoint = format!("{host_url}/v1/update/manifest");
+    // `{{target}}` is substituted by the updater plugin with this
+    // machine's target id, so the host can answer with the newest
+    // version staged FOR THIS PLATFORM. Older hosts ignore the query
+    // and answer exactly as before.
+    let endpoint = format!("{host_url}/v1/update/manifest?target={{{{target}}}}");
     let parsed = match endpoint.parse() {
         Ok(u) => u,
         Err(e) => {
@@ -243,7 +247,11 @@ async fn check_via_host<R: Runtime>(
 ) -> Result<Option<tauri_plugin_updater::Update>, anyhow::Error> {
     let host_url = host_http_base(app)
         .ok_or_else(|| anyhow::anyhow!("no host URL saved"))?;
-    let endpoint = format!("{host_url}/v1/update/manifest");
+    // `{{target}}` is substituted by the updater plugin with this
+    // machine's target id, so the host can answer with the newest
+    // version staged FOR THIS PLATFORM. Older hosts ignore the query
+    // and answer exactly as before.
+    let endpoint = format!("{host_url}/v1/update/manifest?target={{{{target}}}}");
     let parsed = endpoint.parse()?;
     let updater = app
         .updater_builder()
