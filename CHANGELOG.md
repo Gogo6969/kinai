@@ -5,6 +5,31 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.88] — 2026-07-25
+
+### Fixed
+
+- **Answers could silently render with text crossed out and numbers
+  missing.** A lone `~` means "approximately" to every model — "~540
+  minutes", "~29.7 AU" — but Markdown also reads it as a strikethrough
+  delimiter, so two of them in one paragraph struck out everything in
+  between *and swallowed the tildes*. A fact-check verdict quoting
+  `"~540 minutes (9 hours)"` was displayed as a crossed-out `540 minutes
+  (9 hours)`, which no longer matched the answer being checked and read
+  like the checker had invented the claim. A single `~` is now always
+  literal text; deliberate `~~strikethrough~~` still works, and `~/paths`
+  in code spans were never affected. Applies everywhere KinAI renders
+  text: chat, streaming, fact-check panels, and the changelog window.
+
+### Changed
+
+- **Fact-check verdicts now say where the problem is.** The verdict line
+  must name which part of an answer is wrong — the table, the notes
+  below it, the summary — and each bullet must quote the claim verbatim
+  instead of paraphrasing it. Previously a verdict could flag a figure
+  that only appeared in a footnote while the reader was scanning the
+  table, with no way to tell the two apart.
+
 ## [0.2.87] — 2026-07-25
 
 ### Fixed

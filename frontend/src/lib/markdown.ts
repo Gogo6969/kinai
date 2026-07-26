@@ -67,6 +67,37 @@ marked.use({
   },
 });
 
+// A lone `~` means "approximately" to every model that writes numbers —
+// "~540 minutes", "~29.7 AU". GFM also reads it as a strikethrough
+// delimiter, so TWO of them in one paragraph silently strike out
+// everything in between and swallow the tildes. A 0.2.87 fact-check
+// verdict rendered as
+//   Claimed Pluto range "~~540 minutes (9 hours)" is incorrect … about ~410 minutes (~~6.8 hours)
+// with the middle struck through — the quoted claim no longer matched
+// the answer's wording, so it read like the checker had invented it.
+// Numbers surviving intact matters more than single-tilde strikethrough,
+// which nobody types on purpose. `~~real strikethrough~~` still works.
+//
+// Done as an inline extension, not a preprocessing pass: extensions are
+// tried before the built-in tokenizers but only at a position the lexer
+// has actually reached, so tildes inside code spans and fences (`~/.kinai`)
+// are consumed by the codespan tokenizer and never reach this.
+marked.use({
+  extensions: [
+    {
+      name: 'looseTilde',
+      level: 'inline',
+      start(src: string) {
+        return src.indexOf('~');
+      },
+      tokenizer(src: string) {
+        if (!/^~(?!~)/.test(src)) return undefined;
+        return { type: 'text', raw: '~', text: '~' };
+      },
+    },
+  ],
+});
+
 function isSafeImageUrl(url: string): boolean {
   const trimmed = url.trim();
   if (!trimmed) return false;

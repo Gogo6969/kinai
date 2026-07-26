@@ -134,10 +134,15 @@ established facts, marking them as unverified-by-search.\n\
 - Judge only FACTS, not style or opinions.\n\
 FORMAT (markdown, concise):\n\
 Start with exactly one verdict line: `✅ Accurate`, `⚠️ Partly accurate`, or \
-`❌ Contains errors` (add a ≤10-word reason).\n\
+`❌ Contains errors`, plus a ≤14-word reason. When the answer has several \
+parts (a table, notes below it, a summary), the reason must say WHICH part is \
+wrong — a reader scanning the table must not be sent hunting for a claim that \
+only appears in a footnote.\n\
 Then at most 5 bullets — only for claims that are wrong, dubious, or \
-unverifiable: quote the claim briefly, state what's actually correct, name the \
-source. No bullets if everything checks out.{no_evidence_note}"
+unverifiable. Each bullet starts with a SHORT VERBATIM quote from the ANSWER \
+(copy the wording exactly, so the reader can find it in the text they are \
+looking at), then what's actually correct, then the source. No bullets if \
+everything checks out.{no_evidence_note}"
     );
     let user = format!(
         "QUESTION:\n{question}\n\nANSWER TO CHECK:\n{answer}\n\nEVIDENCE (web search \

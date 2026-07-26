@@ -244,11 +244,15 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
     fact_check_message: async () => {
       await new Promise((r) => setTimeout(r, 1200));
       if (w.__mockFactCheckFail) throw new Error(w.__mockFactCheckFail);
+      // The second bullet deliberately carries TWO "~" approximations in
+      // one line: GFM used to pair them into a strikethrough and eat the
+      // numbers between them (0.2.87 field report). Keep them here so the
+      // regression shows up on sight in this scenario.
       return [
         '⚠️ Partly accurate — one date is off.',
         '',
         '- "The Eiffel Tower opened in 1887" — construction STARTED 1887; it opened **31 March 1889**. (Source: web_search — britannica.com)',
-        '- Height and visitor figures check out against current sources.',
+        '- "is 330 m tall" — right: ~330 m to the tip, ~300 m to the roof. (Source: web_search — toureiffel.paris)',
       ].join('\n');
     },
     set_vision_settings: (a) => { Object.assign(cfg.vision, a.vision); return cfg; },
