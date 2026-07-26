@@ -474,11 +474,50 @@ if [[ "$OS" == "Darwin" && "$APPLE_ENABLED" == "1" ]]; then
   echo "→ submitting to Apple notary (wait up to 10 min)"
   /usr/bin/ditto -c -k --sequesterRsrc --keepParent \
     "$SIGN_DIR/KinAI.app" "$SIGN_DIR/KinAI.zip"
-  xcrun notarytool submit "$SIGN_DIR/KinAI.zip" \
-    --key "$APPLE_API_KEY_PATH" \
-    --key-id "$APPLE_API_KEY" \
-    --issuer "$APPLE_API_ISSUER" \
-    --wait --timeout 600 2>&1 | tail -6
+
+  # --- notary submit (retried) ---
+  # Apple's notary service times out intermittently — on 2026-07-25 a
+  # submit died with NSURLErrorDomain -1001 "The request timed out"
+  # before the package was even uploaded, and `set -e` then threw away a
+  # finished, signed build. Network flakiness shouldn't cost a rebuild.
+  #
+  # Only the SUBMIT is retried, and only for transport failures: if
+  # Apple actually looks at the package and rejects it, retrying just
+  # burns 10 minutes per attempt to be told the same thing, so we stop
+  # immediately. Stapling and the spctl gate below still fail hard.
+  # NOTARY_BACKOFF is overridable so the retry logic can be tested
+  # without waiting out the real backoff.
+  notary_log="$SIGN_DIR/notary.log"
+  notary_backoff="${NOTARY_BACKOFF:-30}"
+  notary_ok=0
+  for attempt in 1 2 3; do
+    if xcrun notarytool submit "$SIGN_DIR/KinAI.zip" \
+        --key "$APPLE_API_KEY_PATH" \
+        --key-id "$APPLE_API_KEY" \
+        --issuer "$APPLE_API_ISSUER" \
+        --wait --timeout 600 > "$notary_log" 2>&1; then
+      tail -6 "$notary_log"
+      notary_ok=1
+      break
+    fi
+    tail -6 "$notary_log"
+    if grep -qE "status: (Invalid|Rejected)" "$notary_log"; then
+      echo "  ✗ Apple rejected the package — that is not a network fault."
+      echo "    Fix the signing/entitlements problem above; not retrying."
+      break
+    fi
+    if [ "$attempt" -lt 3 ]; then
+      wait_s=$((attempt * notary_backoff))
+      echo "  ⚠ notary submit failed (attempt $attempt/3, looks transient)"
+      echo "    retrying in ${wait_s}s…"
+      sleep "$wait_s"
+    fi
+  done
+  if [ "$notary_ok" -ne 1 ]; then
+    echo "  ✗ notarization did not succeed — aborting before anything is installed."
+    exit 1
+  fi
+  # --- end notary submit ---
 
   echo "→ stapling ticket"
   xcrun stapler staple "$SIGN_DIR/KinAI.app" 2>&1 | tail -2

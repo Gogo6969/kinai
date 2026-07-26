@@ -26,6 +26,14 @@ and "published".
       before touching anything it writes (no relaunching the app while
       the installer is still copying files — this caused the 0.2.80
       "asset not found: index.html" window).
+- [ ] **Never pipe deploy.sh.** Run it unpiped and check the status:
+      `./scripts/deploy.sh skip-bump > /tmp/deploy.log 2>&1; echo "exit=$?"`.
+      The script itself is careful (`set -euo pipefail`, and it aborts
+      before installing anything), but a piped invocation such as
+      `deploy.sh | tail -40` returns the **pipe's** exit status, not the
+      script's — on 2026-07-25 a notarization that failed on a network
+      timeout was reported as "exit code 0" and only caught by reading
+      the log. Confirm the last line of the log is `✓ done`.
 - [ ] `PlistBuddy -c 'Print :CFBundleShortVersionString' /Applications/KinAI.app/Contents/Info.plist`
       shows the new version.
 - [ ] `spctl --assess -vv --type execute /Applications/KinAI.app` says
