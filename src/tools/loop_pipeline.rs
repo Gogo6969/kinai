@@ -128,9 +128,28 @@ pub async fn run_pipeline(
         }
 
         if tool_calls.is_empty() {
-            return Ok(PipelineResult {
-                final_content: accumulated.lock().await.clone(),
-            });
+            // A round with no tool calls is the normal end of a turn — but
+            // only if the model actually said something. A reasoning model
+            // (deep slot's Qwen3.6) routinely spends a round entirely in
+            // its `reasoning_content` channel and closes with `stop` and an
+            // empty `content`. Returning here handed the caller an empty
+            // string, which surfaced as "the model server may still be
+            // loading … or may be offline" — blaming a server that was
+            // healthy and had just streamed several hundred characters of
+            // thinking. Fall through to the diagnostics below instead, so
+            // the user is told what actually happened.
+            let visible = accumulated.lock().await.clone();
+            if !visible.trim().is_empty() {
+                return Ok(PipelineResult {
+                    final_content: visible,
+                });
+            }
+            tracing::warn!(
+                any_reasoning,
+                tool_invocations = total_tool_invocations,
+                "model closed a round with no content and no tool calls"
+            );
+            break;
         }
 
         let assistant_calls: Vec<ToolCall> = tool_calls
@@ -162,6 +181,14 @@ pub async fn run_pipeline(
                 name: call.function.name.clone(),
                 args: call.function.arguments.clone(),
             });
+            // Tool calls are logged on BOTH paths. Until 0.2.89 a failed
+            // tool left no trace anywhere: a field report of "the model
+            // says it can't browse the web" could not be diagnosed after
+            // the fact, because the only record of the failed search was
+            // the model's own (invented) explanation of it. Log the tool,
+            // the arguments, the error and the duration so the next
+            // occurrence is answerable from the host log alone.
+            let started = std::time::Instant::now();
             let (result, ok) = match registry::execute(
                 &call.function.name,
                 &call.function.arguments,
@@ -169,22 +196,52 @@ pub async fn run_pipeline(
             )
             .await
             {
-                Ok(r) => (r, true),
-                Err(e) => (
-                    // The model reads this as the tool's output — make the
-                    // failure impossible to gloss over. Without this, a turn
-                    // whose every search errored still got told to "answer
-                    // from the results", and it fabricated (the 2026 World
-                    // Cup incident: all Exa calls failed, the model recited
-                    // the 2022 final as current news).
-                    format!(
-                        "TOOL FAILED ({}): {e}. This tool returned NO information. Do not \
+                Ok(r) => {
+                    tracing::info!(
+                        tool = %call.function.name,
+                        args = %truncate_for_log(&call.function.arguments),
+                        ms = started.elapsed().as_millis() as u64,
+                        result_chars = r.len(),
+                        "tool call ok"
+                    );
+                    (r, true)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        tool = %call.function.name,
+                        args = %truncate_for_log(&call.function.arguments),
+                        ms = started.elapsed().as_millis() as u64,
+                        error = %format!("{e:#}"),
+                        "TOOL CALL FAILED"
+                    );
+                    (
+                        // The model reads this as the tool's output — make the
+                        // failure impossible to gloss over. Without this, a turn
+                        // whose every search errored still got told to "answer
+                        // from the results", and it fabricated (the 2026 World
+                        // Cup incident: all Exa calls failed, the model recited
+                        // the 2022 final as current news).
+                        //
+                        // The capability clause is the 0.2.89 addition. Told only
+                        // that a tool "failed", models rationalise the failure as
+                        // a limitation of themselves — a field report came back
+                        // with "I can't provide a link, as my knowledge doesn't
+                        // include live web browsing", which is false (the tool
+                        // exists and works) and sends the user off to do the
+                        // lookup by hand.
+                        format!(
+                            "TOOL FAILED ({}): {e}. This tool returned NO information. Do not \
 invent or recall-from-memory what it was meant to provide — if the user's question \
-depends on it, say plainly that the lookup failed and suggest trying again.",
-                        call.function.name
-                    ),
-                    false,
-                ),
+depends on it, say plainly that the lookup failed and suggest trying again.\n\
+IMPORTANT: this was a temporary failure of ONE call, not a limitation of yours. You \
+DO have working web access through your tools. Never tell the user you cannot browse \
+the web, lack live search, or only have training data — that is false and unhelpful. \
+Say the lookup failed and offer to try again.",
+                            call.function.name
+                        ),
+                        false,
+                    )
+                }
             };
             if !ok {
                 total_tool_failures += 1;
@@ -254,23 +311,126 @@ contained no information — do not fabricate what they were meant to provide."
     // was *doing* something but never produced an answer).
     let mut final_content = accumulated.lock().await.clone();
     if final_content.trim().is_empty() {
-        let note = if total_tool_invocations > 0 {
-            "_I searched but couldn't pull together a clear answer to that one — it happens with \
+        let note = empty_turn_note(any_reasoning, total_tool_invocations);
+        (handlers.on_token)(note.to_string());
+        final_content.push_str(note);
+    } else if every_lookup_failed(total_tool_invocations, total_tool_failures) {
+        (handlers.on_token)(ALL_LOOKUPS_FAILED_BANNER.to_string());
+        final_content.push_str(ALL_LOOKUPS_FAILED_BANNER);
+    }
+    Ok(PipelineResult { final_content })
+}
+
+/// EVERY lookup this turn failed, yet the model still wrote prose. Whatever
+/// it says came from memory, not from a live result — and we can't rely on
+/// it saying so: the instruction in the TOOL FAILED payload is guidance, and
+/// the field report that prompted this had the model claim outright that it
+/// had no web access. State the truth deterministically, so the warning is
+/// there no matter how the model chose to narrate the failure.
+pub(crate) const ALL_LOOKUPS_FAILED_BANNER: &str =
+    "\n\n_⚠️ Every web lookup for this answer failed, so nothing above comes from a live \
+search — it is the model's own recollection and may be wrong or out of date. KinAI's \
+search does work; this was a failure of the lookup itself. Ask again to retry it._";
+
+/// Show the banner only when every lookup that ran failed. A turn with one
+/// good result and one failure still has live grounding, and warning there
+/// would train the family to ignore the banner.
+pub(crate) fn every_lookup_failed(invocations: usize, failures: usize) -> bool {
+    invocations > 0 && failures >= invocations
+}
+
+/// Which diagnostic to show when a turn produced no visible text at all.
+/// Split out so the wording is testable: the `any_reasoning` branch used to
+/// blame the model server ("may still be loading … or may be offline") for
+/// what is actually a healthy server whose reasoning model simply never left
+/// its thinking channel.
+pub(crate) fn empty_turn_note(any_reasoning: bool, tool_invocations: usize) -> &'static str {
+    if tool_invocations > 0 {
+        "_I searched but couldn't pull together a clear answer to that one — it happens with \
 very specific or hard-to-find facts. Try rephrasing or narrowing the question, or ask `/deep` \
 for a more thorough attempt. (If this happens on every question, your model may not handle \
 tool-calling well — you can turn tools off in Settings → Tools.)_"
-        } else if any_reasoning {
-            "_The model reasoned through your request but didn't produce a visible answer. \
-This usually means it tried to call a tool from inside its reasoning channel but the call \
-wasn't surfaced as a structured tool_call. Try disabling tools in Settings, or rephrase to \
-ask it to answer from its own knowledge._"
-        } else {
-            "_The model returned an empty response. It may have tried (and failed) to call a \
+    } else if any_reasoning {
+        "_The model spent this turn \"thinking\" and never wrote a visible answer — its whole \
+reply went to the hidden reasoning channel. Your model server is fine; this is the model \
+stopping after its own thoughts. Ask again (it often clears on its own), or rephrase more \
+directly — \"answer in one short line\" tends to snap it out of it._"
+    } else {
+        "_The model returned an empty response. It may have tried (and failed) to call a \
 tool, or hit a stop condition before producing any output. Try rephrasing the question, or — \
 if your server doesn't support harmony tool-calling — toggle tools off in Settings._"
-        };
-        (handlers.on_token)(note.to_string());
-        final_content.push_str(note);
     }
-    Ok(PipelineResult { final_content })
+}
+
+/// Arguments are model-authored and can be long (an image prompt, a pasted
+/// paragraph). Keep log lines readable and bounded — and slice on a char
+/// boundary, since a query can be any language.
+fn truncate_for_log(s: &str) -> String {
+    const MAX: usize = 160;
+    if s.chars().count() <= MAX {
+        return s.replace('\n', " ");
+    }
+    let cut: String = s.chars().take(MAX).collect();
+    format!("{}…", cut.replace('\n', " "))
+}
+
+#[cfg(test)]
+mod log_tests {
+    use super::truncate_for_log;
+
+    #[test]
+    fn short_args_pass_through_with_newlines_flattened() {
+        assert_eq!(truncate_for_log(r#"{"query":"a b"}"#), r#"{"query":"a b"}"#);
+        assert_eq!(truncate_for_log("line1\nline2"), "line1 line2");
+    }
+
+    #[test]
+    fn long_args_are_cut_on_a_char_boundary() {
+        // A query can be in any language; slicing by byte would panic here.
+        let cyrillic = "я".repeat(400);
+        let out = truncate_for_log(&cyrillic);
+        assert!(out.ends_with('…'));
+        assert_eq!(out.chars().count(), 161, "160 chars + ellipsis");
+
+        let emoji = "🇩🇪".repeat(300);
+        assert!(truncate_for_log(&emoji).ends_with('…'));
+    }
+}
+
+#[cfg(test)]
+mod failure_surface_tests {
+    use super::{empty_turn_note, every_lookup_failed, EMPTY_REPLY_NOTE};
+
+    #[test]
+    fn banner_only_when_every_lookup_failed() {
+        assert!(!every_lookup_failed(0, 0), "no tools ran — nothing to warn about");
+        assert!(!every_lookup_failed(2, 0), "both searches worked");
+        assert!(
+            !every_lookup_failed(2, 1),
+            "one good result still grounds the answer; crying wolf trains users to ignore it"
+        );
+        assert!(every_lookup_failed(1, 1));
+        assert!(every_lookup_failed(3, 3));
+    }
+
+    #[test]
+    fn a_thinking_only_turn_does_not_blame_the_server() {
+        // The 2026-07-27 field report: deep streamed hundreds of chars of
+        // reasoning against a healthy server, and the user was told it
+        // "may still be loading … or may be offline".
+        let note = empty_turn_note(true, 0);
+        assert!(note.contains("thinking"), "should name the real cause");
+        assert!(note.contains("server is fine"));
+        for wrong in ["offline", "still be loading"] {
+            assert!(!note.contains(wrong), "must not blame the server: {wrong}");
+        }
+        assert!(EMPTY_REPLY_NOTE.contains("may be offline"), "unchanged fallback");
+    }
+
+    #[test]
+    fn tool_turn_and_bare_empty_turn_get_their_own_notes() {
+        assert_ne!(empty_turn_note(true, 0), empty_turn_note(false, 0));
+        assert!(empty_turn_note(false, 2).contains("searched"));
+        assert!(empty_turn_note(true, 2).contains("searched"), "tools win over reasoning");
+    }
 }

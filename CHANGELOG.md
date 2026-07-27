@@ -5,6 +5,41 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.89] — 2026-07-27
+
+### Fixed
+
+- **A failed web search could come back as "I can't browse the web".**
+  When a lookup failed, the model was told only that the tool "failed" —
+  and models rationalise that as a limitation of themselves. One field
+  report answered a hardware question with "I can't provide a direct
+  link, as my knowledge doesn't include live web browsing", which is
+  false: the search tool exists, works, and had just failed once. The
+  tool-failure payload now states explicitly that web access works and
+  that claiming otherwise is wrong. Independently of what the model
+  says, an answer whose every lookup failed now carries a banner saying
+  so — the model can no longer quietly pass its own memory off as a
+  fresh result.
+- **Transient search failures now retry once.** Measured Exa latency for
+  KinAI's request ranges from 0.1s to ~7s against a 15s ceiling, so a
+  slow moment cost the entire turn. Timeouts, dropped connections, 5xx
+  and 429 get one more attempt; wrong-API-key and bad-request errors do
+  not (they fail identically, and retrying only delays telling you).
+- **A "thinking" model no longer gets blamed on your server.** The deep
+  slot's reasoning model regularly ends a round having written only to
+  its hidden reasoning channel. KinAI returned that empty result as
+  "the model server may still be loading… or may be offline" — about a
+  server that was healthy and had just streamed hundreds of characters
+  of thought. That case is now named for what it is.
+
+### Added
+
+- **Tool calls are logged.** Every call records the tool, its arguments,
+  duration and result size; failures log at WARN with the underlying
+  error. Until now a failed search left no trace anywhere, so the only
+  surviving account of it was the model's own invented explanation —
+  which is precisely how the bug above went unexplained.
+
 ## [0.2.88] — 2026-07-25
 
 ### Fixed

@@ -159,7 +159,57 @@ struct ExaResult {
     score: Option<f64>,
 }
 
+/// One retry for transient failures, then give up.
+///
+/// A search that fails costs the whole turn: the model gets a TOOL FAILED
+/// payload and the user gets "the lookup failed" for a question the engine
+/// could have answered a second later. Measured Exa latency for KinAI's
+/// payload (which requests per-result summaries) ranges from 0.1s to ~7s
+/// against a 15s ceiling, so a slow moment or a dropped connection lands
+/// close enough to the edge to be worth one more attempt.
+///
+/// Deliberately NOT retried: auth and request errors (401/403/400/404).
+/// Those fail identically on the second try — retrying only doubles the
+/// wait before the user is told their API key is wrong. 429 IS retried,
+/// after a longer pause, since it clears on its own.
 async fn exa_search(query: &str, max_results: usize, api_key: &str) -> Result<String> {
+    match exa_search_once(query, max_results, api_key).await {
+        Ok(r) => Ok(r),
+        Err(e) if is_transient(&e) => {
+            let pause = if is_rate_limited(&e) { 2000 } else { 400 };
+            tracing::warn!("exa search failed ({e:#}); retrying once in {pause}ms");
+            tokio::time::sleep(Duration::from_millis(pause)).await;
+            exa_search_once(query, max_results, api_key).await
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Timeouts, connection drops, 5xx and 429 are worth another attempt;
+/// anything else is a stable "no".
+fn is_transient(e: &anyhow::Error) -> bool {
+    if is_rate_limited(e) {
+        return true;
+    }
+    if let Some(re) = e.downcast_ref::<reqwest::Error>() {
+        if re.is_timeout() || re.is_connect() || re.is_request() {
+            return true;
+        }
+    }
+    let msg = format!("{e:#}");
+    msg.contains("(500")
+        || msg.contains("(502")
+        || msg.contains("(503")
+        || msg.contains("(504")
+        || msg.contains("timed out")
+        || msg.contains("connection")
+}
+
+fn is_rate_limited(e: &anyhow::Error) -> bool {
+    format!("{e:#}").contains("(429")
+}
+
+async fn exa_search_once(query: &str, max_results: usize, api_key: &str) -> Result<String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .build()?;
@@ -271,4 +321,51 @@ fn strip_tags(s: &str) -> String {
         .replace("&amp;", "&")
         .replace("&lt;", "<")
         .replace("&gt;", ">")
+}
+
+#[cfg(test)]
+mod retry_tests {
+    use super::{is_rate_limited, is_transient};
+
+    #[test]
+    fn transient_failures_are_retried() {
+        for msg in [
+            "Exa search failed (500): upstream error",
+            "Exa search failed (502): bad gateway",
+            "Exa search failed (503): unavailable",
+            "Exa search failed (504): gateway timeout",
+            "Exa search failed (429): slow down",
+            "operation timed out",
+            "error sending request: connection closed",
+        ] {
+            assert!(
+                is_transient(&anyhow::anyhow!("{msg}")),
+                "should retry: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn stable_failures_are_not_retried() {
+        // Retrying these only doubles the wait before the user learns
+        // their key is wrong — the second attempt fails identically.
+        for msg in [
+            "Exa search failed (401): invalid API key",
+            "Exa search failed (403): forbidden",
+            "Exa search failed (400): bad request",
+            "Exa search failed (404): not found",
+            "Exa is selected as the search engine but no API key is configured.",
+        ] {
+            assert!(
+                !is_transient(&anyhow::anyhow!("{msg}")),
+                "should NOT retry: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn rate_limit_is_detected_for_the_longer_backoff() {
+        assert!(is_rate_limited(&anyhow::anyhow!("Exa search failed (429): x")));
+        assert!(!is_rate_limited(&anyhow::anyhow!("Exa search failed (500): x")));
+    }
 }
