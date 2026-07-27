@@ -36,7 +36,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   cited: 14 of 15, then 10 of 10 through the live pipeline, with the fake
   citations and the wrong number gone. Guarded by
   `tests/search_discipline_live.rs`.
-
 - **A "thinking" model no longer gets blamed on your server.** The deep
   slot's reasoning model regularly ends a round having written only to
   its hidden reasoning channel. KinAI returned that empty result as
