@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>KinAI — project map</title>
+<style>
+  :root {
+    --bg: #0a0f14; --panel: #111820; --panel2: #0d141b; --line: #1e2a35;
+    --ink: #e6edf3; --dim: #8b9bab; --dim2: #5f7183;
+    --teal: #2dd4bf; --amber: #fbbf24; --rose: #fb7185; --violet: #a78bfa;
+    --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: light) {
+    :root { --bg:#f7f9fb; --panel:#fff; --panel2:#f0f4f8; --line:#dbe3ec;
+            --ink:#0d1722; --dim:#54657a; --dim2:#7d8fa3; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif; }
+  .wrap { max-width:1180px; margin:0 auto; padding:32px 20px 80px; }
+  h1 { font-size:26px; margin:0 0 4px; letter-spacing:-.02em; }
+  h2 { font-size:17px; margin:38px 0 12px; letter-spacing:-.01em;
+       display:flex; align-items:center; gap:9px; }
+  h2 .bar { width:3px; height:16px; background:var(--teal); border-radius:2px; }
+  .sub { color:var(--dim); font-size:13.5px; margin:0 0 22px; }
+  code, .mono { font-family:var(--mono); font-size:12.5px; }
+
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr));
+           gap:10px; margin:22px 0 6px; }
+  .stat { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+  .stat b { display:block; font-size:21px; font-weight:650; letter-spacing:-.02em; }
+  .stat span { color:var(--dim); font-size:11.5px; text-transform:uppercase; letter-spacing:.06em; }
+
+  .tabs { display:flex; gap:4px; flex-wrap:wrap; margin:26px 0 16px;
+          border-bottom:1px solid var(--line); }
+  .tab { background:none; border:0; color:var(--dim); font:inherit; font-size:13.5px;
+         padding:9px 13px; cursor:pointer; border-bottom:2px solid transparent; }
+  .tab:hover { color:var(--ink); }
+  .tab[aria-selected="true"] { color:var(--teal); border-bottom-color:var(--teal); }
+  .panel[hidden] { display:none; }
+
+  input[type=search] { width:100%; padding:10px 13px; border-radius:9px; font:inherit;
+    background:var(--panel2); border:1px solid var(--line); color:var(--ink); margin-bottom:14px; }
+  input[type=search]::placeholder { color:var(--dim2); }
+
+  .area { margin-bottom:22px; }
+  .area h3 { font-size:13px; text-transform:uppercase; letter-spacing:.07em;
+             color:var(--dim); margin:0 0 8px; font-weight:600; }
+  .file { display:grid; grid-template-columns:minmax(190px,300px) 1fr auto; gap:14px;
+          padding:8px 12px; border:1px solid transparent; border-radius:8px; align-items:baseline; }
+  .file:nth-child(odd) { background:var(--panel2); }
+  .file:hover { border-color:var(--line); }
+  .file .p { font-family:var(--mono); font-size:12px; color:var(--teal); word-break:break-all; }
+  .file .d { color:var(--dim); font-size:13px; }
+  .file .n { color:var(--dim2); font-size:11.5px; font-family:var(--mono); white-space:nowrap; }
+  @media (max-width:720px){ .file { grid-template-columns:1fr; gap:3px; } .file .n{display:none} }
+
+  .chips { display:flex; flex-wrap:wrap; gap:6px; }
+  .chip { background:var(--panel2); border:1px solid var(--line); border-radius:20px;
+          padding:3px 11px; font-family:var(--mono); font-size:11.5px; color:var(--dim); }
+
+  .rel { border-left:2px solid var(--line); padding:0 0 20px 20px; position:relative; margin-left:5px; }
+  .rel::before { content:""; position:absolute; left:-6px; top:5px; width:10px; height:10px;
+                 border-radius:50%; background:var(--teal); }
+  .rel.minor::before { background:var(--line); }
+  .rel h4 { margin:0 0 2px; font-size:14.5px; }
+  .rel .date { color:var(--dim2); font-size:12px; font-family:var(--mono); }
+  .rel ul { margin:8px 0 0; padding-left:17px; }
+  .rel li { margin-bottom:5px; color:var(--dim); font-size:13.5px; }
+  .rel li b { color:var(--ink); font-weight:600; }
+  .tag-sec { display:inline-block; font-size:10.5px; text-transform:uppercase; letter-spacing:.06em;
+             padding:1px 7px; border-radius:4px; margin-right:6px; vertical-align:1px; }
+  .Fixed { background:rgba(251,113,133,.15); color:var(--rose); }
+  .Added { background:rgba(45,212,191,.15); color:var(--teal); }
+  .Changed { background:rgba(167,139,250,.15); color:var(--violet); }
+  .Security,.Removed { background:rgba(251,191,36,.15); color:var(--amber); }
+
+  .empty { color:var(--dim2); font-style:italic; padding:14px; }
+  footer { margin-top:50px; padding-top:18px; border-top:1px solid var(--line);
+           color:var(--dim2); font-size:12.5px; }
+  a { color:var(--teal); }
+  .note { background:var(--panel); border:1px solid var(--line); border-left:3px solid var(--amber);
+          border-radius:8px; padding:12px 15px; margin:14px 0; color:var(--dim); font-size:13.5px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>KinAI — project map</h1>
+  <p class="sub" id="sub"></p>
+
+  <div class="stats" id="stats"></div>
+
+  <div class="note">
+    Generated from the repository by <code>scripts/build-map.py</code>. Module
+    descriptions are each file's own <code>//!</code> doc comment; the history is
+    <code>CHANGELOG.md</code> and the git tags. Re-run the script after any change —
+    nothing here is hand-maintained.
+  </div>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" data-p="arch" aria-selected="true">Architecture</button>
+    <button class="tab" role="tab" data-p="ui">Frontend</button>
+    <button class="tab" role="tab" data-p="surf">Surfaces</button>
+    <button class="tab" role="tab" data-p="hist">History</button>
+    <button class="tab" role="tab" data-p="tests">Tests</button>
+  </div>
+
+  <section class="panel" id="p-arch">
+    <input type="search" id="q-arch" placeholder="Filter modules — path or description…" />
+    <div id="arch"></div>
+  </section>
+
+  <section class="panel" id="p-ui" hidden>
+    <input type="search" id="q-ui" placeholder="Filter frontend files…" />
+    <div id="ui"></div>
+  </section>
+
+  <section class="panel" id="p-surf" hidden><div id="surf"></div></section>
+
+  <section class="panel" id="p-hist" hidden>
+    <input type="search" id="q-hist" placeholder="Filter releases — version or text…" />
+    <div id="hist"></div>
+  </section>
+
+  <section class="panel" id="p-tests" hidden><div id="tests"></div></section>
+
+  <footer id="foot"></footer>
+</div>
+
+<script>
+const DATA = /*__KINAI_MAP_DATA__*/null;
+
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const $ = id => document.getElementById(id);
+
+$("sub").textContent =
+  `v${DATA.version} · ${DATA.repo.commits} commits since ${DATA.repo.first_commit} · ` +
+  `${DATA.totals.releases} releases · HEAD ${DATA.repo.head}`;
+
+$("stats").innerHTML = [
+  [DATA.totals.rust_lines.toLocaleString(), "Rust lines"],
+  [DATA.totals.rust_files, "Rust modules"],
+  [DATA.totals.frontend_lines.toLocaleString(), "Frontend lines"],
+  [DATA.totals.frontend_files, "Frontend files"],
+  [DATA.totals.unit_tests, "Unit tests"],
+  [DATA.totals.releases, "Releases"],
+].map(([n, l]) => `<div class="stat"><b>${esc(n)}</b><span>${esc(l)}</span></div>`).join("");
+
+// ---- Architecture ----
+function renderArch(filter = "") {
+  const f = filter.toLowerCase();
+  let html = "";
+  for (const area of DATA.areas) {
+    const files = DATA.rust.filter(x => x.area === area.key &&
+      (!f || x.path.toLowerCase().includes(f) || (x.doc || "").toLowerCase().includes(f)));
+    if (!files.length) continue;
+    files.sort((a, b) => b.lines - a.lines);
+    html += `<div class="area"><h3>${esc(area.label)} · ${files.length} files</h3>` +
+      files.map(x => `<div class="file"><div class="p">${esc(x.path)}</div>` +
+        `<div class="d">${esc(x.doc) || "<span style='opacity:.5'>—</span>"}</div>` +
+        `<div class="n">${x.lines} ln${x.tests ? " · " + x.tests + "t" : ""}</div></div>`).join("") +
+      `</div>`;
+  }
+  $("arch").innerHTML = html || `<p class="empty">No modules match.</p>`;
+}
+
+// ---- Frontend ----
+function renderUi(filter = "") {
+  const f = filter.toLowerCase();
+  let html = "";
+  for (const kind of ["route", "component", "lib"]) {
+    const files = DATA.frontend.filter(x => x.kind === kind &&
+      (!f || x.path.toLowerCase().includes(f) || (x.doc || "").toLowerCase().includes(f)));
+    if (!files.length) continue;
+    files.sort((a, b) => b.lines - a.lines);
+    html += `<div class="area"><h3>${kind}s · ${files.length}</h3>` +
+      files.map(x => `<div class="file"><div class="p">${esc(x.path.replace("frontend/src/", ""))}</div>` +
+        `<div class="d">${esc((x.doc || "").slice(0, 190)) || "<span style='opacity:.5'>—</span>"}</div>` +
+        `<div class="n">${x.lines} ln</div></div>`).join("") + `</div>`;
+  }
+  $("ui").innerHTML = html || `<p class="empty">No files match.</p>`;
+}
+
+// ---- Surfaces ----
+(function () {
+  const s = DATA.surfaces;
+  const block = (label, items) => !items || !items.length ? "" :
+    `<div class="area"><h3>${esc(label)} · ${items.length}</h3><div class="chips">` +
+    items.map(i => `<span class="chip">${esc(i)}</span>`).join("") + `</div></div>`;
+  $("surf").innerHTML =
+    block("Routing slots", s.slots) +
+    block("Tools the model can call", s.tools) +
+    block("Database tables", s.db_tables) +
+    block("Host ↔ client protocol messages", s.protocol_envelope) +
+    block("Config sections", s.config_structs) +
+    block("Tauri commands (frontend → Rust)", s.tauri_commands);
+})();
+
+// ---- History ----
+function renderHist(filter = "") {
+  const f = filter.toLowerCase();
+  const rows = DATA.history.filter(v => {
+    if (!f) return true;
+    if (v.version.includes(f)) return true;
+    return JSON.stringify(v.sections).toLowerCase().includes(f);
+  });
+  $("hist").innerHTML = rows.map(v => {
+    const items = [];
+    for (const [sec, list] of Object.entries(v.sections)) {
+      for (const it of list) {
+        items.push(`<li><span class="tag-sec ${esc(sec)}">${esc(sec)}</span>` +
+          `<b>${esc(it.title)}</b> ${esc(it.detail.slice(0, 320))}</li>`);
+      }
+    }
+    const big = items.length > 1;
+    return `<div class="rel ${big ? "" : "minor"}">` +
+      `<h4>${esc(v.version)} <span class="date">${esc(v.date)}</span></h4>` +
+      (items.length ? `<ul>${items.join("")}</ul>` : "") + `</div>`;
+  }).join("") || `<p class="empty">No releases match.</p>`;
+}
+
+// ---- Tests ----
+(function () {
+  const unitTotal = DATA.totals.unit_tests;
+  const withTests = DATA.rust.filter(x => x.tests > 0).sort((a, b) => b.tests - a.tests);
+  let html = `<div class="area"><h3>Integration &amp; live tests · ${DATA.tests.length} files</h3>` +
+    DATA.tests.map(t => {
+      const ign = t.tests.filter(x => x.ignored).length;
+      return `<div class="file"><div class="p">${esc(t.file)}</div>` +
+        `<div class="d">${esc((t.doc || "").slice(0, 210))}</div>` +
+        `<div class="n">${t.tests.length} test${t.tests.length === 1 ? "" : "s"}` +
+        `${ign ? " · " + ign + " live" : ""}</div></div>`;
+    }).join("") + `</div>`;
+  html += `<div class="area"><h3>Unit tests beside the code · ${unitTotal} total</h3>` +
+    withTests.map(x => `<div class="file"><div class="p">${esc(x.path)}</div>` +
+      `<div class="d">${esc(x.doc)}</div><div class="n">${x.tests}</div></div>`).join("") + `</div>`;
+  $("tests").innerHTML = html;
+})();
+
+// ---- Tabs + filters ----
+document.querySelectorAll(".tab").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach(b => b.setAttribute("aria-selected", String(b === btn)));
+    document.querySelectorAll(".panel").forEach(p => p.hidden = p.id !== "p-" + btn.dataset.p);
+  });
+});
+$("q-arch").addEventListener("input", e => renderArch(e.target.value));
+$("q-ui").addEventListener("input", e => renderUi(e.target.value));
+$("q-hist").addEventListener("input", e => renderHist(e.target.value));
+
+renderArch(); renderUi(); renderHist();
+$("foot").innerHTML =
+  `Generated ${esc(DATA.generated_at)} · <a href="${esc(DATA.repo.url)}">${esc(DATA.repo.url)}</a> · ` +
+  `machine-readable twin: <code>docs/kinai-map.json</code>`;
+</script>
+</body>
+</html>

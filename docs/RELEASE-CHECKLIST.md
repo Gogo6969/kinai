@@ -89,3 +89,17 @@ A tag may only be re-pointed while the release is still a draft **and**
 no client anywhere (including family Macs via host staging) has
 installed that version number. Once any machine has it, the fix ships
 as a new version — the updater never re-offers an installed version.
+
+## Keeping the project map current
+
+`docs/kinai-map.html` + `docs/kinai-map.json` are generated, never edited
+by hand:
+
+```
+python3 scripts/build-map.py
+```
+
+Re-run it when the shape of the app changes (new module, new table, new
+protocol message) and after a release, so the map's history matches
+CHANGELOG.md. Module descriptions come from each file's own `//!` doc
+comment — the way to improve the map is to improve those.
