@@ -25,6 +25,18 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   slow moment cost the entire turn. Timeouts, dropped connections, 5xx
   and 429 get one more attempt; wrong-API-key and bad-request errors do
   not (they fail identically, and retrying only delays telling you).
+- **The model answered "give me a link" without searching.** Asked for a
+  source, it would lift a URL from an earlier reply in the same thread and
+  present it as the official page — turning that reply's hedge ("typically
+  2.5GbE or 1GbE") into a stated fact, and sometimes landing on the wrong
+  number outright. Measured on the old prompt: only 8 of 15 such turns ran
+  a search, 4 cited a page they never opened, and one reported the wrong
+  Ethernet speed. The tool-discipline rules now say that an earlier reply
+  is not a source and that only pages a search actually returned may be
+  cited: 14 of 15, then 10 of 10 through the live pipeline, with the fake
+  citations and the wrong number gone. Guarded by
+  `tests/search_discipline_live.rs`.
+
 - **A "thinking" model no longer gets blamed on your server.** The deep
   slot's reasoning model regularly ends a round having written only to
   its hidden reasoning channel. KinAI returned that empty result as
