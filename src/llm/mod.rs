@@ -89,6 +89,31 @@ impl LlmClient {
         max_tokens: Option<usize>,
         cancel: tokio_util::sync::CancellationToken,
     ) -> Result<StreamHandle> {
+        self.stream_with_choice(messages, tools, max_tokens, cancel, false)
+            .await
+    }
+
+    /// `stream`, but with the option to REQUIRE a tool call.
+    ///
+    /// `force_tool` sends `tool_choice: "required"`, which is the only
+    /// forcing form both of our backends honour. The OpenAI
+    /// "force this exact function" object — `{"type":"function",
+    /// "function":{"name":…}}` — is silently ignored by llama.cpp: it
+    /// answers normally, with no tool call and no error, so a caller that
+    /// trusted it would think it had a guarantee it never had.
+    ///
+    /// Because `"required"` forces *some* tool rather than a specific one
+    /// (Laguna answered a price question by calling `datetime` twice in
+    /// six tries when the full toolset was offered), callers that need a
+    /// particular tool must also pass only that tool in `tools`.
+    pub async fn stream_with_choice(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[ToolDef],
+        max_tokens: Option<usize>,
+        cancel: tokio_util::sync::CancellationToken,
+        force_tool: bool,
+    ) -> Result<StreamHandle> {
         let payload_messages: Vec<serde_json::Value> =
             messages.iter().map(serialize_message).collect();
         let tools_json: Vec<serde_json::Value> = tools.iter().map(|t| t.schema.clone()).collect();
@@ -97,7 +122,13 @@ impl LlmClient {
             "{}/v1/chat/completions",
             self.settings.base_url.trim_end_matches('/')
         );
-        let tool_choice = if tools_json.is_empty() { None } else { Some("auto") };
+        let tool_choice = if tools_json.is_empty() {
+            None
+        } else if force_tool {
+            Some("required")
+        } else {
+            Some("auto")
+        };
         let req = ChatRequest {
             model: &self.settings.model,
             messages: &payload_messages,

@@ -8,6 +8,7 @@
 pub mod calculator;
 pub mod datetime;
 pub mod image_recover;
+pub mod force_search;
 pub mod image_search;
 pub mod loop_pipeline;
 pub mod registry;

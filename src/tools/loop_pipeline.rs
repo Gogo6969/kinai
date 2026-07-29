@@ -18,6 +18,7 @@ use tokio_util::sync::CancellationToken;
 use crate::context::{ChatMessage, ToolCall, ToolCallFunction};
 use crate::llm::stream::{ChatDelta, ToolCallAccum};
 use crate::llm::LlmClient;
+use crate::tools::force_search;
 use crate::tools::registry::{self, ToolDef, ToolRuntime};
 
 /// Shown in place of an empty assistant reply. A completion can come back
@@ -28,6 +29,12 @@ use crate::tools::registry::{self, ToolDef, ToolRuntime};
 pub const EMPTY_REPLY_NOTE: &str = "⚠️ The model returned an empty response. \
     If you used /deep, its model server may still be loading, may have hit its \
     output-token limit, or may be offline — please try again in a moment.";
+
+/// Shown when the user pressed Stop before any visible token arrived.
+/// Without it, an empty result is rewritten by every consumer into
+/// EMPTY_REPLY_NOTE, which blames the model server for the user's own
+/// deliberate action.
+pub const STOPPED_NOTE: &str = "_(stopped)_";
 
 /// Number of streaming rounds where the model is allowed to call tools.
 /// After this many rounds without a visible final answer we still do **one
@@ -67,20 +74,76 @@ pub async fn run_pipeline(
     let mut total_tool_invocations: usize = 0;
     let mut total_tool_failures: usize = 0;
 
+    // An earlier reply in this conversation that denied having web access
+    // latches the model into repeating that refusal — measured 0/8 on the
+    // balanced slot with an otherwise identical prompt. Injecting a
+    // correction restored 8/8. Cheap, and only present when the poison is.
+    if let Some(note) = correction_for_history(&messages) {
+        messages.push(ChatMessage::System { content: note });
+    }
+
+    // For questions that plainly need live data, don't ask the model
+    // whether to search — require it. See `force_search` for why this is
+    // `"required"` with a single-tool list rather than a named function.
+    let search_tool: Vec<ToolDef> = tools
+        .iter()
+        .filter(|t| t.name == "web_search")
+        .cloned()
+        .collect();
+    let mut force_rounds_left = if !search_tool.is_empty() && should_force_search(&messages) {
+        tracing::info!("forcing web_search for this turn (question needs live data)");
+        // Two attempts: llama.cpp honours `required` most of the time but
+        // not always (5/6 on one phrasing), and a second ask is far
+        // cheaper than the wrong answer.
+        2
+    } else {
+        0
+    };
+
     for _round in 0..MAX_ROUNDS {
-        let mut handle = llm.stream(&messages, &tools, max_tokens, cancel.clone()).await?;
+        let forcing = force_rounds_left > 0;
+        let (round_tools, force_flag) = if forcing {
+            (search_tool.as_slice(), true)
+        } else {
+            (tools.as_slice(), false)
+        };
+        let mut handle = llm
+            .stream_with_choice(&messages, round_tools, max_tokens, cancel.clone(), force_flag)
+            .await?;
         let mut content_buf = String::new();
         let mut tool_calls: Vec<ToolCallAccum> = Vec::new();
         let mut finished = false;
 
         while let Some(delta) = handle.rx.recv().await {
             if cancel.is_cancelled() {
+                // Returning an empty string here made every consumer
+                // substitute EMPTY_REPLY_NOTE — "the model returned an
+                // empty response … may be offline" — for a turn the user
+                // deliberately stopped. A forced round widened that window,
+                // because no token is visible until the search has run, so
+                // say plainly that it was stopped.
+                let partial = accumulated.lock().await.clone();
                 return Ok(PipelineResult {
-                    final_content: accumulated.lock().await.clone(),
+                    final_content: if partial.trim().is_empty() {
+                        STOPPED_NOTE.to_string()
+                    } else {
+                        partial
+                    },
                 });
             }
             match delta {
                 ChatDelta::Token(t) => {
+                    // A forced round is supposed to produce a tool call, not
+                    // prose. Anything it writes is either a throwaway
+                    // preamble or — the case this exists for — the refusal
+                    // we are overriding. Don't stream it to the user: it
+                    // would appear on screen and then have to be taken back
+                    // when the round is retried. The real answer streams in
+                    // the next (unforced) round.
+                    if forcing {
+                        content_buf.push_str(&t);
+                        continue;
+                    }
                     content_buf.push_str(&t);
                     accumulated.lock().await.push_str(&t);
                     (handlers.on_token)(t);
@@ -127,6 +190,21 @@ pub async fn run_pipeline(
             break;
         }
 
+        if tool_calls.is_empty() && forcing {
+            // We required a tool and the backend produced none anyway —
+            // llama.cpp does this occasionally. Discard whatever prose it
+            // wrote instead (that text is exactly the refusal we are
+            // trying to prevent) and ask again; on the last attempt fall
+            // through to normal behaviour rather than failing the turn.
+            force_rounds_left -= 1;
+            tracing::warn!(
+                attempts_left = force_rounds_left,
+                dropped_chars = content_buf.len(),
+                "forced search round returned no tool call; retrying"
+            );
+            continue;
+        }
+
         if tool_calls.is_empty() {
             // A round with no tool calls is the normal end of a turn — but
             // only if the model actually said something. A reasoning model
@@ -140,9 +218,15 @@ pub async fn run_pipeline(
             // the user is told what actually happened.
             let visible = accumulated.lock().await.clone();
             if !visible.trim().is_empty() {
-                return Ok(PipelineResult {
-                    final_content: visible,
-                });
+                // `break`, not `return` — the tail of this function owns
+                // finalisation, and returning from here skipped it. That
+                // silently disabled the 0.2.89 "every lookup failed"
+                // banner for the COMMON case: a model that writes its
+                // answer in a final round with no tool call exits through
+                // here, so the banner only appeared when the round limit
+                // happened to be exhausted first. Caught by
+                // tests/search_failure_live.rs after the fact.
+                break;
             }
             tracing::warn!(
                 any_reasoning,
@@ -150,6 +234,25 @@ pub async fn run_pipeline(
                 "model closed a round with no content and no tool calls"
             );
             break;
+        }
+
+        // The forced round did its job. Every later round gets the full
+        // toolset and normal `auto` choice, so the model can answer from
+        // the results — or reach for another tool if it genuinely needs one.
+        force_rounds_left = 0;
+
+        // Drop any prose the forced round wrote before its tool call.
+        //
+        // We already keep it off the screen, but it was still being stored
+        // as the assistant turn — and Laguna's habitual preamble IS the
+        // refusal ("I don't have real-time market data, but let me look").
+        // That put a fresh capability denial into the very context this
+        // feature exists to keep clean, one message before the model wrote
+        // its visible answer, and after the correction note had already
+        // been placed. An assistant message carrying only tool_calls is
+        // valid and is what a silent round produces anyway.
+        if forcing {
+            content_buf.clear();
         }
 
         let assistant_calls: Vec<ToolCall> = tool_calls
@@ -362,6 +465,42 @@ if your server doesn't support harmony tool-calling — toggle tools off in Sett
     }
 }
 
+/// The newest user message, which is the question this turn must answer.
+fn latest_user_question(messages: &[ChatMessage]) -> Option<&str> {
+    messages.iter().rev().find_map(|m| match m {
+        ChatMessage::User { content, .. } => Some(content.as_str()),
+        _ => None,
+    })
+}
+
+/// Force a search only for a fresh question that needs live data, and only
+/// when this turn hasn't already run tools (a re-entry with tool results
+/// in `messages` must not loop back into forcing).
+pub(crate) fn should_force_search(messages: &[ChatMessage]) -> bool {
+    if messages.iter().any(|m| matches!(m, ChatMessage::Tool { .. })) {
+        return false;
+    }
+    // Classify only what the user TYPED. `format_user` concatenates the
+    // typed prose with the full text extracted from any attached PDF, so
+    // classifying the raw field let a private document decide to send a
+    // query to a third-party search engine — on a turn where the user
+    // typed nothing but "summarise this".
+    latest_user_question(messages)
+        .map(|q| force_search::needs_live_data(force_search::typed_prose(q)))
+        .unwrap_or(false)
+}
+
+/// A correction to inject when an earlier assistant turn in this
+/// conversation denied having web access. `None` when the history is clean
+/// — the note is only worth its tokens when there is poison to counter.
+pub(crate) fn correction_for_history(messages: &[ChatMessage]) -> Option<String> {
+    let poisoned = messages.iter().any(|m| match m {
+        ChatMessage::Assistant { content, .. } => force_search::is_capability_denial(content),
+        _ => false,
+    });
+    poisoned.then(|| force_search::CORRECTION_NOTE.to_string())
+}
+
 /// Arguments are model-authored and can be long (an image prompt, a pasted
 /// paragraph). Keep log lines readable and bounded — and slice on a char
 /// boundary, since a query can be any language.
@@ -432,5 +571,102 @@ mod failure_surface_tests {
         assert_ne!(empty_turn_note(true, 0), empty_turn_note(false, 0));
         assert!(empty_turn_note(false, 2).contains("searched"));
         assert!(empty_turn_note(true, 2).contains("searched"), "tools win over reasoning");
+    }
+}
+
+#[cfg(test)]
+mod force_tests {
+    use super::*;
+
+    fn user(s: &str) -> ChatMessage {
+        ChatMessage::User { content: s.into(), name: None, image_data_urls: vec![] }
+    }
+    fn assistant(s: &str) -> ChatMessage {
+        ChatMessage::Assistant { content: s.into(), tool_calls: vec![] }
+    }
+    const REFUSAL: &str =
+        "I don't have live access to current events, and my training data only goes up to 2024.";
+
+    #[test]
+    fn forces_on_a_live_question_and_not_otherwise() {
+        assert!(should_force_search(&[user("What is the Bitcoin price rn?")]));
+        assert!(should_force_search(&[user("Tell me the news of today.")]));
+        assert!(!should_force_search(&[user("what is 2+2")]));
+        assert!(!should_force_search(&[user("can you summarize that")]));
+    }
+
+    #[test]
+    fn judges_the_newest_question_not_an_older_one() {
+        // A live question earlier in the thread must not force a search on
+        // a later "thanks" — the turn being answered is the last one.
+        let msgs = vec![
+            user("What is the Bitcoin price rn?"),
+            assistant("$63,204 as of today (source: CoinGecko)."),
+            user("thanks, that's all"),
+        ];
+        assert!(!should_force_search(&msgs));
+    }
+
+    #[test]
+    fn never_forces_once_tool_results_are_in_play() {
+        // Re-entering with results present must not loop back into forcing,
+        // or the turn could never get past the search round.
+        let msgs = vec![
+            user("What is the Bitcoin price rn?"),
+            ChatMessage::Tool { content: "1. BTC $63,204".into(), tool_call_id: "t1".into() },
+            user("What is the Bitcoin price rn?"),
+        ];
+        assert!(!should_force_search(&msgs));
+    }
+
+    #[test]
+    fn correction_appears_only_when_history_is_poisoned() {
+        assert!(correction_for_history(&[user("hi"), assistant("Hello!")]).is_none());
+        let poisoned = vec![user("news?"), assistant(REFUSAL), user("bitcoin price?")];
+        let note = correction_for_history(&poisoned).expect("should correct");
+        assert!(note.contains("FALSE"), "must contradict the refusal");
+        assert!(note.contains("web_search"));
+    }
+
+    #[test]
+    fn a_reply_that_merely_mentions_searching_is_not_poison() {
+        let clean = vec![
+            user("news?"),
+            assistant("I searched for real-time headlines and found three stories."),
+        ];
+        assert!(correction_for_history(&clean).is_none());
+    }
+}
+
+#[cfg(test)]
+mod force_regression_tests {
+    use super::*;
+
+    fn user(s: &str) -> ChatMessage {
+        ChatMessage::User { content: s.into(), name: None, image_data_urls: vec![] }
+    }
+
+    /// The critical finding from the 2026-07-29 adversarial review: the
+    /// classifier read `ChatMessage::User.content`, which `format_user`
+    /// fills with the typed prose PLUS the full extracted text of any
+    /// attached PDF. A private invoice mentioning prices and dates could
+    /// therefore cause KinAI to send a query to Exa on a turn where the
+    /// user asked only for a summary.
+    #[test]
+    fn an_attached_document_cannot_trigger_a_search() {
+        let pdf_turn = user(
+            "summarise this please\n\nINVOICE 2026-07-29\nCurrent price list\n\
+             Total cost EUR 12,480.00\nPayment due today\nBitcoin accepted",
+        );
+        assert!(
+            !should_force_search(&[pdf_turn]),
+            "document text must not decide to search"
+        );
+    }
+
+    #[test]
+    fn the_typed_question_still_decides() {
+        let live = user("what's the bitcoin price today?\n\n[attached image: chart.png]");
+        assert!(should_force_search(&[live]));
     }
 }
