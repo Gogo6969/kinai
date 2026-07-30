@@ -5,6 +5,24 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.91] — 2026-07-30
+
+### Added
+
+- **The message box now tells you which model will answer.** It reads
+  `fast:`, `balanced:` or `deep:` at the head of the input, so the model
+  in force is visible *before* you type — not only in the footer of an
+  answer that has already arrived. Typing `/deep …` switches the label
+  immediately, so it always shows what pressing Enter will actually do.
+  It turns amber when your host reports that slot as unreachable, because
+  KinAI will quietly answer with a different model in that case.
+
+### Changed
+
+- The message box centres its text vertically. With a single line of
+  input the caret used to sit against the bottom edge with empty space
+  above it.
+
 ## [0.2.90] — 2026-07-29
 
 ### Fixed

@@ -8,7 +8,7 @@
   import { renderMarkdown as renderStreamMarkdown } from '$lib/markdown';
   import { api, type Attachment } from '$lib/api';
   import { fileToDataUrl } from '$lib/image';
-  import { resolveActiveModel, slotFromCommand } from '$lib/activeModel';
+  import { resolveActiveSlot, slotFromCommand, type SlotSlug } from '$lib/activeModel';
   import { Send, Square, Paperclip, X, FileText, Image as ImageIcon } from '@lucide/svelte';
 
   let input = $state('');
@@ -269,24 +269,30 @@
     app.activeThreadId ? app.messages[app.activeThreadId] ?? [] : []
   );
 
-  // Which model is answering right now, shown on the composer so the slot
-  // in force is never a guess. A `/fast|/balanced|/deep` still sitting in
-  // the box counts immediately — the badge should track what pressing
-  // Enter would actually do, not what the last turn did.
+  // Which slot is answering right now, shown as a `fast:` / `balanced:` /
+  // `deep:` prompt label on the composer so it is never a guess. A
+  // `/fast|/balanced|/deep` still sitting in the box counts immediately —
+  // the label tracks what pressing Enter would do, not the last turn.
+  const configuredModel = (slot: SlotSlug) =>
+    slot === 'fast'
+      ? app.config?.llm?.model
+      : slot === 'balanced'
+        ? app.config?.llm_balanced?.model
+        : app.config?.llm_deep?.model;
   const pendingSlot = $derived(slotFromCommand(input));
   const activeModel = $derived.by(() => {
-    const resolved = resolveActiveModel(
+    const resolved = resolveActiveSlot(
       messages,
       app.metricsByMsgId,
-      app.config,
+      configuredModel,
       app.hostInfo?.host_slots,
     );
     if (!pendingSlot || pendingSlot === resolved.slot) return resolved;
     // Re-resolve for the slot the user is about to switch to.
-    return resolveActiveModel(
+    return resolveActiveSlot(
       [{ id: '__pending', role: 'user', content: `/${pendingSlot}` } as any],
       {},
-      app.config,
+      configuredModel,
       app.hostInfo?.host_slots,
     );
   });
@@ -617,6 +623,20 @@
       >
         <Paperclip size={14} />
       </button>
+      <!-- Prompt label: which slot answers if you press Enter. Sits at the
+           head of the input like a shell prompt, so it reads as part of
+           the line you are typing rather than as another control. Amber
+           when the host has probed that slot as unreachable — otherwise
+           the label would name a slot that is NOT going to answer, since
+           KinAI fails over. The model id is in the tooltip; the footer of
+           each answer keeps carrying it as before. -->
+      <span
+        class="shrink-0 select-none font-mono text-[13px] leading-none
+               {activeModel.alive ? 'text-teal-300/70' : 'text-amber-300/80'}"
+        title={activeModel.alive
+          ? `Answering with the ${activeModel.slot} model${activeModel.model ? `: ${activeModel.model}` : ''}. Switch with /fast, /balanced or /deep.`
+          : `The ${activeModel.slot} model${activeModel.model ? ` (${activeModel.model})` : ''} looks unreachable — KinAI will switch to an available one for this turn.`}
+      >{activeModel.slot}:</span>
       <textarea
         bind:this={inputEl}
         bind:value={input}
@@ -679,28 +699,6 @@
           if (e.key === 'Enter' && !e.shiftKey) submit(e);
         }}
       ></textarea>
-      <!-- Active-model badge. Until now the slot in force was only visible
-           in the footer of an answer that had already arrived, so on a
-           fresh thread — or after a `/deep` three questions ago — the user
-           had no way to know which model was about to answer. `alive:false`
-           (host has probed the slot as unreachable) shows amber, because
-           the turn will fail over to another slot. -->
-      {#if activeModel.model || activeModel.slot}
-        <div
-          class="hidden sm:flex items-center gap-1 shrink-0 select-none text-[11px] font-mono
-                 px-2 py-1 rounded-lg border
-                 {activeModel.alive
-            ? 'border-white/10 bg-white/5 text-white/45'
-            : 'border-amber-400/30 bg-amber-400/10 text-amber-200/80'}"
-          title={activeModel.alive
-            ? `Answering with the ${activeModel.slot} model${activeModel.model ? ` (${activeModel.model})` : ''}. Switch with /fast, /balanced or /deep.`
-            : `The ${activeModel.slot} model looks unreachable — KinAI will switch to an available one for this turn.`}
-        >
-          <span aria-hidden="true">{activeModel.glyph}</span>
-          <span class="max-w-[9rem] truncate">{activeModel.model || activeModel.slot}</span>
-          {#if !activeModel.alive}<span aria-hidden="true">⚠</span>{/if}
-        </div>
-      {/if}
       <MicButton
         compact
         ontranscript={(t) => {
