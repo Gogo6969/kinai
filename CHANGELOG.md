@@ -5,6 +5,41 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.90] — 2026-07-29
+
+### Fixed
+
+- **"I don't have real-time data" — asked for the Bitcoin price, the
+  balanced model refused, and refused every time after that.** It was not
+  forgetting it had a search tool. Measured against the live model with
+  an identical prompt: 8/8 searches with a clean conversation, 8/8 after
+  a good answer, and **0/8 once a single refusal sat in the history**. The
+  model copies its own previous turn, so one bad answer latches the whole
+  thread — which is exactly why telling it to search fixed things for the
+  rest of that session and why the next session started badly again.
+  KinAI now takes the decision away from the model: for a question that
+  plainly needs live data, the request goes out with web search as the
+  only available tool and the call *required*. On the exact conversation
+  that scored 0/8, it now searches 12/12. Questions that don't need the
+  web are untouched — a definitional question forced 0 searches in 6
+  runs.
+- **A search that failed silently dropped its warning.** The 0.2.89
+  banner ("every web lookup for this answer failed") only appeared when
+  the model exhausted its tool rounds. If it wrote an answer normally
+  after the lookups failed — the common case — the warning was skipped
+  and the answer looked grounded. Found by a new test, not in the field.
+- **Pressing Stop no longer blames your model server.** Stopping a reply
+  before any text appeared reported "the model returned an empty
+  response … may be offline". It now says it was stopped.
+- **Date and time questions stay local.** "What time is it?" is answered
+  from the clock KinAI already puts in every prompt instead of going to
+  the web.
+
+### Added
+
+- Web searches are logged with the tool, query, duration and result size,
+  so a misbehaving lookup can be diagnosed from the host log afterwards.
+
 ## [0.2.89] — 2026-07-27
 
 ### Fixed
