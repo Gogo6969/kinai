@@ -25,7 +25,12 @@ pub async fn search(
     api_key: Option<&str>,
 ) -> Result<String> {
     match engine {
-        SearchEngine::Duckduckgo => wikimedia_commons(query, max_results).await,
+        // SearXNG's JSON results carry thumbnails, not the licensed
+        // full-size originals this tool needs, so image search uses the
+        // same Wikimedia Commons source as DuckDuckGo mode.
+        SearchEngine::Duckduckgo | SearchEngine::Searxng => {
+            wikimedia_commons(query, max_results).await
+        }
         SearchEngine::Exa => match api_key {
             Some(key) if !key.trim().is_empty() => exa_images(query, max_results, key).await,
             _ => Err(anyhow!(

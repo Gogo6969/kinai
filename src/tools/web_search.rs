@@ -4,9 +4,17 @@
 //!   * `DuckDuckGo` (default) — free HTML scrape with a Wikipedia fallback
 //!     when DDG throttles. Zero config.
 //!   * `Exa` — high-quality semantic search aimed at AI agents
-//!     (https://exa.ai). Requires an API key in Settings.
+//!     (https://exa.ai). Requires an API key, and is metered.
+//!   * `SearXNG` — the family's own metasearch instance. Free, no key, and
+//!     the only option that keeps a family member's query on their own
+//!     hardware, which is the promise the rest of the product makes.
+//!     Needs `formats: [json]` enabled on the instance.
 //!
-//! The two engines have very different result shapes; we normalize to a
+//! Exa additionally falls back to SearXNG when it is permanently
+//! unavailable (credits exhausted, key rejected) rather than letting the
+//! whole family lose search — see `search`.
+//!
+//! The engines have very different result shapes; we normalize to a
 //! single text block formatted as `N. <title>\n   <snippet>\n   <url>` so
 //! the LLM sees the same surface regardless of backend.
 
@@ -21,18 +29,171 @@ pub async fn search(
     max_results: usize,
     engine: SearchEngine,
     api_key: Option<&str>,
+    searxng_url: &str,
+    fallback_to_searxng: bool,
 ) -> Result<String> {
     match engine {
         SearchEngine::Duckduckgo => duckduckgo_with_fallback(query, max_results).await,
-        SearchEngine::Exa => match api_key {
-            Some(key) if !key.trim().is_empty() => exa_search(query, max_results, key).await,
-            _ => Err(anyhow!(
-                "Exa is selected as the search engine but no API key is configured. \
+        SearchEngine::Searxng => searxng_search(query, max_results, searxng_url).await,
+        SearchEngine::Exa => {
+            let primary = match api_key {
+                Some(key) if !key.trim().is_empty() => exa_search(query, max_results, key).await,
+                _ => Err(anyhow!(
+                    "Exa is selected as the search engine but no API key is configured. \
 Open Settings → Search engine and paste your key from https://exa.ai, or pick \
 DuckDuckGo to skip the key requirement."
-            )),
-        },
+                )),
+            };
+            match primary {
+                Ok(out) => Ok(out),
+                // Out of credits, or a key Exa refuses. Retrying Exa cannot
+                // help — but the family's own instance costs nothing and is
+                // already on the LAN, so the turn need not go dark. Only
+                // permanent failures land here: timeouts and 5xx are retried
+                // inside `exa_search` and never reach this point.
+                Err(e) if fallback_to_searxng && is_permanently_unavailable(&e) => {
+                    if searxng_url.trim().is_empty() {
+                        return Err(e);
+                    }
+                    tracing::warn!(
+                        "Exa unavailable ({e:#}); falling back to SearXNG at {}",
+                        searxng_url.trim()
+                    );
+                    match searxng_search(query, max_results, searxng_url).await {
+                        // Say which engine answered. Without this the model
+                        // cannot tell the user that its paid search is down,
+                        // and the host never learns to top it up.
+                        Ok(out) => Ok(format!(
+                            "(Exa is unavailable — {}. These results come from your own \
+SearXNG instead.)\n{out}",
+                            short_reason(&e)
+                        )),
+                        // Report the ORIGINAL failure too: "SearXNG refused"
+                        // alone would send the host looking at the wrong box.
+                        Err(fb) => Err(anyhow!(
+                            "Exa failed ({e:#}) and the SearXNG fallback also failed ({fb:#})"
+                        )),
+                    }
+                }
+                Err(e) => Err(e),
+            }
+        }
     }
+}
+
+/// Errors that will not resolve by trying the same engine again: billing,
+/// authentication, and missing configuration.
+fn is_permanently_unavailable(e: &anyhow::Error) -> bool {
+    let msg = format!("{e:#}").to_lowercase();
+    ["(401", "(402", "(403", "no_more_credits", "credits limit", "payment required",
+     "no api key is configured", "invalid api key"]
+        .iter()
+        .any(|m| msg.contains(m))
+}
+
+/// One short clause for the note shown above fallback results.
+fn short_reason(e: &anyhow::Error) -> &'static str {
+    let msg = format!("{e:#}").to_lowercase();
+    if msg.contains("no_more_credits") || msg.contains("credits limit") || msg.contains("(402") {
+        "its credits are used up"
+    } else if msg.contains("(401") || msg.contains("invalid api key") {
+        "its API key was rejected"
+    } else if msg.contains("no api key is configured") {
+        "no API key is configured"
+    } else {
+        "it is unavailable"
+    }
+}
+
+// ---- SearXNG (self-hosted metasearch) ------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct SearxResponse {
+    #[serde(default)]
+    results: Vec<SearxResult>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearxResult {
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+    /// The snippet. SearXNG passes through whatever the upstream engine
+    /// gave it, so this is short (150–400 chars observed) and can be
+    /// stale — it is a cached engine snippet, not a fetch of the page.
+    #[serde(default)]
+    content: Option<String>,
+    #[serde(default)]
+    engine: Option<String>,
+    #[serde(default, rename = "publishedDate")]
+    published_date: Option<String>,
+}
+
+/// Query a family-run SearXNG.
+///
+/// Needs `formats: [json]` in the instance's `settings.yml`; SearXNG
+/// disables JSON by default and answers HTML instead, which is why a
+/// parse failure here says so explicitly rather than reporting "no
+/// results" and letting the model invent an answer.
+async fn searxng_search(query: &str, max_results: usize, base_url: &str) -> Result<String> {
+    let base = base_url.trim().trim_end_matches('/');
+    if base.is_empty() {
+        anyhow::bail!(
+            "SearXNG is selected as the search engine but no URL is configured. \
+Open Settings → Search engine and enter your instance's address (e.g. http://127.0.0.1:8888)."
+        );
+    }
+    let url = format!("{base}/search?q={}&format=json", urlencode(query));
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()?;
+    let resp = client
+        .get(&url)
+        .header("User-Agent", user_agent())
+        .send()
+        .await?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        anyhow::bail!(
+            "SearXNG at {base} responded {status}. If this is 403, the instance is \
+refusing API requests — check `search.formats` includes `json` in settings.yml."
+        );
+    }
+    let body = resp.text().await?;
+    let parsed: SearxResponse = serde_json::from_str(&body).map_err(|e| {
+        anyhow!(
+            "SearXNG at {base} did not return JSON ({e}). Enable the JSON format in \
+its settings.yml (`search: formats: [html, json]`) and restart it."
+        )
+    })?;
+    if parsed.results.is_empty() {
+        return Ok("No results.".into());
+    }
+    let out: Vec<String> = parsed
+        .results
+        .into_iter()
+        .take(max_results)
+        .enumerate()
+        .map(|(i, r)| {
+            let title = r.title.unwrap_or_else(|| "(untitled)".into());
+            let url = r.url.unwrap_or_default();
+            let snippet = r.content.unwrap_or_default();
+            let date = r
+                .published_date
+                .as_deref()
+                .map(|d| format!(" · {}", &d[..d.len().min(10)]))
+                .unwrap_or_default();
+            let via = r
+                .engine
+                .as_deref()
+                .filter(|e| !e.is_empty())
+                .map(|e| format!(" [{e}]"))
+                .unwrap_or_default();
+            format!("{}. {title}{date}{via}\n   {snippet}\n   {url}", i + 1)
+        })
+        .collect();
+    Ok(out.join("\n"))
 }
 
 // ---- DuckDuckGo (free, scrape) -------------------------------------------
@@ -367,5 +528,44 @@ mod retry_tests {
     fn rate_limit_is_detected_for_the_longer_backoff() {
         assert!(is_rate_limited(&anyhow::anyhow!("Exa search failed (429): x")));
         assert!(!is_rate_limited(&anyhow::anyhow!("Exa search failed (500): x")));
+    }
+}
+
+#[cfg(test)]
+mod fallback_tests {
+    use super::{is_permanently_unavailable, short_reason};
+
+    #[test]
+    fn credit_and_auth_failures_trigger_the_fallback() {
+        for (msg, reason) in [
+            // The exact 2026-07-29 outage.
+            ("Exa search failed (402 Payment Required): {\"error\":\"You have exceeded your \
+credits limit\",\"tag\":\"NO_MORE_CREDITS\"}", "its credits are used up"),
+            ("Exa search failed (401): invalid API key", "its API key was rejected"),
+            ("Exa is selected as the search engine but no API key is configured.",
+             "no API key is configured"),
+        ] {
+            let e = anyhow::anyhow!("{msg}");
+            assert!(is_permanently_unavailable(&e), "should fall back: {msg}");
+            assert_eq!(short_reason(&e), reason);
+        }
+    }
+
+    #[test]
+    fn transient_failures_do_not_fall_back() {
+        // These are retried on Exa itself; silently switching engines would
+        // hide a blip and make results inconsistent for no reason.
+        for msg in [
+            "Exa search failed (500): upstream error",
+            "Exa search failed (503): unavailable",
+            "Exa search failed (429): slow down",
+            "operation timed out",
+            "error sending request: connection closed",
+        ] {
+            assert!(
+                !is_permanently_unavailable(&anyhow::anyhow!("{msg}")),
+                "must stay on Exa: {msg}"
+            );
+        }
     }
 }

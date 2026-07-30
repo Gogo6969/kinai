@@ -14,6 +14,11 @@ use crate::db::Db;
 pub struct ToolRuntime {
     pub search_engine: SearchEngine,
     pub search_api_key: Option<String>,
+    /// Base URL of the family's SearXNG; only meaningful when
+    /// `search_engine` is `Searxng`.
+    pub searxng_url: String,
+    /// Use SearXNG when the paid engine is permanently unavailable.
+    pub search_fallback_searxng: bool,
     /// DB handle for memory tools (remember, forget). Set only when the
     /// caller wants those tools to actually persist — search-tool-only
     /// callsites (e.g. an isolated extractor pass) can leave it None.
@@ -32,6 +37,8 @@ impl ToolRuntime {
         Self {
             search_engine: s.search_engine,
             search_api_key: s.search_api_key.clone(),
+            searxng_url: s.searxng_url.clone(),
+            search_fallback_searxng: s.search_fallback_searxng,
             db: None,
             peer_id: None,
             source_msg_id: None,
@@ -113,6 +120,8 @@ pub async fn execute(name: &str, args_json: &str, runtime: &ToolRuntime) -> Resu
                 10,
                 runtime.search_engine,
                 runtime.search_api_key.as_deref(),
+                &runtime.searxng_url,
+                runtime.search_fallback_searxng,
             )
             .await
         }

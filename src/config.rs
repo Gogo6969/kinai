@@ -170,6 +170,12 @@ pub enum SearchEngine {
     #[default]
     Duckduckgo,
     Exa,
+    /// A SearXNG instance the family runs themselves — metasearch over
+    /// whichever upstream engines they enable, reached by URL, no key and
+    /// no third party. The one engine here that keeps a family member's
+    /// query on their own hardware, which is the promise the rest of the
+    /// product makes.
+    Searxng,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -191,6 +197,26 @@ pub struct ToolSettings {
     /// API key for the selected search engine, when applicable.
     #[serde(default)]
     pub search_api_key: Option<String>,
+    /// Base URL of the family's own SearXNG, used when `search_engine`
+    /// is `Searxng`. Defaults to the usual local install. The instance
+    /// must have the JSON output format enabled — SearXNG ships with it
+    /// off, and without it every search returns HTML we can't parse.
+    #[serde(default = "default_searxng_url")]
+    pub searxng_url: String,
+    /// Fall back to SearXNG when the paid engine is out of credits (or its
+    /// key is rejected) instead of failing the turn.
+    ///
+    /// On 2026-07-29 Exa hit its credit limit mid-conversation and every
+    /// current-information question failed for the whole family until the
+    /// account was topped up. A self-hosted instance costs nothing and is
+    /// already on the LAN, so there is no reason to go dark. Only permanent
+    /// failures trigger it — a timeout or a 5xx is retried on Exa itself.
+    #[serde(default = "default_true")]
+    pub search_fallback_searxng: bool,
+}
+
+fn default_searxng_url() -> String {
+    "http://127.0.0.1:8888".into()
 }
 
 fn default_true() -> bool {
@@ -207,6 +233,8 @@ impl Default for ToolSettings {
             image_search: true,
             search_engine: SearchEngine::default(),
             search_api_key: None,
+            searxng_url: default_searxng_url(),
+            search_fallback_searxng: true,
         }
     }
 }

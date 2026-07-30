@@ -9,7 +9,7 @@
   import { api, type Attachment } from '$lib/api';
   import { fileToDataUrl } from '$lib/image';
   import { resolveActiveSlot, slotFromCommand, type SlotSlug } from '$lib/activeModel';
-  import { Send, Square, Paperclip, X, FileText, Image as ImageIcon } from '@lucide/svelte';
+  import { Send, Square, Paperclip, X, FileText, Image as ImageIcon, Check, ChevronUp } from '@lucide/svelte';
 
   let input = $state('');
   let scrollEl: HTMLDivElement | undefined = $state();
@@ -110,6 +110,75 @@
   // reads liveness from the host's Welcome advertisement instead.
   let slotHealth = $state<Record<string, boolean> | null>(null);
   let lastHealthFetch = 0;
+  /** One-line description per slot for the model picker, mirroring the
+   *  shape of the model menus users already know from other assistants:
+   *  what it's for, then which model actually serves it. */
+  const SLOT_GLYPH: Record<string, string> = { fast: '⚡', balanced: '⚖️', deep: '🧠' };
+  const SLOT_BLURB: Record<string, string> = {
+    fast: 'Quick responses',
+    balanced: 'Middle ground',
+    deep: 'Thinks hard',
+  };
+
+  /** The slots this install can actually route to, with liveness — the
+   *  single source for both the `/` autocomplete and the picker menu, so
+   *  the two can never disagree about what is available. */
+  const slotChoices = $derived.by(() => {
+    const cfg = app.config;
+    const wire = cfg?.mode === 'client' ? app.hostInfo?.host_slots : undefined;
+    return wire?.length
+      ? wire
+          .filter((s) => Object.hasOwn(SLOT_MENU_TEXT, s.slug))
+          .map((s) => ({ slug: s.slug, model: s.model, alive: slotHealth?.[s.slug] ?? s.alive }))
+      : [
+          { slug: 'fast', llm: cfg?.llm },
+          { slug: 'balanced', llm: cfg?.llm_balanced },
+          { slug: 'deep', llm: cfg?.llm_deep },
+        ]
+          .filter(({ llm }) => isSlotActive(llm))
+          .map(({ slug, llm }) => ({
+            slug,
+            model: llm!.model,
+            alive: slotHealth?.[slug] as boolean | null | undefined,
+          }));
+  });
+
+  let slotMenuOpen = $state(false);
+  /** Anchor the picker to its right edge when there isn't room to the
+   *  right. The composer starts after the sidebar, so on a narrow window
+   *  a left-anchored 18rem menu runs off the screen (measured: 32px over
+   *  at a 514px window). Decided when it opens, from the real geometry. */
+  let slotMenuAlignRight = $state(false);
+
+  /** Dismiss the picker on outside click or Escape — a menu you can only
+   *  close by choosing something is a trap. */
+  $effect(() => {
+    if (!slotMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (!t?.closest('[data-slot-menu]')) slotMenuOpen = false;
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') slotMenuOpen = false;
+    };
+    document.addEventListener('mousedown', onDown, true);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown, true);
+      document.removeEventListener('keydown', onKey);
+    };
+  });
+
+  /** Switch slots by sending the slash command — the same path typing
+   *  `/deep` takes, so the sticky per-thread selection is set by the one
+   *  piece of code that already owns it, and the thread keeps its usual
+   *  visible confirmation. */
+  function pickSlot(slug: string) {
+    slotMenuOpen = false;
+    if (slug === activeModel.slot) return;
+    void app.send(`/${slug}`);
+  }
+
   const SLASH_COMMANDS = $derived.by(() => {
     const cfg = app.config;
     // Wire list only while actually IN client mode — app.hostInfo is
@@ -165,8 +234,10 @@
   // the backend's own cache makes repeat calls ~free, this throttle just
   // avoids an IPC call per keystroke). Hosts probe locally; clients ask
   // the host over the WS (slot_health handles both).
-  $effect(() => {
-    if (slashFiltered.length === 0) return;
+  /** Refresh host-mode slot liveness. Throttled — the backend caches
+   *  probes for 15s, and both the `/` autocomplete and the model picker
+   *  ask for it whenever they open. */
+  function refreshSlotHealth() {
     const now = Date.now();
     if (now - lastHealthFetch < 5000) return;
     lastHealthFetch = now;
@@ -174,6 +245,10 @@
       .slotHealth()
       .then((h) => (slotHealth = h))
       .catch(() => {});
+  }
+  $effect(() => {
+    if (slashFiltered.length === 0) return;
+    refreshSlotHealth();
   });
   function applySlash(cmd: string) {
     input = cmd + ' ';
@@ -641,13 +716,71 @@
            the label would name a slot that is NOT going to answer, since
            KinAI fails over. The model id is in the tooltip; the footer of
            each answer keeps carrying it as before. -->
-      <span
-        class="shrink-0 select-none font-mono text-[13px] leading-none
-               {activeModel.alive ? 'text-teal-300/70' : 'text-amber-300/80'}"
-        title={activeModel.alive
-          ? `Answering with the ${activeModel.slot} model${activeModel.model ? `: ${activeModel.model}` : ''}. Switch with /fast, /balanced or /deep.`
-          : `The ${activeModel.slot} model${activeModel.model ? ` (${activeModel.model})` : ''} looks unreachable — KinAI will switch to an available one for this turn.`}
-      >{activeModel.slot}:</span>
+      <div class="relative shrink-0" data-slot-menu>
+        <button
+          type="button"
+          class="flex items-center gap-1 select-none font-mono text-[13px] leading-none
+                 rounded-md px-1 -mx-1 py-1 hover:bg-white/5 transition-colors
+                 {activeModel.alive ? 'text-teal-300/70' : 'text-amber-300/80'}"
+          aria-haspopup="menu"
+          aria-expanded={slotMenuOpen}
+          onclick={(e) => {
+            slotMenuOpen = !slotMenuOpen;
+            if (slotMenuOpen) {
+              refreshSlotHealth();
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              slotMenuAlignRight = r.left + 288 > window.innerWidth - 8;
+            }
+          }}
+          title={activeModel.alive
+            ? `Answering with the ${activeModel.slot} model${activeModel.model ? `: ${activeModel.model}` : ''}. Click to switch.`
+            : `The ${activeModel.slot} model${activeModel.model ? ` (${activeModel.model})` : ''} looks unreachable — KinAI will switch to an available one for this turn.`}
+        >
+          <span>{activeModel.slot}:</span>
+          {#if slotChoices.length >= 2}
+            <ChevronUp size={11} class="opacity-60 transition-transform {slotMenuOpen ? '' : 'rotate-180'}" />
+          {/if}
+        </button>
+
+        <!-- Model picker. Opens UPWARD: the composer sits at the bottom of
+             the window, so a downward menu would fall off-screen. Only
+             rendered when there is an actual choice to make. -->
+        {#if slotMenuOpen && slotChoices.length >= 2}
+          <div
+            class="absolute bottom-full mb-2 z-50 w-72 max-w-[calc(100vw-1.5rem)]
+                   {slotMenuAlignRight ? 'right-0' : 'left-0'}
+                   rounded-xl border border-white/10
+                   bg-ink-900/95 backdrop-blur shadow-2xl py-1.5"
+            role="menu"
+          >
+            {#each slotChoices as choice (choice.slug)}
+              {@const active = choice.slug === activeModel.slot}
+              {@const offline = choice.alive === false}
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={active}
+                class="w-full text-left px-3 py-2 flex items-start gap-2.5 hover:bg-white/5
+                       transition-colors {offline ? 'opacity-60' : ''}"
+                onclick={() => pickSlot(choice.slug)}
+              >
+                <span class="text-[13px] leading-5 shrink-0" aria-hidden="true">
+                  {SLOT_GLYPH[choice.slug] ?? '•'}
+                </span>
+                <span class="min-w-0 flex-1">
+                  <span class="block text-[13px] capitalize leading-5">{choice.slug}</span>
+                  <span class="block text-[11.5px] text-white/45 truncate">
+                    {offline ? 'Offline — auto-switches' : SLOT_BLURB[choice.slug]} · {choice.model}
+                  </span>
+                </span>
+                {#if active}
+                  <Check size={13} class="mt-0.5 shrink-0 text-teal-300" />
+                {/if}
+              </button>
+            {/each}
+          </div>
+        {/if}
+      </div>
       <textarea
         bind:this={inputEl}
         bind:value={input}

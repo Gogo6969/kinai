@@ -38,7 +38,13 @@ pub async fn search(
 Search engine and paste your key, or pick DuckDuckGo to fall back to HN."
             )),
         },
-        SearchEngine::Duckduckgo => hn_search(query, mode, max_results).await,
+        // SearXNG aggregates general web engines and has no social-post
+        // index, so social search falls back to the same free Hacker News
+        // path DuckDuckGo mode uses. Better an honest adjacent source than
+        // a general web search dressed up as X results.
+        SearchEngine::Duckduckgo | SearchEngine::Searxng => {
+            hn_search(query, mode, max_results).await
+        }
     }
 }
 
