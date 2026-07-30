@@ -90,6 +90,18 @@ pub async fn run_pipeline(
         .filter(|t| t.name == "web_search")
         .cloned()
         .collect();
+    // Ceiling on tool output for this turn, measured against the prompt we
+    // are actually starting from. Everything the loop appends is charged
+    // against it, so a tool-heavy turn degrades to truncated results
+    // instead of a 400 from the model server after the work is done.
+    let window = llm.settings.context_window;
+    let mut tool_tokens_left = tool_output_budget(
+        window,
+        crate::context::token_guard::estimate_messages(&messages),
+        max_tokens,
+    );
+    tracing::debug!(window, tool_tokens_left, "tool-output budget for this turn");
+
     let mut force_rounds_left = if !search_tool.is_empty() && should_force_search(&messages) {
         tracing::info!("forcing web_search for this turn (question needs live data)");
         // Two attempts: llama.cpp honours `required` most of the time but
@@ -349,11 +361,24 @@ Say the lookup failed and offer to try again.",
             if !ok {
                 total_tool_failures += 1;
             }
+            // Charge this result against the turn's context budget BEFORE
+            // it joins the conversation. The UI event keeps the untrimmed
+            // text — only what the model has to carry is shortened.
             (handlers.on_tool)(ToolEvent::Finished {
                 name: call.function.name.clone(),
                 ok,
                 result: result.clone(),
             });
+            let (result, truncated) = fit_tool_result(result, tool_tokens_left);
+            let cost = crate::context::token_guard::count_tokens(&result);
+            tool_tokens_left = tool_tokens_left.saturating_sub(cost);
+            if truncated {
+                tracing::warn!(
+                    tool = %call.function.name,
+                    tokens_left = tool_tokens_left,
+                    "tool result truncated to fit the model's context"
+                );
+            }
             messages.push(ChatMessage::Tool {
                 content: result,
                 tool_call_id: call.id,
@@ -462,6 +487,77 @@ directly — \"answer in one short line\" tends to snap it out of it._"
         "_The model returned an empty response. It may have tried (and failed) to call a \
 tool, or hit a stop condition before producing any output. Try rephrasing the question, or — \
 if your server doesn't support harmony tool-calling — toggle tools off in Settings._"
+    }
+}
+
+/// No single tool result may exceed this many characters, whatever the
+/// context window. One `web_search` returns 4–5k chars; a page fetch can
+/// return far more, and a single monster result should never be able to
+/// crowd out the conversation on its own.
+const MAX_CHARS_PER_TOOL_RESULT: usize = 8_000;
+
+/// Tokens held back for the model's own answer when sizing tool output.
+const GENERATION_RESERVE: usize = 1_024;
+
+/// How many tokens of tool output this turn may accumulate.
+///
+/// The pipeline appends every tool result to the message list and used to
+/// never look at the total again — the prompt is trimmed once, before the
+/// turn, and nothing bounded what the loop added afterwards. A single
+/// research question on 2026-07-30 ran 13 searches, appended 62,590 chars
+/// (~15.6k tokens) and pushed the request to 16,698 tokens against a
+/// 16,384-token server, which answered `400 exceed_context_size_error`.
+/// The whole turn was lost at the last round, after all 13 searches had
+/// been paid for.
+///
+/// Budget = window − (prompt already built) − (room to answer) − safety.
+/// Returns 0 when the prompt alone has already filled the window, in
+/// which case results are replaced by a short note rather than truncated.
+fn tool_output_budget(window: usize, prompt_tokens: usize, max_tokens: Option<usize>) -> usize {
+    const SAFETY: usize = 256;
+    let reserve = max_tokens.unwrap_or(GENERATION_RESERVE).max(512);
+    window
+        .saturating_sub(prompt_tokens)
+        .saturating_sub(reserve)
+        .saturating_sub(SAFETY)
+}
+
+/// Shrink one tool result to `budget` tokens, on a char boundary, with a
+/// marker so the model knows it is reading a fragment and does not report
+/// a partial list as complete.
+fn fit_tool_result(result: String, budget_tokens: usize) -> (String, bool) {
+    const NOTE: &str = "\n\n[… truncated to fit the model's context. This result is INCOMPLETE — \
+say so if the answer depends on what was cut.]";
+    let capped = if result.chars().count() > MAX_CHARS_PER_TOOL_RESULT {
+        let head: String = result.chars().take(MAX_CHARS_PER_TOOL_RESULT).collect();
+        format!("{head}{NOTE}")
+    } else {
+        result
+    };
+    if budget_tokens == 0 {
+        return (
+            "[tool result omitted — the conversation has filled this model's context. \
+Tell the user the lookup succeeded but could not be included, and suggest a narrower question.]"
+                .to_string(),
+            true,
+        );
+    }
+    if crate::context::token_guard::count_tokens(&capped) <= budget_tokens {
+        return (capped, false);
+    }
+    // Cut by characters using the observed chars-per-token ratio, then
+    // shrink until it really fits — the ratio varies with the content
+    // (JSON and CJK tokenize very differently from English prose).
+    let total_tokens = crate::context::token_guard::count_tokens(&capped).max(1);
+    let ratio = capped.chars().count() as f64 / total_tokens as f64;
+    let mut take = ((budget_tokens as f64) * ratio) as usize;
+    loop {
+        let head: String = capped.chars().take(take).collect();
+        let candidate = format!("{head}{NOTE}");
+        if crate::context::token_guard::count_tokens(&candidate) <= budget_tokens || take < 200 {
+            return (candidate, true);
+        }
+        take = take * 3 / 4;
     }
 }
 
@@ -668,5 +764,72 @@ mod force_regression_tests {
     fn the_typed_question_still_decides() {
         let live = user("what's the bitcoin price today?\n\n[attached image: chart.png]");
         assert!(should_force_search(&[live]));
+    }
+}
+
+#[cfg(test)]
+mod tool_budget_tests {
+    use super::*;
+    use crate::context::token_guard::count_tokens;
+
+    #[test]
+    fn budget_leaves_room_to_answer() {
+        // 16k window, 2k of prompt already built, 1k reserved to answer.
+        let b = tool_output_budget(16_384, 2_000, Some(1_024));
+        assert!(b > 12_000 && b < 13_500, "unexpected budget {b}");
+        // Room to answer is never given away, even with a huge prompt.
+        assert_eq!(tool_output_budget(16_384, 16_000, Some(1_024)), 0);
+        assert_eq!(tool_output_budget(16_384, 99_999, None), 0);
+    }
+
+    #[test]
+    fn a_result_that_fits_is_untouched() {
+        let small = "1. Some search hit\n   https://example.com".to_string();
+        let (out, truncated) = fit_tool_result(small.clone(), 4_000);
+        assert_eq!(out, small);
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn an_oversized_result_is_cut_to_the_budget() {
+        // The real case: ~4.8k chars per search, 13 of them, tiny budget left.
+        let big = "lorem ipsum dolor sit amet ".repeat(2_000); // ~54k chars
+        let (out, truncated) = fit_tool_result(big, 500);
+        assert!(truncated);
+        assert!(count_tokens(&out) <= 500, "still {} tokens", count_tokens(&out));
+        assert!(out.contains("INCOMPLETE"), "model must be told it is a fragment");
+    }
+
+    #[test]
+    fn a_single_monster_result_is_capped_even_with_budget_to_spare() {
+        let huge = "x".repeat(400_000);
+        let (out, _) = fit_tool_result(huge, 1_000_000);
+        assert!(out.chars().count() <= MAX_CHARS_PER_TOOL_RESULT + 200);
+    }
+
+    #[test]
+    fn an_exhausted_budget_omits_rather_than_lies() {
+        let (out, truncated) = fit_tool_result("real results here".into(), 0);
+        assert!(truncated);
+        assert!(out.contains("omitted"));
+        assert!(out.contains("lookup succeeded"), "must not read as a failed lookup");
+    }
+
+    #[test]
+    fn thirteen_searches_stay_inside_a_16k_window() {
+        // Replays the 2026-07-30 failure: 13 results of ~4.8k chars each
+        // against a 16,384-token window with a 2k prompt already built.
+        let mut left = tool_output_budget(16_384, 2_000, Some(1_024));
+        let mut total = 0usize;
+        for _ in 0..13 {
+            let (out, _) = fit_tool_result("search result text ".repeat(260), left);
+            let cost = count_tokens(&out);
+            total += cost;
+            left = left.saturating_sub(cost);
+        }
+        assert!(
+            total + 2_000 + 1_024 < 16_384,
+            "13 results totalled {total} tokens — would still overflow"
+        );
     }
 }
