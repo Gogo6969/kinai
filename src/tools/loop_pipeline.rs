@@ -547,7 +547,16 @@ fn is_permanent_tool_failure(err: &str) -> bool {
 const MAX_CHARS_PER_TOOL_RESULT: usize = 8_000;
 
 /// Tokens held back for the model's own answer when sizing tool output.
-const GENERATION_RESERVE: usize = 1_024;
+///
+/// This is a realistic ANSWER length, not the caller's `max_tokens`.
+/// `compute_max_tokens` returns "everything left in the window" — on a
+/// 32k model with a 4k prompt that is ~28k — so treating it as the
+/// reserve subtracted the whole window and left a zero budget, silently
+/// truncating every tool result to nothing. Caught in the 0.2.92 smoke
+/// test, where nine searches all logged `tokens_left=0` on a thread of
+/// barely 1,800 tokens and the model answered "let me try a different
+/// approach". A pinned, smaller `max_tokens` is still honoured.
+const GENERATION_RESERVE: usize = 2_048;
 
 /// How many tokens of tool output this turn may accumulate.
 ///
@@ -565,7 +574,12 @@ const GENERATION_RESERVE: usize = 1_024;
 /// which case results are replaced by a short note rather than truncated.
 fn tool_output_budget(window: usize, prompt_tokens: usize, max_tokens: Option<usize>) -> usize {
     const SAFETY: usize = 256;
-    let reserve = max_tokens.unwrap_or(GENERATION_RESERVE).max(512);
+    // Cap the reserve at a realistic answer: a caller-supplied `max_tokens`
+    // is usually the whole remaining window, not an intended answer length.
+    let reserve = max_tokens
+        .map(|m| m.min(GENERATION_RESERVE))
+        .unwrap_or(GENERATION_RESERVE)
+        .max(512);
     window
         .saturating_sub(prompt_tokens)
         .saturating_sub(reserve)
@@ -821,6 +835,29 @@ mod force_regression_tests {
 mod tool_budget_tests {
     use super::*;
     use crate::context::token_guard::count_tokens;
+
+    #[test]
+    fn a_generous_max_tokens_does_not_zero_the_budget() {
+        // THE 0.2.92 SMOKE-TEST BUG. compute_max_tokens hands us
+        // "everything left in the window" (~28k on a 32k model with a 4k
+        // prompt). Subtracting that as the reserve left nothing for tool
+        // output, so every search result was truncated to zero and the
+        // model answered from nothing. The budget must stay large.
+        let b = tool_output_budget(32_768, 4_000, Some(28_640));
+        assert!(b > 25_000, "budget collapsed to {b} — the reserve is eating the window");
+
+        // The real thread from the smoke test: ~1,800 tokens of history.
+        let b = tool_output_budget(32_768, 1_819, Some(30_821));
+        assert!(b > 28_000, "budget {b} too small for a 32k window and a tiny thread");
+    }
+
+    #[test]
+    fn a_pinned_small_max_tokens_is_still_honoured() {
+        // A user who pins max_tokens=512 wants a short answer; don't
+        // reserve more than they asked for.
+        let b = tool_output_budget(16_384, 2_000, Some(512));
+        assert_eq!(b, 16_384 - 2_000 - 512 - 256);
+    }
 
     #[test]
     fn budget_leaves_room_to_answer() {
