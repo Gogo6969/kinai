@@ -48,7 +48,7 @@ export interface OverlaySettings {
   auto_close_on_blur: boolean;
 }
 
-export type SearchEngine = 'duckduckgo' | 'exa';
+export type SearchEngine = 'duckduckgo' | 'exa' | 'searxng';
 
 export interface ToolSettings {
   web_search: boolean;
@@ -58,6 +58,11 @@ export interface ToolSettings {
   image_search: boolean;
   search_engine: SearchEngine;
   search_api_key: string | null;
+  /** Base URL of the family's own SearXNG (engine `searxng`, and the
+   *  fallback target when Exa is out of credit). */
+  searxng_url: string;
+  /** Fall back to SearXNG when Exa is permanently unavailable. */
+  search_fallback_searxng: boolean;
 }
 
 export interface VisionEndpoint {
@@ -408,6 +413,14 @@ export const api = {
       'test_vision_endpoint',
       { args }
     ),
+  testSearxng: (args: { url: string }) =>
+    invoke<{
+      ok: boolean;
+      latency_ms: number;
+      message: string;
+      sample: string;
+      engines: string[];
+    }>('test_searxng', { args }),
   setComfyConfig: (comfyui: ComfyConfig) =>
     invoke<AppConfig>('set_comfy_config', { comfyui }),
   setTtsConfig: (tts: TtsConfig) => invoke<AppConfig>('set_tts_config', { tts }),

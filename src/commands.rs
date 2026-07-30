@@ -3094,3 +3094,135 @@ pub async fn check_updates(app: AppHandle) -> Result<()> {
 pub async fn install_update(app: AppHandle) -> Result<()> {
     updater::download_and_install(app).await
 }
+
+#[derive(Debug, Deserialize)]
+pub struct TestSearxngArgs {
+    pub url: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TestSearxngResult {
+    pub ok: bool,
+    pub latency_ms: u64,
+    /// Human-readable outcome — shown verbatim under the field, so it must
+    /// name the fix when it fails, not just the symptom.
+    pub message: String,
+    /// Title of the first hit on success, as proof it really searched
+    /// rather than merely answered on the port.
+    pub sample: String,
+    /// Which upstream engines answered (SearXNG aggregates). Empty on
+    /// failure. A reachable instance with NO engines enabled returns
+    /// results but nothing useful, and that is worth showing.
+    pub engines: Vec<String>,
+}
+
+/// Probe a SearXNG instance for the Settings UI's "Test" button.
+///
+/// Checks the three things that actually go wrong, in order: the address
+/// is wrong or nothing is listening; the instance is up but its JSON
+/// output format is disabled (SearXNG ships with it OFF, and then every
+/// KinAI search would silently return nothing); and the instance answers
+/// but has no engines enabled.
+#[tauri::command]
+pub async fn test_searxng(args: TestSearxngArgs) -> Result<TestSearxngResult> {
+    let started = std::time::Instant::now();
+    let base = args.url.trim().trim_end_matches('/').to_string();
+    let fail = |message: String| TestSearxngResult {
+        ok: false,
+        latency_ms: started.elapsed().as_millis() as u64,
+        message,
+        sample: String::new(),
+        engines: Vec::new(),
+    };
+    if base.is_empty() {
+        return Ok(fail("Enter the address of your SearXNG instance.".into()));
+    }
+    if !base.starts_with("http://") && !base.starts_with("https://") {
+        return Ok(fail(format!(
+            "The address needs a scheme — try http://{base}"
+        )));
+    }
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => return Ok(fail(format!("Could not build an HTTP client: {e}"))),
+    };
+    let url = format!("{base}/search?q=kinai+connection+test&format=json");
+    let resp = match client.get(&url).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            let hint = if e.is_timeout() {
+                "It didn't answer in 10s — is it still starting up?"
+            } else if e.is_connect() {
+                "Nothing is listening there. Check the address and that SearXNG is running."
+            } else {
+                "Could not reach it."
+            };
+            return Ok(fail(format!("{hint} ({e})")));
+        }
+    };
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        // 403 is the classic symptom of JSON not being an allowed format.
+        let hint = if status.as_u16() == 403 {
+            " — this usually means the JSON format is not enabled. Add `json` to \
+`search.formats` in settings.yml and restart SearXNG."
+        } else {
+            ""
+        };
+        return Ok(fail(format!("Instance answered {status}{hint}")));
+    }
+    let parsed: serde_json::Value = match serde_json::from_str(&body) {
+        Ok(v) => v,
+        Err(_) => {
+            return Ok(fail(
+                "It answered, but with HTML rather than JSON. Add `json` to \
+`search.formats` in your settings.yml and restart SearXNG."
+                    .into(),
+            ))
+        }
+    };
+    let results = parsed
+        .get("results")
+        .and_then(|r| r.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let latency_ms = started.elapsed().as_millis() as u64;
+    if results.is_empty() {
+        return Ok(TestSearxngResult {
+            ok: false,
+            latency_ms,
+            message: "Connected, but the search returned nothing. Check that at least \
+one engine is enabled in SearXNG."
+                .into(),
+            sample: String::new(),
+            engines: Vec::new(),
+        });
+    }
+    let sample = results
+        .first()
+        .and_then(|r| r.get("title"))
+        .and_then(|t| t.as_str())
+        .unwrap_or("")
+        .chars()
+        .take(70)
+        .collect::<String>();
+    let mut engines: Vec<String> = results
+        .iter()
+        .filter_map(|r| r.get("engine").and_then(|e| e.as_str()))
+        .map(|s| s.to_string())
+        .collect();
+    engines.sort();
+    engines.dedup();
+    engines.truncate(6);
+    Ok(TestSearxngResult {
+        ok: true,
+        latency_ms,
+        message: format!("Connected — {} results in {latency_ms} ms.", results.len()),
+        sample,
+        engines,
+    })
+}

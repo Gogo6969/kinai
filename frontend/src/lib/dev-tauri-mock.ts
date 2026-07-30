@@ -40,7 +40,7 @@ function defaultConfig() {
     host: { bind_addr: '0.0.0.0', port: 4847, family_name: 'Our Family', mdns_enabled: true, rate_limit_rpm: 60 },
     client: { host_url: null, host_token: null, host_label: null, display_name: 'You', pinned_hosts: [] },
     overlay: { hotkey: 'CmdOrCtrl+Space', always_on_top: true, font_size: 14, auto_close_on_blur: true },
-    tools: { web_search: true, x_search: true, calculator: true, datetime: true, image_search: true, search_engine: 'duckduckgo', search_api_key: null },
+    tools: { web_search: true, x_search: true, calculator: true, datetime: true, image_search: true, search_engine: 'duckduckgo', search_api_key: null, searxng_url: 'http://127.0.0.1:8888', search_fallback_searxng: true },
     vision: {
       enabled: false,
       primary: { label: '', base_url: '', model: '', api_key: null },
@@ -238,6 +238,13 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
     set_llm_settings: (a) => { Object.assign(cfg.llm, a.llm); return cfg; },
     set_llm_deep_settings: (a) => { Object.assign(cfg.llm_deep, a.llm); return cfg; },
     set_llm_balanced_settings: (a) => { Object.assign(cfg.llm_balanced, a.llm); return cfg; },
+    test_searxng: async (a: any) => {
+      await new Promise((r) => setTimeout(r, 400));
+      if (!/^https?:\/\//.test(a?.args?.url ?? ''))
+        return { ok: false, latency_ms: 3, message: 'The address needs a scheme — try http://…', sample: '', engines: [] };
+      return { ok: true, latency_ms: 812, message: 'Connected — 10 results in 812 ms.',
+               sample: 'Technical specifications | Olares Docs', engines: ['brave', 'duckduckgo'] };
+    },
     set_llm_factcheck_settings: (a) => { Object.assign(cfg.llm_factcheck, a.llm); return cfg; },
     // Canned fact-check report after a short delay; set
     // `window.__mockFactCheckFail = "reason"` to exercise the error path.

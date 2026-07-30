@@ -53,3 +53,34 @@ async fn a_wrong_url_fails_loudly_rather_than_silently() {
         "blank URL should tell the user what to fix: {empty:#}"
     );
 }
+
+/// The Settings "Test" button, end to end against the real instance —
+/// including the two misconfigurations users actually hit.
+#[tokio::test]
+#[ignore = "needs a local SearXNG; run explicitly"]
+async fn the_settings_test_button_reports_accurately() {
+    use kinai::commands::{test_searxng, TestSearxngArgs};
+
+    let ok = test_searxng(TestSearxngArgs { url: URL.into() }).await.unwrap();
+    eprintln!("OK case: {} | {} | engines={:?}", ok.message, ok.sample, ok.engines);
+    assert!(ok.ok, "live instance should pass: {}", ok.message);
+    assert!(!ok.sample.is_empty(), "should prove it really searched");
+    assert!(ok.latency_ms > 0);
+
+    // No scheme — the single most common typo.
+    let bare = test_searxng(TestSearxngArgs { url: "127.0.0.1:8888".into() }).await.unwrap();
+    assert!(!bare.ok);
+    assert!(bare.message.contains("http://"), "should suggest the fix: {}", bare.message);
+
+    // Nothing listening.
+    let dead = test_searxng(TestSearxngArgs { url: "http://127.0.0.1:9".into() }).await.unwrap();
+    assert!(!dead.ok);
+    assert!(
+        dead.message.to_lowercase().contains("listening") || dead.message.to_lowercase().contains("reach"),
+        "should say nothing is there: {}", dead.message
+    );
+
+    // Empty.
+    let blank = test_searxng(TestSearxngArgs { url: "   ".into() }).await.unwrap();
+    assert!(!blank.ok && blank.message.contains("Enter the address"));
+}

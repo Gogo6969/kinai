@@ -91,6 +91,24 @@
   });
   // Global-hotkey recorder UI state. `recordingHotkey` = field focused and
   // listening for a key combo; `hotkeyManual` = user opted into raw text entry.
+  // SearXNG connection check. Cleared on edit so a green tick can never
+  // refer to a different address than the one in the field.
+  let searxngTesting = $state(false);
+  let searxngTest = $state<
+    { ok: boolean; message: string; sample: string; engines: string[] } | null
+  >(null);
+  async function testSearxng() {
+    searxngTesting = true;
+    searxngTest = null;
+    try {
+      const r = await api.testSearxng({ url: tools.searxng_url ?? '' });
+      searxngTest = { ok: r.ok, message: r.message, sample: r.sample, engines: r.engines };
+    } catch (e) {
+      searxngTest = { ok: false, message: String(e), sample: '', engines: [] };
+    } finally {
+      searxngTesting = false;
+    }
+  }
   let recordingHotkey = $state(false);
   let hotkeyManual = $state(false);
   let theme = $state<Theme>('dark');
@@ -102,6 +120,8 @@
     datetime: true,
     search_engine: 'duckduckgo',
     search_api_key: null,
+    searxng_url: 'http://127.0.0.1:8888',
+    search_fallback_searxng: true,
   });
   const emptyEndpoint = (): VisionEndpoint => ({
     label: '',
@@ -1293,8 +1313,50 @@
           <select class="kin-field mt-1" bind:value={tools.search_engine}>
             <option value="duckduckgo">DuckDuckGo (free)</option>
             <option value="exa">Exa (recommended)</option>
+            <option value="searxng">SearXNG (your own server)</option>
           </select>
+          {#if tools.search_engine === 'searxng'}
+            <p class="text-xs text-white/40 mt-1">
+              Metasearch from an instance you run — no key, no cost, and your
+              family's questions never leave your hardware.
+            </p>
+          {/if}
         </label>
+        {#if tools.search_engine === 'searxng'}
+          <label class="block">
+            <span class="text-sm text-white/70">SearXNG address</span>
+            <div class="flex gap-2 mt-1">
+              <input
+                class="kin-field font-mono flex-1"
+                bind:value={tools.searxng_url}
+                placeholder="http://127.0.0.1:8888"
+                autocomplete="off"
+                spellcheck="false"
+                oninput={() => (searxngTest = null)}
+              />
+              <button type="button" class="kin-btn shrink-0" disabled={searxngTesting} onclick={testSearxng}>
+                {searxngTesting ? 'Testing…' : 'Test'}
+              </button>
+            </div>
+            {#if searxngTest}
+              <p class="text-xs mt-1 {searxngTest.ok ? 'text-teal-300/90' : 'text-amber-300/90'}">
+                {searxngTest.ok ? '✓' : '⚠'} {searxngTest.message}
+                {#if searxngTest.ok && searxngTest.sample}
+                  <span class="block text-white/40 mt-0.5 truncate">
+                    Top hit: {searxngTest.sample}{searxngTest.engines.length
+                      ? ` · via ${searxngTest.engines.join(', ')}`
+                      : ''}
+                  </span>
+                {/if}
+              </p>
+            {:else}
+              <p class="text-xs text-white/40 mt-1">
+                Needs the JSON format enabled in its
+                <code class="font-mono">settings.yml</code>. Press Test to check.
+              </p>
+            {/if}
+          </label>
+        {/if}
         {#if tools.search_engine === 'exa'}
           <label class="block">
             <span class="text-sm text-white/70">Exa API key</span>
@@ -1314,6 +1376,29 @@
           </label>
         {/if}
       </div>
+
+      {#if tools.search_engine === 'exa'}
+        <label class="flex items-start gap-2.5 cursor-pointer">
+          <input type="checkbox" class="mt-0.5" bind:checked={tools.search_fallback_searxng} />
+          <span class="text-sm text-white/70">
+            Use SearXNG if Exa runs out of credit
+            <span class="block text-xs text-white/40 mt-0.5">
+              Exa is metered. If its credits run out or the key is rejected,
+              searches fall back to your own instance
+              ({tools.searxng_url || 'not set'}) instead of failing, and the
+              reply says which engine answered. Brief outages still retry Exa.
+            </span>
+          </span>
+        </label>
+      {/if}
+      {#if tools.search_engine === 'searxng' || (tools.search_engine === 'exa' && tools.search_fallback_searxng)}
+        <p class="text-xs text-white/40 leading-relaxed">
+          <span class="text-white/60">KinAI does not install SearXNG.</span>
+          It is a separate service you run yourself — commonly via Docker, on
+          this machine or another on your network. If you don't run one, leave
+          the engine on DuckDuckGo or Exa; none of this is required.
+        </p>
+      {/if}
     </div>
 
     <div class="kin-card space-y-4">

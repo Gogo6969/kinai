@@ -367,6 +367,7 @@ pub fn run() {
             commands::set_startup_settings,
             commands::set_vision_settings,
             commands::test_vision_endpoint,
+            commands::test_searxng,
             commands::set_comfy_config,
             commands::test_comfy_endpoint,
             commands::download_url_to_path,
