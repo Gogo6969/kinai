@@ -5,6 +5,26 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.93] — 2026-07-30
+
+### Added
+
+- **Pick the model from a menu.** The `fast:` / `balanced:` / `deep:`
+  label on the message box now opens a picker showing what each one is
+  for and which model serves it, with a tick on the one in use. A slot
+  your host can't reach is marked "Offline — auto-switches". Typing
+  `/fast`, `/balanced` or `/deep` still works exactly as before.
+- **SearXNG as a search engine.** If you run your own SearXNG, KinAI can
+  use it: no API key, no cost, and — unlike the other options — your
+  family's questions never leave your own hardware. Set the address in
+  Settings → Tools. Your instance needs its JSON format enabled; if it
+  isn't, KinAI now says so instead of quietly returning nothing.
+- **Search keeps working when Exa runs out of credit.** When the paid
+  search is unavailable — credits used up, key rejected — KinAI falls
+  back to your SearXNG rather than failing the question, and says which
+  engine answered so you know to top up. Brief outages still retry on
+  Exa itself.
+
 ## [0.2.92] — 2026-07-30
 
 ### Fixed
