@@ -73,6 +73,8 @@ pub async fn run_pipeline(
     let mut any_reasoning = false;
     let mut total_tool_invocations: usize = 0;
     let mut total_tool_failures: usize = 0;
+    // Tools that failed permanently this turn (billing/auth/config).
+    let mut dead_tools: Vec<String> = Vec::new();
 
     // An earlier reply in this conversation that denied having web access
     // latches the model into repeating that refusal — measured 0/8 on the
@@ -303,6 +305,30 @@ pub async fn run_pipeline(
             // the model's own (invented) explanation of it. Log the tool,
             // the arguments, the error and the duration so the next
             // occurrence is answerable from the host log alone.
+            // A tool that already failed permanently this turn is not
+            // called again — the answer would be the same error and one
+            // more apology in the reply.
+            if dead_tools.iter().any(|t| t == &call.function.name) {
+                let note = format!(
+                    "TOOL UNAVAILABLE ({}): an earlier call this turn failed permanently \
+(billing, authentication or configuration) and will not succeed by retrying. Do NOT call \
+it again in this turn. Tell the user once what is unavailable and answer as best you can \
+without it.",
+                    call.function.name
+                );
+                tracing::info!(tool = %call.function.name, "skipping tool: already failed permanently this turn");
+                (handlers.on_tool)(ToolEvent::Finished {
+                    name: call.function.name.clone(),
+                    ok: false,
+                    result: note.clone(),
+                });
+                total_tool_failures += 1;
+                messages.push(ChatMessage::Tool {
+                    content: note,
+                    tool_call_id: call.id,
+                });
+                continue;
+            }
             let started = std::time::Instant::now();
             let (result, ok) = match registry::execute(
                 &call.function.name,
@@ -322,6 +348,9 @@ pub async fn run_pipeline(
                     (r, true)
                 }
                 Err(e) => {
+                    if is_permanent_tool_failure(&format!("{e:#}")) {
+                        dead_tools.push(call.function.name.clone());
+                    }
                     tracing::warn!(
                         tool = %call.function.name,
                         args = %truncate_for_log(&call.function.arguments),
@@ -488,6 +517,27 @@ directly — \"answer in one short line\" tends to snap it out of it._"
 tool, or hit a stop condition before producing any output. Try rephrasing the question, or — \
 if your server doesn't support harmony tool-calling — toggle tools off in Settings._"
     }
+}
+
+/// Failures that will fail again identically for the rest of this turn:
+/// billing, auth, and missing configuration. Retrying them costs the user
+/// a wait and an apology per round and cannot change the outcome.
+///
+/// Field case (2026-07-29): Exa hit its credit limit and the model called
+/// `web_search` four times in one turn, each returning the same
+/// `402 NO_MORE_CREDITS`, so the reply opened with four near-identical
+/// apologies before finally answering. Timeouts, 5xx and 429 are NOT in
+/// here — those genuinely can succeed on a later call, and web_search
+/// retries them at the HTTP layer.
+/// Substring matching is safe here because this only ever sees error
+/// strings from `registry::execute`, never successful result text — a
+/// search result *about* HTTP 402 cannot disable the tool.
+fn is_permanent_tool_failure(err: &str) -> bool {
+    let e = err.to_lowercase();
+    ["(401", "(402", "(403", "(404", "no_more_credits", "payment required",
+     "no api key", "api key is not configured", "invalid api key", "unauthorized"]
+        .iter()
+        .any(|m| e.contains(m))
 }
 
 /// No single tool result may exceed this many characters, whatever the
@@ -832,4 +882,41 @@ mod tool_budget_tests {
             "13 results totalled {total} tokens — would still overflow"
         );
     }
+}
+
+#[cfg(test)]
+mod permanent_failure_tests {
+    use super::is_permanent_tool_failure;
+
+    #[test]
+    fn billing_auth_and_config_failures_are_permanent() {
+        for e in [
+            // The exact 2026-07-29 field error.
+            "Exa search failed (402 Payment Required): {\"error\":\"You have exceeded your \
+credits limit\",\"tag\":\"NO_MORE_CREDITS\"}",
+            "Exa search failed (401): invalid API key",
+            "Exa search failed (403): forbidden",
+            "Exa search failed (404): not found",
+            "Exa is selected as the search engine but no API key is configured.",
+        ] {
+            assert!(is_permanent_tool_failure(e), "should not be retried: {e}");
+        }
+    }
+
+    #[test]
+    fn transient_failures_stay_retryable() {
+        // These can succeed on a later call — web_search already retries
+        // them at the HTTP layer, and the model may legitimately try again.
+        for e in [
+            "Exa search failed (500): upstream error",
+            "Exa search failed (502): bad gateway",
+            "Exa search failed (503): unavailable",
+            "Exa search failed (429): slow down",
+            "operation timed out",
+            "error sending request: connection closed",
+        ] {
+            assert!(!is_permanent_tool_failure(e), "must stay retryable: {e}");
+        }
+    }
+
 }

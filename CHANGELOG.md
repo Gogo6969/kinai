@@ -5,6 +5,27 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.92] — 2026-07-30
+
+### Fixed
+
+- **A question needing many searches could fail outright.** Every search
+  result is added to what the model has to read, and nothing limited how
+  much piled up. One research question ran thirteen searches, and the
+  request grew past what the model could accept — so the whole answer was
+  lost at the last step, after all thirteen searches had been paid for.
+  Results are now trimmed to fit, and clearly marked as shortened so the
+  model tells you when it is working from a fragment rather than
+  presenting a partial answer as complete.
+- **KinAI showed "thinking" in conversations that weren't thinking.**
+  Asking something in one conversation displayed the same live indicator
+  in every other one. It now appears only where the question was asked.
+- **A search tool that is out of credit no longer apologises four times.**
+  When a lookup fails for a reason that cannot change — billing, a wrong
+  API key, missing configuration — KinAI stops calling it for the rest of
+  that turn and says once what is unavailable, instead of retrying the
+  same error each round.
+
 ## [0.2.91] — 2026-07-30
 
 ### Added
