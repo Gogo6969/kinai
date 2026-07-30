@@ -5,6 +5,30 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.94] — 2026-07-30
+
+### Added
+
+- **Choose SearXNG in Settings.** 0.2.93 added the engine but no way to
+  select it. Settings → Tools now lists it alongside DuckDuckGo and Exa,
+  with a field for your instance's address and a **Test** button that
+  says what is actually wrong — a missing `http://`, nothing listening,
+  or the JSON format not enabled (SearXNG ships with it off, which would
+  otherwise show up as searches that quietly return nothing). On success
+  it shows the first result and which engines answered.
+- **A switch for the Exa fallback.** While Exa is selected you can now
+  turn "use SearXNG if Exa runs out of credit" on or off. Settings also
+  states plainly that KinAI does not install SearXNG — it is a service
+  you run yourself, and nothing there is required.
+
+### Fixed
+
+- **Switching models no longer prints a file path.** `/fast` replied
+  "Switched to the fast model (`/home/olares/models/Qwen3.6-35B-A3B-MTP-
+  UD-Q4_K_S.gguf`)" because that is the name its server reports. The
+  message now shows just the model name, the way the footer under each
+  answer already did.
+
 ## [0.2.93] — 2026-07-30
 
 ### Added

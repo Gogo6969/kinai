@@ -389,13 +389,36 @@ pub async fn route_for<'cfg>(
 /// switching models gives visible feedback. Only ACTIVE other slots are
 /// advertised as switch targets — naming a command that would silently
 /// fall back is worse than naming none.
+/// Trim a model id down to something worth reading in a chat message:
+/// drop the directory (POSIX or Windows), drop the `.gguf`, and cap the
+/// length. Purely cosmetic — the configured id is still what gets sent to
+/// the backend.
+pub(crate) fn display_model_name(model: &str) -> String {
+    let mut s = model.trim();
+    if let Some(i) = s.rfind(['/', '\\']) {
+        s = &s[i + 1..];
+    }
+    let s = s.strip_suffix(".gguf").or_else(|| s.strip_suffix(".GGUF")).unwrap_or(s);
+    if s.chars().count() > 40 {
+        let head: String = s.chars().take(39).collect();
+        format!("{head}…")
+    } else {
+        s.to_string()
+    }
+}
+
 pub fn switch_confirmation(
     cfg: &AppConfig,
     route: &ResolvedRoute,
     wanted_alive: Option<bool>,
 ) -> String {
     let label = route.slot_label;
-    let model = &route.settings.model;
+    // Show the model the way the rest of the UI does. llama-server reports
+    // whatever `-m` it was given unless an alias was set, so a slot can be
+    // called `/home/olares/models/Qwen3.6-35B-A3B-MTP-UD-Q4_K_S.gguf` — a
+    // filesystem path dumped into the family's chat. The per-message footer
+    // has always abbreviated; this line did not.
+    let model = display_model_name(&route.settings.model);
     let others: Vec<String> = SLOTS
         .iter()
         .filter(|s| **s != label && slot_settings(cfg, s).is_active())
@@ -854,5 +877,43 @@ mod routing_tests {
         let cfg = AppConfig::default(); // only fast active
         let md = help_markdown(&cfg);
         assert!(!md.contains("/balanced") && !md.contains("**Models**"));
+    }
+}
+
+#[cfg(test)]
+mod display_name_tests {
+    use super::display_model_name;
+
+    #[test]
+    fn paths_are_trimmed_to_the_model_name() {
+        // Wolf's three slots, verbatim from what each server reports.
+        assert_eq!(
+            display_model_name("/home/olares/models/Qwen3.6-35B-A3B-MTP-UD-Q4_K_S.gguf"),
+            "Qwen3.6-35B-A3B-MTP-UD-Q4_K_S"
+        );
+        assert_eq!(display_model_name("Laguna-XS-2.1"), "Laguna-XS-2.1");
+        assert_eq!(
+            display_model_name("C:\\models\\Qwen3.6-35B-A3B-uncensored-heretic-Native-MTP-Preserved-Q6_K.gguf"),
+            // 60 chars after trimming path + .gguf, so it caps.
+            "Qwen3.6-35B-A3B-uncensored-heretic-Nati…"
+        );
+    }
+
+    #[test]
+    fn vendor_prefixed_ids_keep_their_model_part() {
+        assert_eq!(display_model_name("olares/gpt-oss-20b"), "gpt-oss-20b");
+        assert_eq!(display_model_name("meta-llama/llama-4-scout-17b-16e-instruct"),
+                   "llama-4-scout-17b-16e-instruct");
+    }
+
+    #[test]
+    fn short_names_and_edge_cases_are_untouched() {
+        assert_eq!(display_model_name("qwen3:14b"), "qwen3:14b");
+        assert_eq!(display_model_name(""), "");
+        assert_eq!(display_model_name("  spaced  "), "spaced");
+        // A path ending in a separator must not panic or slice mid-char.
+        assert_eq!(display_model_name("/models/"), "");
+        assert_eq!(display_model_name("модель-очень-длинное-имя-которое-точно-превышает-лимит"),
+                   "модель-очень-длинное-имя-которое-точно-…");
     }
 }
