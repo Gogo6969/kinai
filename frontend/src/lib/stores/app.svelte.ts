@@ -24,6 +24,16 @@ class AppStore {
   streaming = $state<Record<string, string>>({}); // client_msg_id -> partial content
   reasoning = $state<Record<string, string>>({}); // client_msg_id -> reasoning trace
   toolActivity = $state<Record<string, { name: string; ok?: boolean }[]>>({});
+  /** Which thread each in-flight turn belongs to, keyed by client_msg_id.
+   *
+   *  The three maps above are keyed by turn alone, which left the UI no
+   *  way to tell whose turn a stream was: ChatWindow derived its
+   *  thinking-dots from *every* key, so asking a question in one
+   *  conversation showed the model thinking in all of them (field report
+   *  2026-07-30). `turnErrors` already carried a threadId for exactly this
+   *  reason; streams simply never did. Written when a turn starts and
+   *  removed alongside the other three. */
+  turnThreads = $state<Record<string, string>>({});
   /** Failed turns that produced NO assistant message, keyed by
    *  client_msg_id. Rendered as an inline (ephemeral, not persisted)
    *  error bubble in the thread the turn belonged to — previously a
@@ -324,6 +334,10 @@ class AppStore {
     this.streaming[clientMsgId] = '';
     this.reasoning[clientMsgId] = '';
     this.toolActivity[clientMsgId] = [];
+    // Best guess now so the dots appear in the right thread immediately;
+    // corrected below once the destination is definitively resolved (a
+    // queued message, or a self-healed brand-new thread).
+    this.turnThreads[clientMsgId] = opts.threadId ?? this.activeThreadId ?? '';
 
     // Resolve the destination thread. A queued message carries the thread it
     // was typed in (opts.threadId) so it still lands there even if the user
@@ -356,11 +370,16 @@ class AppStore {
         delete this.streaming[clientMsgId];
         delete this.reasoning[clientMsgId];
         delete this.toolActivity[clientMsgId];
+        delete this.turnThreads[clientMsgId];
         this.busy = false;
         this.activeTurnId = null;
         return;
       }
     }
+    // Definitive now — covers the queued-message and self-healed-thread
+    // paths, where the seed above guessed the wrong (or an empty) thread.
+    this.turnThreads[clientMsgId] = targetThreadId;
+    this.turnThreads = { ...this.turnThreads };
 
     // Auto-name the destination thread from this first user message if the
     // title is still a system-assigned placeholder. We deliberately do NOT
@@ -403,6 +422,7 @@ class AppStore {
       delete this.streaming[clientMsgId];
       delete this.reasoning[clientMsgId];
       delete this.toolActivity[clientMsgId];
+      delete this.turnThreads[clientMsgId];
       this.busy = false;
       this.activeTurnId = null;
       // In HOST mode a pipeline/tool error rejects right here (there's no
@@ -486,6 +506,8 @@ class AppStore {
     this.streaming[clientMsgId] = '';
     this.reasoning[clientMsgId] = '';
     this.toolActivity[clientMsgId] = [];
+    // Regenerate / edit-and-resend always act on the thread on screen.
+    this.turnThreads[clientMsgId] = this.activeThreadId ?? '';
     return clientMsgId;
   }
 
@@ -587,6 +609,7 @@ class AppStore {
     delete this.streaming[clientMsgId];
     delete this.reasoning[clientMsgId];
     delete this.toolActivity[clientMsgId];
+    delete this.turnThreads[clientMsgId];
     this.streaming = { ...this.streaming };
     this.reasoning = { ...this.reasoning };
     this.toolActivity = { ...this.toolActivity };
@@ -754,6 +777,7 @@ class AppStore {
       delete this.streaming[id];
       delete this.reasoning[id];
       delete this.toolActivity[id];
+      delete this.turnThreads[id];
       this.streaming = { ...this.streaming };
       this.reasoning = { ...this.reasoning };
       this.toolActivity = { ...this.toolActivity };
@@ -860,6 +884,7 @@ class AppStore {
           delete this.streaming[client_msg_id];
           delete this.reasoning[client_msg_id];
           delete this.toolActivity[client_msg_id];
+          delete this.turnThreads[client_msg_id];
           this.streaming = { ...this.streaming };
           this.reasoning = { ...this.reasoning };
           this.toolActivity = { ...this.toolActivity };
@@ -911,6 +936,7 @@ class AppStore {
           delete this.streaming[id];
           delete this.reasoning[id];
           delete this.toolActivity[id];
+          delete this.turnThreads[id];
           this.streaming = { ...this.streaming };
           this.reasoning = { ...this.reasoning };
           this.toolActivity = { ...this.toolActivity };
@@ -955,6 +981,7 @@ class AppStore {
             delete this.streaming[id];
             delete this.reasoning[id];
             delete this.toolActivity[id];
+            delete this.turnThreads[id];
             this.streaming = { ...this.streaming };
             this.reasoning = { ...this.reasoning };
             this.toolActivity = { ...this.toolActivity };

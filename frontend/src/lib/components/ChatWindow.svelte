@@ -302,6 +302,17 @@
   // during the long pre-token phase of a tool-using response (the model
   // emits reasoning + tool events first, real tokens only after the tool
   // returns), which is exactly when the live indicator matters most.
+  //
+  // Scoped to the ACTIVE thread. Without the filter every in-flight turn
+  // rendered its thinking-dots in whichever conversation was on screen, so
+  // asking something in a new chat showed the model "thinking" in the old
+  // one too (field report 2026-07-30). A turn with no recorded thread is
+  // shown rather than hidden: losing a live indicator is worse than an
+  // extra one, and `turnErrors` two lines down takes the same view.
+  const inActiveThread = (id: string) => {
+    const owner = app.turnThreads[id];
+    return owner === undefined || owner === '' || owner === app.activeThreadId;
+  };
   const streamingIds = $derived(
     Array.from(
       new Set([
@@ -309,9 +320,9 @@
         ...Object.keys(app.reasoning),
         ...Object.keys(app.toolActivity),
       ])
-    )
+    ).filter(inActiveThread)
   );
-  const toolIds = $derived(Object.keys(app.toolActivity));
+  const toolIds = $derived(Object.keys(app.toolActivity).filter(inActiveThread));
   /** Failed-turn error bubbles belonging to the ACTIVE thread. Also
    *  gates the empty-state welcome screen — a brand-new thread whose
    *  first message failed must show the error, not the welcome. */
