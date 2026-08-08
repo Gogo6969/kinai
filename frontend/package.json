@@ -23,7 +23,7 @@
     "@tauri-apps/plugin-updater": "^2.3.0",
     "bits-ui": "^1.0.0-next.78",
     "clsx": "^2.1.1",
-    "dompurify": "^3.4.12",
+    "dompurify": "^3.4.13",
     "highlight.js": "^11.10.0",
     "katex": "^0.16.11",
     "marked": "^15.0.6",
