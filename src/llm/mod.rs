@@ -206,6 +206,7 @@ impl LlmClient {
         Ok(CompleteResult {
             content: choice.message.content.unwrap_or_default(),
             tool_calls: choice.message.tool_calls.unwrap_or_default(),
+            reasoning: choice.message.reasoning_content.unwrap_or_default(),
         })
     }
 }
@@ -214,6 +215,11 @@ impl LlmClient {
 pub struct CompleteResult {
     pub content: String,
     pub tool_calls: Vec<ToolCallOut>,
+    /// Hidden chain-of-thought, when the backend exposes one. Kept ONLY so
+    /// an empty `content` can be explained: a reasoning model that spends
+    /// its whole budget thinking returns nothing visible, and without this
+    /// the caller cannot tell that apart from a dead endpoint.
+    pub reasoning: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -232,6 +238,9 @@ struct ChatChoiceMsgFull {
     content: Option<String>,
     #[serde(default)]
     tool_calls: Option<Vec<ToolCallOut>>,
+    /// DeepSeek / Qwen-style reasoning channel.
+    #[serde(default)]
+    reasoning_content: Option<String>,
 }
 
 fn serialize_message(m: &ChatMessage) -> serde_json::Value {

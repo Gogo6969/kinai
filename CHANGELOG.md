@@ -5,6 +5,30 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.95] — 2026-08-08
+
+### Fixed
+
+- **Fact check often came back with "the checker model returned an empty
+  report".** The checker is given a budget for its reply, and on a model
+  that thinks before answering — DeepSeek's, among others — that budget
+  covers the thinking too. It was set too low, so the model regularly
+  used the whole allowance working the answer out and had nothing left to
+  write the verdict with. Measured on the reply that failed: 3 of 4
+  checks produced nothing. The budget is now four times larger, and a
+  check that still runs out quietly tries once more. Same reply, after
+  the fix: 6 of 6 produced a verdict.
+- **When a fact check does fail, it now says what went wrong.** "Try
+  again" was the same message whether the model ran out of room mid-
+  thought or the API key was wrong — only one of those is worth retrying.
+
+### Added
+
+- Fact checks are recorded in the host log (model, prompt and evidence
+  size, how long it took, whether a verdict came back). None of this was
+  logged before, which is why two failures in a row left nothing to
+  diagnose.
+
 ## [0.2.94] — 2026-07-30
 
 ### Added

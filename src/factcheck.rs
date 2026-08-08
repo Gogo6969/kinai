@@ -37,9 +37,19 @@ pub fn is_configured(s: &LlmSettings) -> bool {
             .unwrap_or(false)
 }
 
-/// Keep the checker's output bounded — it's a verdict card, not an essay,
-/// and online APIs bill per token.
-const FACT_CHECK_MAX_TOKENS: usize = 2048;
+/// Output ceiling for the verdict call.
+///
+/// This is NOT just the verdict's length: on a reasoning checker the cap
+/// covers hidden chain-of-thought too, and that is charged first. At the
+/// old 2048 the reasoning alone hit the ceiling in 2 of 3 runs against
+/// `deepseek-v4-flash`, leaving nothing for the verdict — the user saw
+/// "the checker model returned an empty report" (field report
+/// 2026-08-08, reproduced 3/4 through `factcheck::run`). Measured
+/// reasoning reached 3213 tokens, larger than the entire old budget.
+///
+/// 8192 costs nothing extra when unused — billing is on tokens actually
+/// generated, and a verdict card is a few hundred.
+const FACT_CHECK_MAX_TOKENS: usize = 8192;
 /// At most this many verification searches per check (metered engines).
 const MAX_QUERIES: usize = 3;
 
@@ -77,7 +87,15 @@ strings, nothing else.\n\nQUESTION:\n{question}\n\nANSWER:\n{answer}"
         },
     ];
     let queries = match llm.complete(&qmsgs, &[], Some(300)).await {
-        Ok(r) => parse_query_array(&r.content),
+        Ok(r) => {
+            tracing::info!(
+                model = %settings.model,
+                content_chars = r.content.len(),
+                reasoning_chars = r.reasoning.len(),
+                "fact check: query step"
+            );
+            parse_query_array(&r.content)
+        }
         Err(e) => {
             tracing::warn!("fact check query step failed ({e:#}); using fallback query");
             Vec::new()
@@ -156,14 +174,63 @@ results gathered just now):\n{evidence}"
             image_data_urls: vec![],
         },
     ];
-    let result = llm
+    let prompt_chars: usize = vmsgs.iter().map(|m| m.content().len()).sum();
+    let started = std::time::Instant::now();
+    let mut result = llm
         .complete(&vmsgs, &[], Some(FACT_CHECK_MAX_TOKENS))
         .await?;
+    // How long a reasoning model thinks varies run to run on identical
+    // input, so a budget that fits nine times in ten still strands the
+    // tenth. One retry, only for that exact shape (nothing visible but
+    // thinking present) — a genuinely empty response is not retried here,
+    // since that means the endpoint or key is wrong and a second call
+    // fails the same way.
+    if result.content.trim().is_empty() && !result.reasoning.trim().is_empty() {
+        tracing::warn!(
+            reasoning_chars = result.reasoning.len(),
+            "fact check: verdict lost to reasoning; retrying once"
+        );
+        if cancel.is_cancelled() {
+            anyhow::bail!("cancelled");
+        }
+        result = llm
+            .complete(&vmsgs, &[], Some(FACT_CHECK_MAX_TOKENS))
+            .await?;
+    }
     let report = result.content.trim().to_string();
-    anyhow::ensure!(
-        !report.is_empty(),
-        "the checker model returned an empty report — try again"
+    tracing::info!(
+        model = %settings.model,
+        prompt_chars,
+        evidence_chars = evidence.len(),
+        searches_ok = searches_ok,
+        ms = started.elapsed().as_millis() as u64,
+        report_chars = report.len(),
+        reasoning_chars = result.reasoning.len(),
+        "fact check: verdict step"
     );
+    if report.is_empty() {
+        // Two very different failures used to share one message. Separate
+        // them: a reasoning model that spent its whole budget thinking is
+        // not the same as an endpoint that returned nothing at all, and
+        // "try again" is only useful advice for one of them.
+        if !result.reasoning.trim().is_empty() {
+            tracing::warn!(
+                reasoning_chars = result.reasoning.len(),
+                max_tokens = FACT_CHECK_MAX_TOKENS,
+                "fact check: model produced only hidden reasoning, no verdict"
+            );
+            anyhow::bail!(
+                "The checker model thought it through but never wrote the verdict — it \
+used its whole output budget on hidden reasoning. Try again, or pick a model that \
+doesn't reason at length for this slot."
+            );
+        }
+        tracing::warn!("fact check: checker returned an entirely empty response");
+        anyhow::bail!(
+            "The checker model returned nothing at all. Check the fact-check model's \
+API key and model name in Settings, then try again."
+        );
+    }
     Ok(report)
 }
 
