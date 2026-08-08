@@ -75,6 +75,14 @@
   let availableModelsDeep = $state<string[]>([]);
   let testingDeep = $state(false);
   let testResultDeep = $state<TestConnectionResult | null>(null);
+  // The tool checkbox loop only ever indexes the on/off fields. Indexing by
+  // `keyof ToolSettings` would widen the value to `string | boolean | null`,
+  // because the settings object also carries the engine name, the API key
+  // and the SearXNG URL.
+  type BoolToolKey = {
+    [K in keyof ToolSettings]: ToolSettings[K] extends boolean ? K : never;
+  }[keyof ToolSettings];
+
   let tools = $state<ToolSettings>({
     web_search: true,
     x_search: true,
@@ -154,7 +162,11 @@
   // running server.
   let reconfiguring = $state(false);
 
-  onMount(async () => {
+  // Deliberately NOT async: Svelte discards the cleanup function returned
+  // from an async onMount, which silently leaked the 30s tick interval on
+  // every visit to this screen. Nothing in here awaits, so the keyword was
+  // vestigial anyway.
+  onMount(() => {
     if (app.config) {
       host = { ...app.config.host };
       llm = { ...app.config.llm };
@@ -936,7 +948,7 @@
             </div>
             <input
               type="checkbox"
-              checked={tools[key as keyof ToolSettings]}
+              checked={tools[key as BoolToolKey]}
               onchange={(e) => (tools = { ...tools, [key]: (e.target as HTMLInputElement).checked })}
             />
           </label>
