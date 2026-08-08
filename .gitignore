@@ -56,3 +56,6 @@ releases/
 # Local agent/dev tooling — never ship
 .claude/
 .playwright-mcp/
+
+# X post drafts — local only, never publish unapproved marketing copy
+.x-draft-*.md

@@ -203,10 +203,12 @@ impl LlmClient {
             .into_iter()
             .next()
             .ok_or_else(|| anyhow!("no choices"))?;
+        let truncated = choice.finish_reason.as_deref() == Some("length");
         Ok(CompleteResult {
             content: choice.message.content.unwrap_or_default(),
             tool_calls: choice.message.tool_calls.unwrap_or_default(),
-            reasoning: choice.message.reasoning_content.unwrap_or_default(),
+            reasoning: choice.message.reasoning.unwrap_or_default(),
+            truncated,
         })
     }
 }
@@ -220,6 +222,12 @@ pub struct CompleteResult {
     /// its whole budget thinking returns nothing visible, and without this
     /// the caller cannot tell that apart from a dead endpoint.
     pub reasoning: String,
+    /// `finish_reason == "length"`: generation stopped at the output
+    /// ceiling. This is the *reliable* "ran out of room" signal — several
+    /// hosted models bill reasoning against `max_tokens` while returning
+    /// no reasoning text at all, so an empty `reasoning` cannot rule
+    /// truncation out.
+    pub truncated: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -230,6 +238,11 @@ struct ChatRespFull {
 #[derive(Debug, Deserialize)]
 struct ChatChoiceFull {
     message: ChatChoiceMsgFull,
+    /// Why generation stopped. `"length"` means the output ceiling was
+    /// reached — the only trustworthy signal that a reply was cut off
+    /// rather than simply empty. Absent on some servers, hence Option.
+    #[serde(default)]
+    finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -238,9 +251,15 @@ struct ChatChoiceMsgFull {
     content: Option<String>,
     #[serde(default)]
     tool_calls: Option<Vec<ToolCallOut>>,
-    /// DeepSeek / Qwen-style reasoning channel.
-    #[serde(default)]
-    reasoning_content: Option<String>,
+    /// Chain-of-thought channel. Same field-name zoo as the streaming
+    /// path (see `StreamDelta` in stream.rs): `reasoning` on vLLM and
+    /// several OpenAI-compatible gateways, `reasoning_content` on
+    /// llama.cpp, DeepSeek and Qwen3. Accept both — reading only one
+    /// spelling is what broke the deep slot back in 0.2.46, and here it
+    /// would silently disable the fact-check retry on half the backends
+    /// KinAI supports.
+    #[serde(default, alias = "reasoning_content")]
+    reasoning: Option<String>,
 }
 
 fn serialize_message(m: &ChatMessage) -> serde_json::Value {
@@ -354,5 +373,51 @@ pub fn short_server_down_reason(err: &str) -> &'static str {
         "server unreachable"
     } else {
         "server error"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The reasoning channel has two spellings in the wild and the
+    /// non-streaming path reads it to decide whether an empty reply was a
+    /// budget overrun (retry, explain) or a dead endpoint (don't retry).
+    /// Reading only one spelling silently disables that on every backend
+    /// using the other — the same mistake that broke the deep slot in
+    /// 0.2.46, which is why stream.rs guards both. Guard both here too.
+    #[test]
+    fn parses_reasoning_content_spelling() {
+        let raw = r#"{"choices":[{"message":{"content":"","reasoning_content":"thinking"}}]}"#;
+        let parsed: ChatRespFull = serde_json::from_str(raw).unwrap();
+        let msg = &parsed.choices[0].message;
+        assert_eq!(msg.reasoning.as_deref(), Some("thinking"));
+    }
+
+    #[test]
+    fn parses_reasoning_canonical_spelling() {
+        let raw = r#"{"choices":[{"message":{"content":"","reasoning":"thinking"}}]}"#;
+        let parsed: ChatRespFull = serde_json::from_str(raw).unwrap();
+        let msg = &parsed.choices[0].message;
+        assert_eq!(msg.reasoning.as_deref(), Some("thinking"));
+    }
+
+    /// `finish_reason == "length"` is the only trustworthy truncation
+    /// signal: models that bill reasoning against `max_tokens` without
+    /// returning any reasoning text produce an empty reply that is
+    /// otherwise indistinguishable from a dead endpoint.
+    #[test]
+    fn detects_truncation_from_finish_reason() {
+        let raw = r#"{"choices":[{"message":{"content":""},"finish_reason":"length"}]}"#;
+        let parsed: ChatRespFull = serde_json::from_str(raw).unwrap();
+        assert_eq!(parsed.choices[0].finish_reason.as_deref(), Some("length"));
+    }
+
+    /// Servers that omit finish_reason entirely must still parse.
+    #[test]
+    fn missing_finish_reason_is_not_truncation() {
+        let raw = r#"{"choices":[{"message":{"content":"hi"}}]}"#;
+        let parsed: ChatRespFull = serde_json::from_str(raw).unwrap();
+        assert!(parsed.choices[0].finish_reason.is_none());
     }
 }

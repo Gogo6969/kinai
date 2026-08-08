@@ -18,7 +18,18 @@ and "published".
 - [ ] No stray dev servers or builds running (`lsof -iTCP:1420`); build
       on a quiet machine.
 - [ ] Version bumped in `Cargo.toml`, `tauri.conf.json`,
-      `frontend/package.json` + CHANGELOG entry dated today.
+      `frontend/package.json`, **`Cargo.lock`** + CHANGELOG entry dated
+      today. `bump-version.sh` now refreshes the lock; verify it did
+      (`awk '/^name = "kinai"$/{f=1} f&&/^version/{print; exit}' Cargo.lock`).
+      Before 0.2.95 the lock was updated only as a side effect of the next
+      build, so a tag could ship naming the previous version.
+- [ ] Every gate must show **positive evidence it ran** — an exit code and
+      a completion line, never the mere absence of matches. `pnpm check`
+      was reported clean for several releases while never executing: it
+      was wrapped in `timeout`, which does not exist on macOS, so it
+      exited 127 and the grep for "ERROR" then found nothing. Two real
+      type errors sat behind that. Record `exit=$?` and the tool's own
+      summary line ("N ERRORS"), not a grep count.
 
 ## 2 — Build + install on host
 

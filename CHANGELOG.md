@@ -21,6 +21,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - **When a fact check does fail, it now says what went wrong.** "Try
   again" was the same message whether the model ran out of room mid-
   thought or the API key was wrong — only one of those is worth retrying.
+- **The host setup screen left a timer running every time you opened
+  it.** The clock behind "last scanned 5 minutes ago" was never stopped
+  when you left the screen, so a fresh one started on each visit and they
+  all kept ticking. Harmless on a quick visit, wasteful over a long
+  session.
 
 ### Added
 

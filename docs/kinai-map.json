@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-07-27T23:34:15+00:00",
-  "version": "0.2.89",
+  "generated_at": "2026-08-08T21:16:58+00:00",
+  "version": "0.2.95",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 190,
-    "head": "798b848"
+    "commits": 205,
+    "head": "0364669"
   },
   "totals": {
-    "rust_files": 58,
-    "rust_lines": 21400,
-    "frontend_files": 30,
-    "frontend_lines": 11056,
-    "unit_tests": 107,
-    "integration_test_files": 9,
-    "releases": 82,
-    "tags": 77
+    "rust_files": 59,
+    "rust_lines": 22974,
+    "frontend_files": 31,
+    "frontend_lines": 11578,
+    "unit_tests": 139,
+    "integration_test_files": 12,
+    "releases": 88,
+    "tags": 82
   },
   "areas": [
     {
@@ -115,14 +115,14 @@
     {
       "path": "src/commands.rs",
       "area": "entry",
-      "lines": 3097,
+      "lines": 3229,
       "doc": "Tauri command surface — every IPC entrypoint the frontend can call.",
       "tests": 0
     },
     {
       "path": "src/config.rs",
       "area": "entry",
-      "lines": 611,
+      "lines": 639,
       "doc": "Persistent configuration at `~/.kinai/config.toml`.",
       "tests": 3
     },
@@ -227,7 +227,7 @@
     {
       "path": "src/factcheck.rs",
       "area": "routing",
-      "lines": 225,
+      "lines": 328,
       "doc": "Independent fact-check of a single assistant reply.",
       "tests": 2
     },
@@ -241,7 +241,7 @@
     {
       "path": "src/lib.rs",
       "area": "entry",
-      "lines": 571,
+      "lines": 572,
       "doc": "KinAI library entrypoint — wires Tauri shell, Axum HTTP/WS server, tray, global hotkey, LLM client, and the never-lose-context pipeline.",
       "tests": 0
     },
@@ -255,9 +255,9 @@
     {
       "path": "src/llm/mod.rs",
       "area": "llm",
-      "lines": 319,
+      "lines": 424,
       "doc": "Local LLM client.",
-      "tests": 0
+      "tests": 4
     },
     {
       "path": "src/llm/stream.rs",
@@ -332,9 +332,9 @@
     {
       "path": "src/slash.rs",
       "area": "routing",
-      "lines": 859,
+      "lines": 920,
       "doc": "Slash commands — intercepted BEFORE the LLM pipeline so messages starting with /pic, /picHQ, /help, ? skip the chat model entirely and route to native handlers (ComfyUI for image gen, a static command list for help).",
-      "tests": 10
+      "tests": 13
     },
     {
       "path": "src/stt.rs",
@@ -400,6 +400,13 @@
       "tests": 0
     },
     {
+      "path": "src/tools/force_search.rs",
+      "area": "tools",
+      "lines": 400,
+      "doc": "Taking the \"should I search?\" decision away from the model.",
+      "tests": 6
+    },
+    {
       "path": "src/tools/image_recover.rs",
       "area": "tools",
       "lines": 124,
@@ -409,42 +416,42 @@
     {
       "path": "src/tools/image_search.rs",
       "area": "tools",
-      "lines": 251,
+      "lines": 256,
       "doc": "Image search dispatcher.",
       "tests": 0
     },
     {
       "path": "src/tools/loop_pipeline.rs",
       "area": "tools",
-      "lines": 437,
+      "lines": 960,
       "doc": "Tool-calling pipeline.",
-      "tests": 5
+      "tests": 22
     },
     {
       "path": "src/tools/mod.rs",
       "area": "tools",
-      "lines": 16,
+      "lines": 17,
       "doc": "Built-in tools invoked via OpenAI-style function calling.",
       "tests": 0
     },
     {
       "path": "src/tools/registry.rs",
       "area": "tools",
-      "lines": 376,
+      "lines": 385,
       "doc": "Tool catalogue — generated dynamically from `ToolSettings` so users can disable tools their model shouldn't be allowed to call.",
       "tests": 0
     },
     {
       "path": "src/tools/web_search.rs",
       "area": "tools",
-      "lines": 372,
+      "lines": 572,
       "doc": "Web search dispatcher.",
-      "tests": 3
+      "tests": 5
     },
     {
       "path": "src/tools/x_search.rs",
       "area": "tools",
-      "lines": 374,
+      "lines": 380,
       "doc": "Social / discussion search.",
       "tests": 0
     },
@@ -486,9 +493,15 @@
   ],
   "frontend": [
     {
+      "path": "frontend/src/lib/activeModel.ts",
+      "kind": "lib",
+      "lines": 96,
+      "doc": "Which slot is answering *right now*, for the composer prompt label. Wolf's ask: \"show in the prompt which model is currently set — so that the user always knows which model is right now working for him\", and then: \"the chat entry in the app should just show fast: balanced: or deep:\". So this resolves the slot, not the model id — the per-message footer already carries the full model name and stays "
+    },
+    {
       "path": "frontend/src/lib/api.ts",
       "kind": "lib",
-      "lines": 652,
+      "lines": 665,
       "doc": "Pause toggle. When `false` this slot is hidden from slash menus and skipped during message routing. Defaults to `true` for the fast slot, `false` for the deep slot (until the user fills it)."
     },
     {
@@ -500,7 +513,7 @@
     {
       "path": "frontend/src/lib/components/ChatWindow.svelte",
       "kind": "component",
-      "lines": 695,
+      "lines": 886,
       "doc": "↑/↓ prompt recall. `historyIndex === null` means we're editing the live draft; once recall starts it indexes into app.inputHistory and `draftStash` holds whatever the user was typing so ↓ can restore it."
     },
     {
@@ -560,7 +573,7 @@
     {
       "path": "frontend/src/lib/dev-tauri-mock.ts",
       "kind": "lib",
-      "lines": 322,
+      "lines": 329,
       "doc": "DEV-ONLY Tauri IPC mock. When the frontend runs in a plain browser (`pnpm dev` + localhost:1420, no Tauri shell), `window.__TAURI_INTERNALS__` doesn't exist and every invoke() rejects — the UI is untestable outside the app. This module installs a minimal in-memory backend so the whole UI (most importantly the /setup wizard) can be driven end-to-end in a browser: config mutations persist for the se"
     },
     {
@@ -578,7 +591,7 @@
     {
       "path": "frontend/src/lib/stores/app.svelte.ts",
       "kind": "lib",
-      "lines": 1013,
+      "lines": 1040,
       "doc": "This machine can synthesize speech (macOS). Mac CLIENTS speak locally with their own voices; hosts are always Macs today."
     },
     {
@@ -620,7 +633,7 @@
     {
       "path": "frontend/src/routes/host/+page.svelte",
       "kind": "route",
-      "lines": 1161,
+      "lines": 1264,
       "doc": "Secondary \"deep\" slot — same shape, but starts disabled + empty so hosts who only want one model keep their existing single-slot behaviour. The configure step now exposes BOTH slots so the user can pick a fast + deep backend in one screen."
     },
     {
@@ -650,7 +663,7 @@
     {
       "path": "frontend/src/routes/settings/+page.svelte",
       "kind": "route",
-      "lines": 2121,
+      "lines": 2206,
       "doc": "Fast model — the existing single slot. Reachable as `/fast` once the deep slot is also configured; the default routing target for plain (non-slash) messages."
     },
     {
@@ -758,6 +771,34 @@
       ]
     },
     {
+      "file": "tests/factcheck_live.rs",
+      "doc": "The fact-check button, through KinAI's own code path.",
+      "tests": [
+        {
+          "name": "the_failing_fact_check_now_produces_a_verdict",
+          "ignored": true
+        },
+        {
+          "name": "fact_check_is_repeatable",
+          "ignored": true
+        }
+      ]
+    },
+    {
+      "file": "tests/forced_search_live.rs",
+      "doc": "The latch, and the fix for it, measured through the REAL pipeline.",
+      "tests": [
+        {
+          "name": "a_poisoned_conversation_still_searches",
+          "ignored": true
+        },
+        {
+          "name": "a_timeless_question_is_left_alone",
+          "ignored": true
+        }
+      ]
+    },
+    {
       "file": "tests/routing.rs",
       "doc": "Tests for slash routing — specifically the bare `/fast` / `/deep` mode switch that must NOT run an empty LLM turn.",
       "tests": [
@@ -795,6 +836,24 @@
       "tests": [
         {
           "name": "a_failed_lookup_is_reported_honestly",
+          "ignored": true
+        }
+      ]
+    },
+    {
+      "file": "tests/searxng_live.rs",
+      "doc": "SearXNG through KinAI's real dispatcher.",
+      "tests": [
+        {
+          "name": "searxng_returns_usable_grounding",
+          "ignored": true
+        },
+        {
+          "name": "a_wrong_url_fails_loudly_rather_than_silently",
+          "ignored": true
+        },
+        {
+          "name": "the_settings_test_button_reports_accurately",
           "ignored": true
         }
       ]
@@ -969,6 +1028,7 @@
       "test_comfy_endpoint",
       "test_llm_connection",
       "test_llm_endpoint",
+      "test_searxng",
       "test_telegram_token",
       "test_tool",
       "test_vision_endpoint",
@@ -979,6 +1039,142 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.95",
+      "date": "2026-08-08",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "Fact check often came back with \"the checker model returned an empty report\".",
+            "detail": "The checker is given a budget for its reply, and on a model that thinks before answering — DeepSeek's, among others — that budget covers the thinking too. It was set too low, so the model regularly used the whole allowance working the answer out and had nothing left to write the verdict with. Measured on the reply that failed: 3 of 4 checks produced nothing. The budget is now four times larger, and a check that still runs out quietly tries once more. Same reply, after the fix: 6 of 6 produced a verdict."
+          },
+          {
+            "title": "When a fact check does fail, it now says what went wrong.",
+            "detail": "\"Try again\" was the same message whether the model ran out of room mid- thought or the API key was wrong — only one of those is worth retrying."
+          },
+          {
+            "title": "The host setup screen left a timer running every time you opened it.",
+            "detail": "The clock behind \"last scanned 5 minutes ago\" was never stopped when you left the screen, so a fresh one started on each visit and they all kept ticking. Harmless on a quick visit, wasteful over a long session."
+          }
+        ],
+        "Added": [
+          {
+            "title": "Fact checks are recorded in the host log (model, prompt and evidence size, how long it took, whether a verdict came back",
+            "detail": ""
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.2.94",
+      "date": "2026-07-30",
+      "sections": {
+        "Added": [
+          {
+            "title": "Choose SearXNG in Settings.",
+            "detail": "0.2.93 added the engine but no way to select it. Settings → Tools now lists it alongside DuckDuckGo and Exa, with a field for your instance's address and a **Test** button that says what is actually wrong — a missing `http://`, nothing listening, or the JSON format not enabled (SearXNG ships with it off, which would otherwise show up as searches that quietly return nothing). On success it shows the first result and which engines answered."
+          },
+          {
+            "title": "A switch for the Exa fallback.",
+            "detail": "While Exa is selected you can now turn \"use SearXNG if Exa runs out of credit\" on or off. Settings also states plainly that KinAI does not install SearXNG — it is a service you run yourself, and nothing there is required."
+          }
+        ],
+        "Fixed": [
+          {
+            "title": "Switching models no longer prints a file path.",
+            "detail": "`/fast` replied \"Switched to the fast model (`/home/olares/models/Qwen3.6-35B-A3B-MTP- UD-Q4_K_S.gguf`)\" because that is the name its server reports. The message now shows just the model name, the way the footer under each answer already did."
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.2.93",
+      "date": "2026-07-30",
+      "sections": {
+        "Added": [
+          {
+            "title": "Pick the model from a menu.",
+            "detail": "The `fast:` / `balanced:` / `deep:` label on the message box now opens a picker showing what each one is for and which model serves it, with a tick on the one in use. A slot your host can't reach is marked \"Offline — auto-switches\". Typing `/fast`, `/balanced` or `/deep` still works exactly as before."
+          },
+          {
+            "title": "SearXNG as a search engine.",
+            "detail": "If you run your own SearXNG, KinAI can use it: no API key, no cost, and — unlike the other options — your family's questions never leave your own hardware. Set the address in Settings → Tools. Your instance needs its JSON format enabled; if it isn't, KinAI now says so instead of quietly returning nothing."
+          },
+          {
+            "title": "Search keeps working when Exa runs out of credit.",
+            "detail": "When the paid search is unavailable — credits used up, key rejected — KinAI falls back to your SearXNG rather than failing the question, and says which engine answered so you know to top up. Brief outages still retry on Exa itself."
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.2.92",
+      "date": "2026-07-30",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "A question needing many searches could fail outright.",
+            "detail": "Every search result is added to what the model has to read, and nothing limited how much piled up. One research question ran thirteen searches, and the request grew past what the model could accept — so the whole answer was lost at the last step, after all thirteen searches had been paid for. Results are now trimmed to fit, and clearly marked as shortened so the model tells you when it is working from a fragment rather than presenting a partial answer as complete."
+          },
+          {
+            "title": "KinAI showed \"thinking\" in conversations that weren't thinking.",
+            "detail": "Asking something in one conversation displayed the same live indicator in every other one. It now appears only where the question was asked."
+          },
+          {
+            "title": "A search tool that is out of credit no longer apologises four times.",
+            "detail": "When a lookup fails for a reason that cannot change — billing, a wrong API key, missing configuration — KinAI stops calling it for the rest of that turn and says once what is unavailable, instead of retrying the same error each round."
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.2.91",
+      "date": "2026-07-30",
+      "sections": {
+        "Added": [
+          {
+            "title": "The message box now tells you which model will answer.",
+            "detail": "It reads `fast:`, `balanced:` or `deep:` at the head of the input, so the model in force is visible *before* you type — not only in the footer of an answer that has already arrived. Typing `/deep …` switches the label immediately, so it always shows what pressing Enter will actually do. It turns amber when your host reports that slot as unreachable, because KinAI will quietly answer with a different model in that case."
+          }
+        ],
+        "Changed": [
+          {
+            "title": "The message box centres its text vertically. With a single line of input the caret used to sit against the bottom edge w",
+            "detail": ""
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.2.90",
+      "date": "2026-07-29",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "\"I don't have real-time data\" — asked for the Bitcoin price, the balanced model refused, and refused every time after that.",
+            "detail": "It was not forgetting it had a search tool. Measured against the live model with an identical prompt: 8/8 searches with a clean conversation, 8/8 after a good answer, and **0/8 once a single refusal sat in the history**. The model copies its own previous turn, so one bad answer latches the whole thread — which is exactly why telling it to search fixed things for the rest of that session and why the next session started badly again. KinAI now takes the decision away from the model: for a question that plainly needs live data, the request goes out with web search as the only available tool and the call *required*. On the exact conversation that scored 0/8, it now searches 12/12. Questions that don't need the web are untouched — a definitional question forced 0 searches in 6 runs."
+          },
+          {
+            "title": "A search that failed silently dropped its warning.",
+            "detail": "The 0.2.89 banner (\"every web lookup for this answer failed\") only appeared when the model exhausted its tool rounds. If it wrote an answer normally after the lookups failed — the common case — the warning was skipped and the answer looked grounded. Found by a new test, not in the field."
+          },
+          {
+            "title": "Pressing Stop no longer blames your model server.",
+            "detail": "Stopping a reply before any text appeared reported \"the model returned an empty response … may be offline\". It now says it was stopped."
+          },
+          {
+            "title": "Date and time questions stay local.",
+            "detail": "\"What time is it?\" is answered from the clock KinAI already puts in every prompt instead of going to the web."
+          }
+        ],
+        "Added": [
+          {
+            "title": "Web searches are logged with the tool, query, duration and result size, so a misbehaving lookup can be diagnosed from th",
+            "detail": ""
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.89",
       "date": "2026-07-27",
@@ -2722,6 +2918,26 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.94",
+      "date": "2026-07-30"
+    },
+    {
+      "tag": "v0.2.93",
+      "date": "2026-07-30"
+    },
+    {
+      "tag": "v0.2.92",
+      "date": "2026-07-30"
+    },
+    {
+      "tag": "v0.2.91",
+      "date": "2026-07-29"
+    },
+    {
+      "tag": "v0.2.90",
+      "date": "2026-07-29"
+    },
     {
       "tag": "v0.2.89",
       "date": "2026-07-27"

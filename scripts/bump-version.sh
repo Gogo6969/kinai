@@ -46,3 +46,21 @@ perl -pi -e "s/\"version\": \"\Q$current\E\"/\"version\": \"$new\"/" "$PKG"
 echo "✓ $CARGO"
 echo "✓ $TAURI"
 echo "✓ $PKG"
+
+# Cargo.lock records the workspace crate's own version, so it goes stale the
+# moment Cargo.toml moves. Nothing here used to update it: it was corrected
+# only as a side effect of whoever ran the next `cargo build`, which meant a
+# tag could carry a lock still naming the previous version (and CI would then
+# build with a dirty tree). Refresh it here so the bump commit is complete.
+if cargo update -p kinai --precise "$new" --offline >/dev/null 2>&1; then
+  echo "✓ Cargo.lock"
+else
+  # --offline fails on a cold registry cache; a metadata read rewrites the
+  # lock just as well and needs no network for a path-local version bump.
+  cargo metadata --format-version 1 >/dev/null 2>&1 || true
+  if grep -q "^version = \"$new\"" <(awk '/^name = "kinai"$/{f=1} f&&/^version/{print; exit}' Cargo.lock); then
+    echo "✓ Cargo.lock"
+  else
+    echo "⚠ Cargo.lock still not at $new — run 'cargo check' before committing" >&2
+  fi
+fi

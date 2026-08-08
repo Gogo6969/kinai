@@ -50,6 +50,22 @@ pub fn is_configured(s: &LlmSettings) -> bool {
 /// 8192 costs nothing extra when unused — billing is on tokens actually
 /// generated, and a verdict card is a few hundred.
 const FACT_CHECK_MAX_TOKENS: usize = 8192;
+/// Output ceiling for the query step.
+///
+/// A JSON array of three search queries is ~60 tokens, so 300 looks
+/// generous — but the same hidden-reasoning charge applies here, and the
+/// thinking for "what would verify this answer?" is not short. Measured
+/// against `deepseek-v4-flash`: 1 run in 3 hit the 300 cap exactly
+/// (`finish_reason=length`, 300 reasoning tokens, no content), and the
+/// host log caught the same shape in the field on 2026-08-08
+/// (`query step content_chars=0 reasoning_chars=1377`).
+///
+/// That failure was invisible: with no queries parsed, the step below
+/// quietly falls back to searching a 120-character stub of the answer,
+/// so the check still "succeeds" on a third of the evidence
+/// (`searches_ok=1 evidence_chars=5583` against a healthy
+/// `searches_ok=3 evidence_chars=16140`).
+const QUERY_MAX_TOKENS: usize = 2048;
 /// At most this many verification searches per check (metered engines).
 const MAX_QUERIES: usize = 3;
 
@@ -86,12 +102,13 @@ strings, nothing else.\n\nQUESTION:\n{question}\n\nANSWER:\n{answer}"
             image_data_urls: vec![],
         },
     ];
-    let queries = match llm.complete(&qmsgs, &[], Some(300)).await {
+    let queries = match llm.complete(&qmsgs, &[], Some(QUERY_MAX_TOKENS)).await {
         Ok(r) => {
             tracing::info!(
                 model = %settings.model,
                 content_chars = r.content.len(),
                 reasoning_chars = r.reasoning.len(),
+                truncated = r.truncated,
                 "fact check: query step"
             );
             parse_query_array(&r.content)
@@ -103,6 +120,16 @@ strings, nothing else.\n\nQUESTION:\n{question}\n\nANSWER:\n{answer}"
     };
     let queries = if queries.is_empty() {
         // Fallback: verify the answer's opening claim directly.
+        //
+        // Warn, don't stay silent. This path used to log nothing, so a
+        // check running on one stub query instead of three real ones was
+        // indistinguishable from a healthy one in the log — which is how
+        // the query step's own budget bug went unnoticed while the
+        // verdict step's was being fixed.
+        tracing::warn!(
+            "fact check: no queries parsed; falling back to a stub of the answer \
+(evidence will be thinner than usual)"
+        );
         let stub: String = answer.chars().take(120).collect();
         vec![stub.split_whitespace().collect::<Vec<_>>().join(" ")]
     } else {
@@ -181,13 +208,20 @@ results gathered just now):\n{evidence}"
         .await?;
     // How long a reasoning model thinks varies run to run on identical
     // input, so a budget that fits nine times in ten still strands the
-    // tenth. One retry, only for that exact shape (nothing visible but
-    // thinking present) — a genuinely empty response is not retried here,
-    // since that means the endpoint or key is wrong and a second call
+    // tenth. One retry, only for a reply that ran out of room: either the
+    // server said so (`finish_reason=length`) or thinking is present with
+    // nothing visible. A reply that is empty for neither reason is not
+    // retried — that means the endpoint or key is wrong and a second call
     // fails the same way.
-    if result.content.trim().is_empty() && !result.reasoning.trim().is_empty() {
+    //
+    // Both signals are needed. Some hosted models bill reasoning against
+    // `max_tokens` but return no reasoning text, so truncation there
+    // looks like a wholly empty reply; other servers omit finish_reason.
+    if result.content.trim().is_empty() && (result.truncated || !result.reasoning.trim().is_empty())
+    {
         tracing::warn!(
             reasoning_chars = result.reasoning.len(),
+            truncated = result.truncated,
             "fact check: verdict lost to reasoning; retrying once"
         );
         if cancel.is_cancelled() {
@@ -206,6 +240,7 @@ results gathered just now):\n{evidence}"
         ms = started.elapsed().as_millis() as u64,
         report_chars = report.len(),
         reasoning_chars = result.reasoning.len(),
+        truncated = result.truncated,
         "fact check: verdict step"
     );
     if report.is_empty() {
@@ -213,9 +248,10 @@ results gathered just now):\n{evidence}"
         // them: a reasoning model that spent its whole budget thinking is
         // not the same as an endpoint that returned nothing at all, and
         // "try again" is only useful advice for one of them.
-        if !result.reasoning.trim().is_empty() {
+        if result.truncated || !result.reasoning.trim().is_empty() {
             tracing::warn!(
                 reasoning_chars = result.reasoning.len(),
+                truncated = result.truncated,
                 max_tokens = FACT_CHECK_MAX_TOKENS,
                 "fact check: model produced only hidden reasoning, no verdict"
             );
