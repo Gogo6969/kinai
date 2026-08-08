@@ -80,6 +80,16 @@ and "published".
 
 ## 6 — After publish
 
+- [ ] **Intel Mac has no `stage-*` command — stage it by hand.** There is
+      a `stage-windows` and a `stage-linux`, and nothing for
+      `darwin-x86_64`, so it is the one family that silently keeps serving
+      the *previous* version while everything else moves:
+      ```
+      gh release download vX.Y.Z -p "KinAI_x64.app.tar.gz" -p "KinAI_x64.app.tar.gz.sig" -D /tmp/i
+      mkdir -p ~/.kinai/updates/X.Y.Z/darwin-x86_64
+      cp /tmp/i/KinAI_x64.app.tar.gz     ~/.kinai/updates/X.Y.Z/darwin-x86_64/KinAI.app.tar.gz
+      cp /tmp/i/KinAI_x64.app.tar.gz.sig ~/.kinai/updates/X.Y.Z/darwin-x86_64/KinAI.app.tar.gz.sig
+      ```
 - [ ] `./scripts/deploy.sh stage-windows` and `stage-linux`.
       **Stage BEFORE bumping to the next version.** Both commands read the
       version from the working tree, so once you bump, they target the new
@@ -87,6 +97,14 @@ and "published".
       release you just published never reaches Windows/Linux family
       devices. If that happens, don't back-stage: ship the newer version
       and let those platforms jump to it.
+- [ ] Confirm the host actually serves the new version to **all four**
+      targets — this is the check that catches a family nobody staged:
+      ```
+      for t in darwin-aarch64 darwin-x86_64 windows-x86_64 linux-x86_64; do
+        printf "  %-16s %s\n" "$t" \
+          "$(curl -s "localhost:4847/v1/update/manifest?target=$t" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("version","-"))')"
+      done
+      ```
 - [ ] X post on @Gogo6969 (short + catchy + screenshot; GitHub/website
       links go in a **reply**, never in tweet 1) — only after step 5's
       public-endpoint check passed. **At most ONE post per day**: on
