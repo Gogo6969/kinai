@@ -634,7 +634,18 @@ pub async fn probe_alive(settings: &LlmSettings) -> bool {
                 _ => false,
             }
         }
-        "ollama" => list_via_ollama(&client, &settings.base_url).await.is_ok(),
+        // Same provider-mismatch tolerance as llamacpp below: a slot
+        // labeled "ollama" but pointed at an OpenAI-style server (a cloud
+        // API, vLLM, …) has no /api/tags — chat would work fine, yet the
+        // probe would call it dead, and the known-dead skip would then
+        // refuse to route the user's explicit choice there. Try the
+        // OpenAI surface before giving up.
+        "ollama" => {
+            list_via_ollama(&client, &settings.base_url).await.is_ok()
+                || list_via_openai(&client, &settings.base_url, settings.api_key.as_deref())
+                    .await
+                    .is_ok()
+        }
         _ => list_via_openai(&client, &settings.base_url, settings.api_key.as_deref())
             .await
             .is_ok(),

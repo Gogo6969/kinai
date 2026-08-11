@@ -477,7 +477,15 @@
       if (app.config.llm_balanced) {
         llmBalanced = { ...app.config.llm_balanced };
       }
-      if (app.config.llm_online) {
+      if (app.config.llm_online?.base_url?.trim()) {
+        // Only hydrate a slot that was actually configured. The Rust-side
+        // empty default carries provider "ollama", and letting it
+        // overwrite this card's `openai-compat` initial state mattered:
+        // chat calls ignore the provider, but the liveness probe does not
+        // — provider "ollama" probes GET /api/tags, which a cloud API
+        // answers with 404, so a DeepSeek slot configured per this card's
+        // own instructions would be marked dead and `/online` would
+        // silently reroute to fast.
         llmOnline = { ...app.config.llm_online };
       }
       if (app.config.llm_factcheck) {

@@ -34,7 +34,10 @@ function defaultConfig() {
       api_key: null, temperature: 0.7, max_tokens: 0, system_addendum: '', enabled: false,
     },
     llm_online: {
-      provider: 'openai-compat', base_url: '', model: '', context_window: 65536,
+      // Mirrors the Rust default_empty(): provider "ollama", 8192. The
+      // Settings page must NOT hydrate these into the Online card — the
+      // card's own openai-compat defaults win until a base URL is saved.
+      provider: 'ollama', base_url: '', model: '', context_window: 8192,
       api_key: null, temperature: 0.7, max_tokens: 0, system_addendum: '', enabled: false,
     },
     llm_factcheck: {
@@ -130,6 +133,7 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
     cfg.llm.model = 'local-fast-8b';
     Object.assign(cfg.llm_deep, { base_url: 'http://192.168.1.50:8081', model: 'local-deep-35b', enabled: true });
     Object.assign(cfg.llm_online, {
+      provider: 'openai-compat',
       base_url: 'https://api.deepseek.com', model: 'deepseek-v4-flash', api_key: 'sk-mock', enabled: true,
     });
     w.__mockSlotHealth = { fast: true, deep: true, online: true };
