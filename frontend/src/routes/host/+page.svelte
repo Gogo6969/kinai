@@ -9,6 +9,7 @@
     type VisionEndpoint,
     type VisionSettings,
   } from '$lib/api';
+  import { THIS_COMPUTER } from '$lib/platform';
   import { app } from '$lib/stores/app.svelte';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -789,7 +790,7 @@
                   </div>
                   <div class="text-xs text-white/50">
                     Check IP and port, confirm the server is bound to <code>0.0.0.0</code>,
-                    and that this Mac can reach it on your LAN.
+                    and that {THIS_COMPUTER} can reach it on your LAN.
                   </div>
                 </div>
               {/if}

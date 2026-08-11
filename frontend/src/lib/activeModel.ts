@@ -31,11 +31,11 @@
 
 import type { Message, TurnMetrics } from './api';
 
-export type SlotSlug = 'fast' | 'balanced' | 'deep';
+export type SlotSlug = 'fast' | 'balanced' | 'deep' | 'online';
 
 /** Leading slash command, if the message is one. */
 export function slotFromCommand(text: string): SlotSlug | null {
-  const m = /^\s*\/(fast|balanced|deep)\b/i.exec(text ?? '');
+  const m = /^\s*\/(fast|balanced|deep|online)\b/i.exec(text ?? '');
   return m ? (m[1].toLowerCase() as SlotSlug) : null;
 }
 
@@ -58,7 +58,8 @@ export function activeSlot(
     }
     if (m.role === 'assistant') {
       const slot = metrics[m.id]?.slot;
-      if (slot === 'fast' || slot === 'balanced' || slot === 'deep') return slot;
+      if (slot === 'fast' || slot === 'balanced' || slot === 'deep' || slot === 'online')
+        return slot;
     }
   }
   return fallback;

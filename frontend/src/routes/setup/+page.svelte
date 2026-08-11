@@ -12,6 +12,7 @@
   //   * The Finish screen adapts: if no AI model was connected it shows a
   //     prominent "KinAI can't answer yet" warning with the exact fix path.
   import { api, events, type DetectedBackend, type Invite } from '$lib/api';
+  import { byPlatform } from '$lib/platform';
   import { app } from '$lib/stores/app.svelte';
   import Logo from '$lib/components/Logo.svelte';
   import QRCode from 'qrcode';
@@ -1009,7 +1010,7 @@
               </label>
               <label class="flex items-center gap-3 cursor-pointer pl-7">
                 <input type="checkbox" bind:checked={autostartMin} class="accent-teal-400" disabled={!autostartOn} />
-                <span class="text-sm text-white/70">…minimized to the menu bar</span>
+                <span class="text-sm text-white/70">…minimized to the {byPlatform({ macos: 'menu bar', windows: 'notification area', linux: 'system tray' })}</span>
               </label>
             </div>
             <p class="text-xs text-white/40"><b class="text-white/60">If you skip:</b> sensible defaults — dark theme, the standard shortcut, no autostart. Change in {WHERE.overlay}.</p>

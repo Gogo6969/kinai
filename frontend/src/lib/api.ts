@@ -164,6 +164,10 @@ export interface AppConfig {
   llm_deep: LlmSettings;
   /** Optional "balanced" middle slot. Reachable as `/balanced <prompt>`. */
   llm_balanced: LlmSettings;
+  /** Optional ONLINE chat slot — a hosted model reachable as
+   *  `/online <prompt>`. Absent from the composer's picker until the
+   *  host owner configures it, and never an automatic failover target. */
+  llm_online: LlmSettings;
   /** ONLINE fact-check model (per-message button; not a chat slot). */
   llm_factcheck: LlmSettings;
   host: HostSettings;
@@ -392,6 +396,8 @@ export const api = {
    *  setLlmSettings, separate command server-side. */
   setLlmBalancedSettings: (llm: LlmSettings) =>
     invoke<AppConfig>('set_llm_balanced_settings', { llm }),
+  setLlmOnlineSettings: (llm: LlmSettings) =>
+    invoke<AppConfig>('set_llm_online_settings', { llm }),
   setLlmFactcheckSettings: (llm: LlmSettings) =>
     invoke<AppConfig>('set_llm_factcheck_settings', { llm }),
   /** Markdown fact-check report for one assistant message (throws with a

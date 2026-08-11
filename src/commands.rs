@@ -129,6 +129,28 @@ pub async fn set_llm_balanced_settings(
     Ok(cfg)
 }
 
+/// Persist the ONLINE LLM slot — a hosted, OpenAI-compatible model
+/// reachable as `/online` in chat. Same shape as `set_llm_settings`,
+/// targets `cfg.llm_online`.
+///
+/// The slot only exists in the UI once this holds a base URL and a
+/// model, so clearing the base URL is how the host owner removes it
+/// again — no separate delete.
+#[tauri::command]
+pub async fn set_llm_online_settings(
+    state: tauri::State<'_, SharedState>,
+    llm: crate::config::LlmSettings,
+) -> Result<AppConfig> {
+    let cfg = {
+        let mut cfg = state.config.write();
+        cfg.llm_online = llm;
+        cfg.clone()
+    };
+    cfg.save().map_err(err)?;
+    state.slot_health.lock().remove("online");
+    Ok(cfg)
+}
+
 /// Persist the secondary "deep" LLM slot. Same shape as
 /// `set_llm_settings`, just targets `cfg.llm_deep`. Doesn't touch the
 /// state.llm client — message routing re-instantiates the client per
@@ -395,7 +417,7 @@ pub async fn tts_supported() -> Result<bool> {
 fn toggle_desktop_voice(state: &SharedState, arg: &str) -> (String, Option<bool>) {
     if !state.config.read().tts.enabled {
         return (
-            "🔇 Voice replies are switched off on this Mac. Enable them in \
+            "🔇 Voice replies are switched off on the host machine. Enable them in \
              Settings → Voice replies first."
                 .into(),
             None,
@@ -962,9 +984,20 @@ pub async fn get_changelog_payload(
     state: tauri::State<'_, SharedState>,
 ) -> Result<ChangelogPayload> {
     let version = crate::changelog::current_version().to_string();
-    let last_seen = state.config.read().last_seen_changelog_version.clone();
+    let (last_seen, setup_completed) = {
+        let cfg = state.config.read();
+        (
+            cfg.last_seen_changelog_version.clone(),
+            cfg.setup_completed,
+        )
+    };
     let markdown = crate::changelog::section_for_version(&version);
-    let should_show = markdown.is_some() && last_seen != version;
+    // Never in front of a first-run user. `last_seen` is empty on a fresh
+    // config, which does not equal the version, so without the
+    // `setup_completed` guard the modal opened on top of the setup wizard
+    // for someone who had never run KinAI. Belt and braces: fresh configs
+    // are also stamped at creation (see `AppConfig::load_or_default`).
+    let should_show = markdown.is_some() && last_seen != version && setup_completed;
     Ok(ChangelogPayload {
         version,
         markdown,
@@ -1059,8 +1092,8 @@ pub async fn scan_local_network() -> Result<Vec<DetectedBackend>> {
 /// already announced gets re-resolved and re-emitted to the UI. Used by
 /// the Client setup page's "Scan again" button.
 #[tauri::command]
-pub async fn rescan_kinai_hosts() -> Result<()> {
-    crate::discovery::rescan().map_err(err)
+pub async fn rescan_kinai_hosts(app: tauri::AppHandle) -> Result<()> {
+    crate::discovery::rescan(app).map_err(err)
 }
 
 #[derive(Debug, Serialize)]
@@ -1134,6 +1167,15 @@ pub async fn mark_setup_completed(
     let cfg = {
         let mut cfg = state.config.write();
         cfg.setup_completed = true;
+        // Finishing setup flips the `should_show` guard on, so without
+        // this the changelog modal would open the instant the wizard
+        // closed — release notes for a version this user has never run
+        // anything but. Covers the upgrade paths the fresh-install stamp
+        // cannot see (a config that already existed but was never
+        // through the wizard).
+        if cfg.last_seen_changelog_version.is_empty() {
+            cfg.last_seen_changelog_version = crate::changelog::current_version().to_string();
+        }
         cfg.clone()
     };
     cfg.save().map_err(err)?;

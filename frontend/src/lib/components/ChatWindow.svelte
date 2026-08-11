@@ -9,6 +9,7 @@
   import { api, type Attachment } from '$lib/api';
   import { fileToDataUrl } from '$lib/image';
   import { resolveActiveSlot, slotFromCommand, type SlotSlug } from '$lib/activeModel';
+  import { THIS_COMPUTER, MODIFIERS } from '$lib/platform';
   import { Send, Square, Paperclip, X, FileText, Image as ImageIcon, Check, ChevronUp } from '@lucide/svelte';
 
   let input = $state('');
@@ -104,6 +105,10 @@
     fast: { label: 'fast', hint: 'Plain messages already default to this model.' },
     balanced: { label: 'balanced', hint: 'The middle ground — smarter than fast, quicker than deep.' },
     deep: { label: 'deep', hint: 'Slower but typically higher quality.' },
+    online: {
+      label: 'online',
+      hint: 'Runs on the provider\u2019s servers, not at home \u2014 your message leaves the house.',
+    },
   };
   // Host-mode slot liveness, refreshed when the slash menu opens (the
   // backend caches probes for 15s, so this stays cheap). Client mode
@@ -113,11 +118,17 @@
   /** One-line description per slot for the model picker, mirroring the
    *  shape of the model menus users already know from other assistants:
    *  what it's for, then which model actually serves it. */
-  const SLOT_GLYPH: Record<string, string> = { fast: '⚡', balanced: '⚖️', deep: '🧠' };
+  const SLOT_GLYPH: Record<string, string> = {
+    fast: '⚡',
+    balanced: '⚖️',
+    deep: '🧠',
+    online: '☁️',
+  };
   const SLOT_BLURB: Record<string, string> = {
     fast: 'Quick responses',
     balanced: 'Middle ground',
     deep: 'Thinks hard',
+    online: 'Leaves the house',
   };
 
   /** The slots this install can actually route to, with liveness — the
@@ -134,6 +145,7 @@
           { slug: 'fast', llm: cfg?.llm },
           { slug: 'balanced', llm: cfg?.llm_balanced },
           { slug: 'deep', llm: cfg?.llm_deep },
+          { slug: 'online', llm: cfg?.llm_online },
         ]
           .filter(({ llm }) => isSlotActive(llm))
           .map(({ slug, llm }) => ({
@@ -195,6 +207,7 @@
           { slug: 'fast', llm: cfg?.llm },
           { slug: 'balanced', llm: cfg?.llm_balanced },
           { slug: 'deep', llm: cfg?.llm_deep },
+          { slug: 'online', llm: cfg?.llm_online },
         ]
           .filter(({ llm }) => isSlotActive(llm))
           .map(({ slug, llm }) => ({ slug, model: llm!.model, alive: slotHealth?.[slug] }));
@@ -476,7 +489,7 @@
         <div class="text-5xl mb-1">🏠</div>
         {#if isHost}
           <p class="text-base font-semibold text-white/85">
-            Your family's private AI is running on this Mac.
+            Your family's private AI is running on {THIS_COMPUTER}.
           </p>
           <p class="text-sm text-white/55 leading-relaxed">
             KinAI streams answers from your local model, remembers each
@@ -493,7 +506,7 @@
                 Their chats are private — you only see your own here.</p>
             {/if}
             <p class="pt-2">
-              Press <code class="bg-white/5 px-1.5 py-0.5 rounded">⌘ Space</code>
+              Press <code class="bg-white/5 px-1.5 py-0.5 rounded">{MODIFIERS.cmd} Space</code>
               anywhere to summon the overlay, or type below.
             </p>
           </div>

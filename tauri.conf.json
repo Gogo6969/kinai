@@ -65,9 +65,9 @@
       "minimumSystemVersion": "11.0"
     },
     "icon": [
-      "public/icons/32x32.png",
-      "public/icons/128x128.png",
       "public/icons/128x128@2x.png",
+      "public/icons/128x128.png",
+      "public/icons/32x32.png",
       "public/icons/icon.icns",
       "public/icons/icon.ico"
     ],

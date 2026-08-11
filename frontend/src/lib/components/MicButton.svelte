@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Mic, MicOff } from '@lucide/svelte';
   import { open as shellOpen } from '@tauri-apps/plugin-shell';
+  import { byPlatform, isMac } from '$lib/platform';
   import {
     createRecognition,
     speechRecognitionAvailable,
@@ -54,7 +55,14 @@
         // means a permissions issue. Worded as a possibility, not a
         // certainty, so the user doesn't panic-toggle settings if
         // there's some other macOS quirk we missed.
-        return "Couldn't start speech recognition — likely a missing permission. macOS needs BOTH \"Microphone\" AND \"Speech Recognition\" enabled for KinAI in Privacy & Security (enabling one alone isn't enough). Open the panes below, toggle KinAI on in each, then quit and relaunch.";
+        return byPlatform({
+          macos:
+            'Couldn\u2019t start speech recognition \u2014 likely a missing permission. macOS needs BOTH "Microphone" AND "Speech Recognition" enabled for KinAI in Privacy & Security (enabling one alone isn\u2019t enough). Open the panes below, toggle KinAI on in each, then quit and relaunch.',
+          windows:
+            'Windows blocked microphone access \u2014 turn it on in Settings \u2192 Privacy & security \u2192 Microphone (both \u201cMicrophone access\u201d and the desktop-app switch), then try again.',
+          linux:
+            'Your system blocked microphone access for KinAI. Allow it in your sound or privacy settings, then try again.',
+        });
       case 'audio-capture':
         return "No microphone detected. Plug one in (or enable your built-in mic) and try again.";
       case 'network':
@@ -76,10 +84,9 @@
     }
   }
 
-  /** True when the renderer is on macOS — gates the Privacy-pane
-   *  deep-link buttons (Windows / Linux have no equivalent URL). */
-  const isMac =
-    typeof navigator !== 'undefined' && /mac/i.test(navigator.platform);
+  // `isMac` comes from $lib/platform — it gates the Privacy-pane
+  // deep-link buttons (Windows / Linux have no equivalent URL) and the
+  // macOS-specific wording below.
 
   /** Open a macOS Privacy pane via the `x-apple.systempreferences:` URL
    *  scheme. On Ventura+ the older `com.apple.preference.security`
@@ -148,7 +155,14 @@
     // never needed.
     if (!(await hasMicHardware())) {
       setError(
-        "No microphone detected. Plug one in (or enable your built-in mic in System Settings → Sound → Input), then try again."
+        byPlatform({
+          macos:
+            'No microphone detected. Plug one in (or enable your built-in mic in System Settings \u2192 Sound \u2192 Input), then try again.',
+          windows:
+            'No microphone detected. Plug one in (or enable it in Settings \u2192 System \u2192 Sound \u2192 Input), then try again.',
+          linux:
+            'No microphone detected. Plug one in (or enable it in your sound settings), then try again.',
+        })
       );
       return;
     }
@@ -202,7 +216,9 @@
   function onPointerDown(e: PointerEvent) {
     if (!supported) {
       setError(
-        "This Mac's WebView doesn't expose speech recognition. macOS 13+ required, or use the keyboard."
+        isMac
+          ? 'This Mac\u2019s WebView doesn\u2019t expose speech recognition. macOS 13+ required, or use the keyboard.'
+          : 'Speech recognition isn\u2019t available in this app\u2019s window \u2014 use the keyboard instead.' 
       );
       return;
     }

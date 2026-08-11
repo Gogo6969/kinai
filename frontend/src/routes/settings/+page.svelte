@@ -15,6 +15,7 @@
     type VisionEndpoint,
     type VisionSettings,
   } from '$lib/api';
+  import { THIS_COMPUTER, MODIFIERS, isMac, byPlatform } from '$lib/platform';
   import { app } from '$lib/stores/app.svelte';
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
@@ -64,6 +65,22 @@
     base_url: '',
     model: '',
     context_window: 32768,
+    api_key: null,
+    temperature: 0.7,
+    max_tokens: 0,
+    system_addendum: '',
+    enabled: false,
+  });
+  // Online model — a hosted, OpenAI-compatible chat slot (`/online`).
+  // Empty by default: the slot does not appear anywhere in the app until
+  // the host owner fills it in. Unlike fast/balanced/deep this one runs
+  // off the family's own hardware, so it is never an automatic failover
+  // target — reaching it is always a deliberate act.
+  let llmOnline = $state<LlmSettings>({
+    provider: 'openai-compat',
+    base_url: '',
+    model: '',
+    context_window: 65536,
     api_key: null,
     temperature: 0.7,
     max_tokens: 0,
@@ -460,6 +477,9 @@
       if (app.config.llm_balanced) {
         llmBalanced = { ...app.config.llm_balanced };
       }
+      if (app.config.llm_online) {
+        llmOnline = { ...app.config.llm_online };
+      }
       if (app.config.llm_factcheck) {
         llmFactcheck = { ...app.config.llm_factcheck };
       }
@@ -654,6 +674,13 @@
         await api.setLlmBalancedSettings({
           ...llmBalanced,
           enabled: !!llmBalanced.base_url.trim() && !!llmBalanced.model.trim() && llmBalanced.enabled,
+        });
+        // Enabled is derived, not a separate switch: a slot with a
+        // base URL and a model IS configured, and clearing the base URL
+        // is how the host owner removes it again.
+        await api.setLlmOnlineSettings({
+          ...llmOnline,
+          enabled: !!llmOnline.base_url.trim() && !!llmOnline.model.trim(),
         });
         await api.setLlmFactcheckSettings({
           ...llmFactcheck,
@@ -1097,7 +1124,7 @@
     {#snippet modelCard(
       title: string,
       subtitle: string,
-      slug: 'fast' | 'deep' | 'balanced' | 'factcheck',
+      slug: 'fast' | 'deep' | 'balanced' | 'online' | 'factcheck',
       get: () => LlmSettings,
       set: (v: LlmSettings) => void
     )}
@@ -1284,6 +1311,14 @@
       'deep',
       () => llmDeep,
       (v) => (llmDeep = v)
+    )}
+
+    {@render modelCard(
+      'Online model (optional)',
+      'A model that runs on a provider\u2019s servers instead of your own hardware \u2014 useful when a question needs more than the machines at home can give. Reachable as `/online` in chat, and it only appears in the model picker once it is set up. Any OpenAI-compatible API works (DeepSeek: Base URL https://api.deepseek.com, model deepseek-v4-flash; or OpenAI, Groq, \u2026). Anything you send to it leaves your home network, so KinAI never routes here on its own \u2014 only when someone picks it. Leave Base URL empty to disable.',
+      'online',
+      () => llmOnline,
+      (v) => (llmOnline = v)
     )}
 
     {@render modelCard(
@@ -1566,7 +1601,7 @@
           spellcheck="false"
         />
         <p class="text-xs text-white/50 mt-1">
-          Point at any ComfyUI server reachable from this Mac — it can run on
+          Point at any ComfyUI server reachable from {THIS_COMPUTER} — it can run on
           Linux, Windows, or another Mac (ComfyUI is cross-platform), or on the
           same machine. Default port is <code>8188</code>.
         </p>
@@ -1578,7 +1613,7 @@
           <div class="mt-2 space-y-2 border-l border-white/10 pl-3">
             <p>
               <strong class="text-white/80">1. ComfyUI</strong> (a recent
-              version) on any machine on your network. Launch it so this Mac can
+              version) on any machine on your network. Launch it so {THIS_COMPUTER} can
               reach it by binding to all interfaces, not just localhost:
               <code>python main.py --listen 0.0.0.0 --port 8188</code>. Without
               <code>--listen</code> it only answers on its own machine.
@@ -1733,7 +1768,7 @@
         </p>
 
         <div class="space-y-1.5">
-          <span class="text-sm text-white/70">In the chat window on this Mac
+          <span class="text-sm text-white/70">In the chat window on {THIS_COMPUTER}
             <span class="text-white/40">(shortcut: type <code>/voice</code> in the chat)</span></span>
           <label class="flex items-start gap-2 cursor-pointer">
             <input
@@ -1764,6 +1799,11 @@
           </label>
         </div>
 
+        <!-- Apple's Premium/Enhanced voice packs are a macOS feature and
+             the steps name macOS panes, so this walkthrough only makes
+             sense on a Mac host. Spoken replies themselves are macOS-only
+             too (src/tts.rs is cfg(target_os = "macos")). -->
+        {#if isMac}
         <details class="text-xs text-white/60">
           <summary class="cursor-pointer text-white/70 hover:text-white select-none">
             Get better voices (free, highly recommended) →
@@ -1805,6 +1845,7 @@
             </p>
           </div>
         </details>
+        {/if}
 
         <div class="flex items-center gap-2 flex-wrap">
           <button
@@ -1830,7 +1871,7 @@
               <span class="text-sm font-medium text-white/80">🎙 Voice input (Telegram voice messages)</span>
               <p class="text-xs text-white/50 mt-0.5">
                 Family members can <em>speak</em> to the bot: voice messages are
-                transcribed on this Mac (Whisper, fully local — German and
+                transcribed on the host machine (Whisper, fully local — German and
                 English auto-detected) and answered like typed questions.
                 One-time model download, nothing else to install.
               </p>
@@ -2107,7 +2148,7 @@
           />
           <p class="text-xs text-white/50 mt-1">
             Click the field and press your key combination — it's captured
-            automatically (needs a modifier like ⌘/⌥/⌃, or a function key).
+            automatically (needs a modifier like {MODIFIERS.ctrl}/{MODIFIERS.alt}/{MODIFIERS.shift}, or a function key).
             <button
               type="button"
               class="underline hover:text-white"
@@ -2143,7 +2184,7 @@
           <span>
             <span class="font-medium">Auto-hide when clicking elsewhere</span>
             <span class="block text-xs text-white/50">
-              The overlay disappears the moment it loses focus — like Spotlight.
+              The overlay disappears the moment it loses focus.{byPlatform({ macos: ' Like Spotlight.', windows: '', linux: '' })}
               Turn off to keep the overlay open while you switch apps.
             </span>
           </span>

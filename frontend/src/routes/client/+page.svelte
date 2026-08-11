@@ -1,5 +1,25 @@
 <script lang="ts">
   import { api } from '$lib/api';
+  import { byPlatform } from '$lib/platform';
+
+  /**
+   * Why "no hosts found", per platform.
+   *
+   * Discovery is mDNS (`_kinai._tcp.local.`, UDP 5353) with the host
+   * itself on TCP 4847 — so the honest answer is "same network, and let
+   * KinAI through the firewall", which is a different sentence on each
+   * OS. This screen used to show the macOS one to everybody, which is
+   * how a Windows user ended up being told to open System Settings →
+   * Privacy & Security, a pane Windows does not have.
+   */
+  const discoveryHelp = byPlatform({
+    macos:
+      'Both computers need to be on the same Wi-Fi — not the guest network. Then open System Settings → Privacy & Security → Local Network and switch KinAI on, on this Mac and on the one hosting.',
+    windows:
+      'Both computers need to be on the same Wi-Fi — not the guest network. In Settings → Network & internet, set that network to Private, then in Windows Security → Firewall use "Allow an app through firewall" and tick KinAI.',
+    linux:
+      'Both computers need to be on the same Wi-Fi — not the guest network. If a firewall is running, let KinAI through: sudo ufw allow 5353/udp and sudo ufw allow 4847/tcp.',
+  });
   import { app } from '$lib/stores/app.svelte';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -96,8 +116,8 @@
         if (!selected) {
           throw new Error(
             "Pick a KinAI host above so we know where to redeem the code. " +
-            "If no hosts are listed, tap 'Scan again' below — or check that " +
-            "this Mac has Local Network permission for KinAI in System Settings."
+            "If no hosts are listed, tap 'Scan again' below — or paste the " +
+            "full kinai:// link instead, which skips the search entirely."
           );
         }
         payload = await api.redeemInviteCode(selected.host_url, cleanedCode);
@@ -209,12 +229,14 @@
         <div class="text-sm text-white/60 border border-white/10 rounded-lg p-3 space-y-2">
           <p>No KinAI hosts found yet on this network.</p>
           <p class="text-xs text-white/40">
-            On first run macOS asks for <strong>Local Network</strong> permission —
-            if you missed that prompt, enable it in
-            System Settings → Privacy & Security → Local Network → KinAI, then tap
+            {discoveryHelp} Then tap
             <span class="font-medium text-white/60">Scan again</span>. You can also paste
             a full <code class="bg-black/30 px-1 rounded">kinai://join…</code> link
-            below to skip discovery.
+            below to skip the search entirely.
+          </p>
+          <p class="text-xs text-white/40">
+            Check the other computer too: KinAI has to be open and running as
+            the host there.
           </p>
         </div>
       {/if}

@@ -57,13 +57,24 @@ pub struct ResolvedRoute<'cfg> {
 /// The three routable slots in fallback-priority order. One table
 /// instead of per-slot copy-paste blocks — the 0.2.75 client-parity bug
 /// came from exactly this kind of duplicated slot logic drifting apart.
-pub const SLOTS: &[&str] = &["fast", "balanced", "deep"];
+pub const SLOTS: &[&str] = &["fast", "balanced", "deep", "online"];
 
-/// Settings for a slot label ("fast" / "balanced" / "deep").
+/// The slots automatic failover is allowed to reach for when a routed
+/// slot's SERVER is down.
+///
+/// `online` is deliberately absent. Every other slot is hardware the
+/// family owns; `online` is a paid endpoint outside the house. A local
+/// server going down must never silently reroute a private family
+/// conversation off the premises — the user gets there by asking for it
+/// (`/online`, or the composer's model picker), never by accident.
+pub const FAILOVER_SLOTS: &[&str] = &["fast", "balanced", "deep"];
+
+/// Settings for a slot label ("fast" / "balanced" / "deep" / "online").
 pub fn slot_settings<'cfg>(cfg: &'cfg AppConfig, label: &str) -> &'cfg LlmSettings {
     match label {
         "deep" => &cfg.llm_deep,
         "balanced" => &cfg.llm_balanced,
+        "online" => &cfg.llm_online,
         _ => &cfg.llm,
     }
 }
@@ -130,7 +141,7 @@ where
     }
 
     let next_untried = |tried: &[String]| {
-        SLOTS
+        FAILOVER_SLOTS
             .iter()
             .find(|s| !tried.iter().any(|t| t == **s) && slot_settings(cfg, s).is_active())
             .copied()
@@ -316,14 +327,18 @@ pub async fn slot_alive_cached(state: &crate::AppState, label: &str) -> bool {
 }
 
 /// The slot to actually serve a request aimed at `wanted`: the wanted
-/// slot when active, else the first active slot in SLOTS order, else
-/// `wanted` itself (fail loudly downstream — a config problem should
+/// slot when active, else the first active slot in FAILOVER_SLOTS order,
+/// else `wanted` itself (fail loudly downstream — a config problem should
 /// surface, not silently pick a paused model).
+///
+/// The substitute is drawn from FAILOVER_SLOTS, not SLOTS: an unconfigured
+/// `/deep` falls back to a machine at home, never out to the paid `online`
+/// endpoint.
 fn effective_slot<'cfg>(cfg: &'cfg AppConfig, wanted: &'static str) -> (&'static str, &'cfg LlmSettings) {
     if slot_settings(cfg, wanted).is_active() {
         return (wanted, slot_settings(cfg, wanted));
     }
-    for s in SLOTS {
+    for s in FAILOVER_SLOTS {
         if slot_settings(cfg, s).is_active() {
             return (s, slot_settings(cfg, s));
         }
@@ -432,15 +447,23 @@ pub fn switch_confirmation(
             others.join(" or ")
         )
     };
+    // Whether a substitute actually exists. `others` above lists every
+    // slot the user can SWITCH to (including `online`), but failover only
+    // reaches FAILOVER_SLOTS — so a family whose only other configured
+    // slot is `online` must not be told KinAI will cover for them.
+    let failover_available = FAILOVER_SLOTS
+        .iter()
+        .any(|s| *s != label && slot_settings(cfg, s).is_active());
     // Honest heads-up when the wanted slot's server failed its liveness
     // probe — the switch still sticks (the wish is recorded), but the
     // user learns NOW rather than after their next message fails over.
     if wanted_alive == Some(false) {
-        if others.is_empty() {
+        if !failover_available {
             // Don't promise a failover that can't happen.
             msg.push_str(
                 "\n\n⚠️ Heads-up: this model's server isn't responding right now, \
-and no other model is configured — messages will fail until it's back.",
+and no other model can take over automatically — messages will fail until it's \
+back, unless you switch model yourself.",
             );
         } else {
             msg.push_str(
@@ -561,6 +584,7 @@ pub fn help_markdown(cfg: &AppConfig) -> String {
             let line = match **slot {
                 "fast" => format!("`/fast` — the everyday model (`{m}`), answers instantly\n"),
                 "balanced" => format!("`/balanced` — the middle ground (`{m}`): smarter than fast, quicker than deep\n"),
+                "online" => format!("`/online` — an online model (`{m}`) on someone else's servers: use it when the question needs more than the models at home can give. What you type goes over the internet\n"),
                 _ => format!("`/deep` — the reasoning model (`{m}`), slower but highest quality\n"),
             };
             out.push_str(&line);
@@ -579,7 +603,7 @@ pub fn help_markdown(cfg: &AppConfig) -> String {
     out.push_str("\n**Conversation**\n");
     out.push_str("`/newchat` — start a fresh chat so a new question doesn't reuse earlier context (your saved memory is kept). Add a question to ask it right away: `/newchat what's the capital of Japan?`\n");
     if cfg.tts.enabled {
-        out.push_str("`/voice` — toggle spoken replies for the chat you're in: in the KinAI app replies are read aloud on this Mac, in Telegram they arrive as voice notes; `/voice on` / `/voice off` set it explicitly\n");
+        out.push_str("`/voice` — toggle spoken replies for the chat you're in: in the KinAI app replies are read aloud on the host machine (macOS only), in Telegram they arrive as voice notes; `/voice on` / `/voice off` set it explicitly\n");
     }
 
     out.push_str("\n**Info**\n");
@@ -609,6 +633,7 @@ pub fn help_html(cfg: &AppConfig) -> String {
             let line = match **slot {
                 "fast" => format!("<code>/fast</code> — the everyday model (<code>{m}</code>), answers instantly\n"),
                 "balanced" => format!("<code>/balanced</code> — the middle ground (<code>{m}</code>): smarter than fast, quicker than deep\n"),
+                "online" => format!("<code>/online</code> — an online model (<code>{m}</code>) on someone else's servers: use it when the question needs more than the models at home can give. What you type goes over the internet\n"),
                 _ => format!("<code>/deep</code> — the reasoning model (<code>{m}</code>), slower but highest quality\n"),
             };
             out.push_str(&line);
@@ -627,7 +652,7 @@ pub fn help_html(cfg: &AppConfig) -> String {
     out.push_str("\n<b>Conversation</b>\n");
     out.push_str("<code>/newchat</code> — start a fresh chat so a new question doesn't reuse earlier context (your saved memory is kept). Add a question to ask it right away: <code>/newchat what's the capital of Japan?</code>\n");
     if cfg.tts.enabled {
-        out.push_str("<code>/voice</code> — toggle spoken replies for the chat you're in: in the KinAI app replies are read aloud on this Mac, in Telegram they arrive as voice notes; <code>/voice on</code> / <code>/voice off</code> set it explicitly\n");
+        out.push_str("<code>/voice</code> — toggle spoken replies for the chat you're in: in the KinAI app replies are read aloud on the host machine (macOS only), in Telegram they arrive as voice notes; <code>/voice on</code> / <code>/voice off</code> set it explicitly\n");
     }
 
     out.push_str("\n<b>Info</b>\n");
@@ -765,6 +790,114 @@ mod routing_tests {
         assert!(warned.contains("Heads-up") && warned.contains("another available model"));
         let healthy = switch_confirmation(&cfg, &r, Some(true));
         assert!(!healthy.contains("Heads-up"));
+    }
+
+    /// `cfg_three_slots` plus a configured ONLINE slot.
+    fn cfg_with_online() -> AppConfig {
+        let mut cfg = cfg_three_slots();
+        cfg.llm_online.base_url = "https://api.deepseek.com".into();
+        cfg.llm_online.model = "deepseek-v4-flash".into();
+        cfg.llm_online.api_key = Some("sk-test".into());
+        cfg.llm_online.enabled = true;
+        cfg
+    }
+
+    #[tokio::test]
+    async fn explicit_online_routes_and_sticks() {
+        let db = fresh_db().await;
+        let cfg = cfg_with_online();
+        let t = db.create_thread("host", Some("t")).await.unwrap();
+
+        let r = route_for(&db, &cfg, "host", &t.id, "/online who won the toss?").await;
+        assert_eq!(r.slot_label, "online");
+        assert_eq!(r.settings.model, "deepseek-v4-flash");
+        assert_eq!(r.stripped_content, "who won the toss?");
+
+        // Sticky like every other slot.
+        let r2 = route_for(&db, &cfg, "host", &t.id, "and the score?").await;
+        assert_eq!(r2.slot_label, "online");
+    }
+
+    /// The whole point of FAILOVER_SLOTS: a dead local model must never
+    /// silently push the family's conversation out to a paid endpoint.
+    #[tokio::test]
+    async fn online_is_never_an_automatic_fallback() {
+        let db = fresh_db().await;
+        // Only `online` is configured — every local slot is off.
+        let mut cfg = AppConfig::default();
+        cfg.llm.base_url = String::new();
+        cfg.llm.enabled = false;
+        cfg.llm_online.base_url = "https://api.deepseek.com".into();
+        cfg.llm_online.model = "deepseek-v4-flash".into();
+        cfg.llm_online.enabled = true;
+        let t = db.create_thread("host", Some("t")).await.unwrap();
+
+        // A plain message with no local model available must NOT land on
+        // `online`; it stays on `fast` and fails loudly downstream.
+        let r = route_for(&db, &cfg, "host", &t.id, "hello").await;
+        assert_eq!(
+            r.slot_label, "fast",
+            "a plain message must never be routed to the paid online slot on its own"
+        );
+
+        // Same for an explicit `/deep` whose slot isn't configured: the
+        // substitute comes from the machines at home, never from online.
+        let r = route_for(&db, &cfg, "host", &t.id, "/deep think about this").await;
+        assert_ne!(r.slot_label, "online");
+    }
+
+    #[test]
+    fn online_is_routable_but_outside_the_failover_chain() {
+        assert!(SLOTS.contains(&"online"), "online must be pickable");
+        assert!(
+            !FAILOVER_SLOTS.contains(&"online"),
+            "online must never be an automatic failover target"
+        );
+        // Every failover slot is also routable.
+        for s in FAILOVER_SLOTS {
+            assert!(SLOTS.contains(s), "{s} missing from SLOTS");
+        }
+        // And the mapping resolves to its own config, not fast's.
+        let cfg = cfg_with_online();
+        assert_eq!(slot_settings(&cfg, "online").model, "deepseek-v4-flash");
+    }
+
+    #[test]
+    fn online_appears_in_help_with_its_own_wording() {
+        let cfg = cfg_with_online();
+        let md = help_markdown(&cfg);
+        assert!(md.contains("`/online`"), "online missing from help");
+        // The old catch-all arm would have described it as the reasoning
+        // model — check it got its own line, not deep's.
+        let online_line = md
+            .lines()
+            .find(|l| l.starts_with("`/online`"))
+            .expect("no /online line");
+        assert!(
+            !online_line.contains("reasoning model"),
+            "online is being described as the deep model: {online_line}"
+        );
+        assert!(online_line.contains("deepseek-v4-flash"));
+    }
+
+    /// When the only OTHER configured slot is `online`, a dead model must
+    /// not promise that KinAI will cover automatically — it won't.
+    #[tokio::test]
+    async fn switch_warning_does_not_promise_a_failover_online_cannot_do() {
+        let db = fresh_db().await;
+        let mut cfg = AppConfig::default(); // fast active
+        cfg.llm_online.base_url = "https://api.deepseek.com".into();
+        cfg.llm_online.model = "deepseek-v4-flash".into();
+        cfg.llm_online.enabled = true;
+        let t = db.create_thread("host", Some("t")).await.unwrap();
+
+        let r = route_for(&db, &cfg, "host", &t.id, "/fast").await;
+        let warned = switch_confirmation(&cfg, &r, Some(false));
+        assert!(warned.contains("Heads-up"));
+        assert!(
+            !warned.contains("automatically use another available model"),
+            "promised an automatic failover that only `online` could serve: {warned}"
+        );
     }
 
     #[test]

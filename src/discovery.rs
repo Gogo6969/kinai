@@ -75,39 +75,57 @@ pub fn start_browser(app: AppHandle) {
         // Stash the daemon for `rescan()` — failure here means a second
         // start_browser call happened, which is benign (we just ignore).
         let _ = BROWSE_DAEMON.set(daemon);
-        while let Ok(event) = receiver.recv_async().await {
-            if let mdns_sd::ServiceEvent::ServiceResolved(info) = event {
-                let family = info
-                    .get_property_val_str("family")
-                    .unwrap_or("Unknown")
-                    .to_string();
-                let host_url = info
-                    .get_addresses()
-                    .iter()
-                    .next()
-                    .map(|ip| format!("ws://{ip}:{}/kin", info.get_port()))
-                    .unwrap_or_default();
-                let payload = serde_json::json!({
-                    "family_name": family,
-                    "instance": info.get_fullname(),
-                    "host_url": host_url,
-                });
-                let _ = app.emit("kinai://discovery", payload);
-            }
-        }
+        pump_events(app, receiver).await;
     });
+}
+
+/// Forward resolved services to the UI until the channel closes.
+///
+/// Split out of `start_browser` so `rescan` can hand over to the receiver
+/// its own `browse` call returns — see the comment there for why that
+/// matters.
+async fn pump_events(app: AppHandle, receiver: mdns_sd::Receiver<mdns_sd::ServiceEvent>) {
+    while let Ok(event) = receiver.recv_async().await {
+        if let mdns_sd::ServiceEvent::ServiceResolved(info) = event {
+            let family = info
+                .get_property_val_str("family")
+                .unwrap_or("Unknown")
+                .to_string();
+            let host_url = info
+                .get_addresses()
+                .iter()
+                .next()
+                .map(|ip| format!("ws://{ip}:{}/kin", info.get_port()))
+                .unwrap_or_default();
+            let payload = serde_json::json!({
+                "family_name": family,
+                "instance": info.get_fullname(),
+                "host_url": host_url,
+            });
+            let _ = app.emit("kinai://discovery", payload);
+        }
+    }
 }
 
 /// Force the browse daemon to re-issue an mDNS query. The Client setup
 /// page calls this so a user who launched the app, granted Local Network
 /// permission, then went looking for a host doesn't have to wait for the
-/// next periodic re-announce from the host. Returns Ok even if the daemon
-/// hasn't started yet (call again after a tick).
-pub fn rescan() -> anyhow::Result<()> {
+/// next periodic re-announce from the host.
+///
+/// The returned receiver MUST be pumped. `browse` is not idempotent the
+/// way this code used to assume: mdns-sd registers the listener with
+/// `service_queriers.insert(ty, listener)` (service_daemon.rs), a plain
+/// map insert, so a second browse for the same type REPLACES the sender.
+/// Dropping the new receiver therefore closed the original one too, the
+/// `while let Ok(..)` in `start_browser` fell out of its loop, and
+/// discovery stayed dead until the app restarted — pressing "Scan again"
+/// made things permanently worse instead of better.
+pub fn rescan(app: AppHandle) -> anyhow::Result<()> {
     if let Some(daemon) = BROWSE_DAEMON.get() {
-        // `browse` is idempotent — the daemon dedups subscriptions by type.
-        // Calling it again triggers a fresh outgoing query.
-        let _ = daemon.browse(SERVICE_TYPE);
+        let receiver = daemon.browse(SERVICE_TYPE)?;
+        // Hand the fresh channel to a new pump. The previous pump exits
+        // on its own the moment its sender is replaced.
+        tauri::async_runtime::spawn(pump_events(app, receiver));
     }
     Ok(())
 }

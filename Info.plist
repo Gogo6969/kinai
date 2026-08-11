@@ -6,5 +6,7 @@
   <string>KinAI uses the microphone for voice input — your audio stays on this device.</string>
   <key>NSSpeechRecognitionUsageDescription</key>
   <string>KinAI uses speech recognition to convert your voice into text for the chat.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>KinAI looks for your family's KinAI host on your home network. Nothing leaves your home.</string>
 </dict>
 </plist>

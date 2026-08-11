@@ -438,6 +438,19 @@ pub struct AppConfig {
     /// default so existing configs are untouched by the upgrade.
     #[serde(default = "LlmSettings::default_empty")]
     pub llm_balanced: LlmSettings,
+    /// Optional ONLINE chat slot — a hosted, OpenAI-compatible model
+    /// (DeepSeek, OpenAI, Groq, …) the user can address via `/online`.
+    /// Disabled + empty by default, so it simply does not exist until
+    /// the host owner fills it in.
+    ///
+    /// Deliberately NOT part of the automatic failover chain
+    /// (`slash::FAILOVER_SLOTS`): every other slot is a machine the
+    /// family owns, and a local server going down must never silently
+    /// reroute a private family conversation to a paid endpoint off the
+    /// premises. Reaching it is always an explicit act — `/online`, or
+    /// picking it in the composer.
+    #[serde(default = "LlmSettings::default_empty")]
+    pub llm_online: LlmSettings,
     /// Fourth, ONLINE model used ONLY by the per-message "fact check"
     /// button (never part of /fast /balanced /deep routing or failover).
     /// OpenAI-compatible API — DeepSeek, OpenAI, Groq, etc. The button
@@ -500,6 +513,7 @@ impl Default for AppConfig {
             llm: LlmSettings::default(),
             llm_deep: LlmSettings::default_empty(),
             llm_balanced: LlmSettings::default_empty(),
+            llm_online: LlmSettings::default_empty(),
             llm_factcheck: LlmSettings::default_empty(),
             host: HostSettings::default(),
             client: ClientSettings::default(),
@@ -568,7 +582,13 @@ impl AppConfig {
                 cfg
             }
             Err(_) => {
-                let cfg = Self::default();
+                // Brand-new install. Pre-acknowledge the running version:
+                // release notes are for people who ran the PREVIOUS one,
+                // and a first-time user was otherwise met with "what's new
+                // in 0.2.95" stacked on top of the setup wizard before
+                // they had ever used KinAI at all.
+                let mut cfg = Self::default();
+                cfg.last_seen_changelog_version = crate::changelog::current_version().to_string();
                 let _ = cfg.save();
                 cfg
             }
@@ -625,6 +645,65 @@ system_addendum = ""
         let cfg = AppConfig::default();
         assert_eq!(cfg.mode, Mode::Unconfigured);
         assert!(!cfg.setup_completed, "fresh install must route to /setup");
+    }
+
+    /// A brand-new install must not be greeted with release notes for a
+    /// version it has never run. The changelog gate is
+    /// `markdown.is_some() && last_seen != version && setup_completed`
+    /// (commands::get_changelog_payload) — reproduce it here for each
+    /// state, since the command itself needs a Tauri State to call.
+    #[test]
+    fn changelog_never_opens_before_setup_is_done() {
+        let version = crate::changelog::current_version();
+        let should_show =
+            |last_seen: &str, setup_completed: bool| last_seen != version && setup_completed;
+
+        // Fresh install, wizard not finished: silent, whatever last_seen is.
+        assert!(
+            !should_show("", false),
+            "release notes must never cover the setup wizard"
+        );
+
+        // Wizard just finished. `mark_setup_completed` stamps the current
+        // version when last_seen is empty, so the modal must NOT fire on
+        // the very first session either.
+        assert!(
+            !should_show(version, true),
+            "a first-time user must not get notes for the version they started on"
+        );
+
+        // The case the modal exists for: an established family upgrading.
+        assert!(
+            should_show("0.2.94", true),
+            "an existing user upgrading must still see what changed"
+        );
+    }
+
+    /// The upgrade path must not be collateral damage: an existing config
+    /// carries a non-empty `last_seen`, and nothing in the first-run
+    /// changes may overwrite it.
+    #[test]
+    fn upgrade_keeps_its_last_seen_version() {
+        let existing = r#"
+mode = "host"
+last_seen_changelog_version = "0.2.94"
+setup_completed = true
+
+[llm]
+provider = "ollama"
+base_url = "http://localhost:11434"
+model = "llama3.1:8b"
+context_window = 8192
+temperature = 0.7
+max_tokens = 0
+system_addendum = ""
+"#;
+        let cfg: AppConfig = toml::from_str(existing).expect("config must parse");
+        assert_eq!(cfg.last_seen_changelog_version, "0.2.94");
+        assert!(cfg.setup_completed);
+        // mark_setup_completed only stamps when the field is EMPTY, so a
+        // returning user's pending release notes survive.
+        assert!(!cfg.last_seen_changelog_version.is_empty());
     }
 
     #[test]

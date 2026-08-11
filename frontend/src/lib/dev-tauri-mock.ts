@@ -33,6 +33,10 @@ function defaultConfig() {
       provider: 'llamacpp', base_url: '', model: '', context_window: 32768,
       api_key: null, temperature: 0.7, max_tokens: 0, system_addendum: '', enabled: false,
     },
+    llm_online: {
+      provider: 'openai-compat', base_url: '', model: '', context_window: 65536,
+      api_key: null, temperature: 0.7, max_tokens: 0, system_addendum: '', enabled: false,
+    },
     llm_factcheck: {
       provider: 'openai-compat', base_url: '', model: '', context_window: 65536,
       api_key: null, temperature: 0.2, max_tokens: 0, system_addendum: '', enabled: false,
@@ -112,6 +116,19 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
       host_fact_check: false,
       // host_reports deliberately absent — an older host never sends it.
     };
+  } else if (scenario === 'host-online-slot') {
+    // The ONLINE slot configured alongside the local ones: the picker
+    // must list it as a fourth choice. Its absence in every other
+    // scenario is the other half of the test — an unconfigured online
+    // model must not appear anywhere.
+    cfg.mode = 'host';
+    cfg.setup_completed = true;
+    cfg.llm.model = 'local-fast-8b';
+    Object.assign(cfg.llm_deep, { base_url: 'http://192.168.1.50:8081', model: 'local-deep-35b', enabled: true });
+    Object.assign(cfg.llm_online, {
+      base_url: 'https://api.deepseek.com', model: 'deepseek-v4-flash', api_key: 'sk-mock', enabled: true,
+    });
+    w.__mockSlotHealth = { fast: true, deep: true, online: true };
   } else if (scenario === 'host-one-slot' || scenario === 'host-three-slots') {
     // Host-mode scenarios for the slash menu's local-config path:
     // one active slot → no model switches (≥2 gate); three → all shown
@@ -238,6 +255,7 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
     set_llm_settings: (a) => { Object.assign(cfg.llm, a.llm); return cfg; },
     set_llm_deep_settings: (a) => { Object.assign(cfg.llm_deep, a.llm); return cfg; },
     set_llm_balanced_settings: (a) => { Object.assign(cfg.llm_balanced, a.llm); return cfg; },
+    set_llm_online_settings: (a) => { Object.assign(cfg.llm_online, a.llm); return cfg; },
     test_searxng: async (a: any) => {
       await new Promise((r) => setTimeout(r, 400));
       if (!/^https?:\/\//.test(a?.args?.url ?? ''))
