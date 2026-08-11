@@ -25,30 +25,10 @@ fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
-/// Resolve the per-request `max_tokens`:
-///   * If user set `max_tokens > 0` in config → cap at that, but never exceed
-///     `context_window - prompt_tokens - safety`.
-///   * If user set `max_tokens == 0` → use the full remaining budget after the
-///     prompt (auto). Reasoning models in particular need this.
-fn compute_max_tokens(
-    // The ROUTED slot's settings — a /balanced or /deep turn must budget
-    // against ITS context window, not the fast slot's.
-    llm: &crate::config::LlmSettings,
-    messages: &[crate::context::ChatMessage],
-) -> Option<usize> {
-    const SAFETY: usize = 128;
-    let prompt = crate::context::token_guard::estimate_messages(messages);
-    let budget = llm
-        .context_window
-        .saturating_sub(prompt + SAFETY)
-        .max(256);
-    let max_tokens = if llm.max_tokens == 0 {
-        budget
-    } else {
-        llm.max_tokens.min(budget)
-    };
-    Some(max_tokens)
-}
+// Per-request max_tokens lives in ONE place now — see
+// crate::context::builder::compute_max_tokens. Three private copies of
+// this function had drifted apart, and the drift was user-visible.
+use crate::context::builder::compute_max_tokens;
 
 // ---- Config ----
 

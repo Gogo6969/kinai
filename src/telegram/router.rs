@@ -815,19 +815,11 @@ back, unless you switch model yourself.",
 /// directly (rather than always `cfg.llm`) so /deep turns honour the
 /// deep slot's context_window + max_tokens instead of inheriting the
 /// fast slot's caps.
-fn compute_max_tokens(
-    llm: &crate::config::LlmSettings,
-    messages: &[crate::context::ChatMessage],
-) -> Option<usize> {
-    if llm.max_tokens == 0 {
-        return None;
-    }
-    let used = crate::context::token_guard::estimate_messages(messages);
-    let remaining = llm.context_window.saturating_sub(used);
-    // Floor: a failover to a smaller-window slot can push `remaining`
-    // toward zero, and `"max_tokens": 0` makes servers emit nothing.
-    Some(llm.max_tokens.min(remaining).max(256))
-}
+// Shared with every other chat surface — crate::context::builder. The
+// Telegram copy this replaces omitted max_tokens for ALL auto slots;
+// the shared version keeps that for cloud endpoints and sends the
+// explicit remaining window to local ones, matching the app.
+use crate::context::builder::compute_max_tokens;
 
 /// Send the assistant reply back to Telegram. For slash-command
 /// replies that contain a `![alt](url)` image reference, we ALSO

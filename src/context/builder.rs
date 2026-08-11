@@ -121,6 +121,113 @@ pub(crate) fn prompt_budget(context_window: usize, max_tokens: usize) -> usize {
         .max(context_window / 4)
 }
 
+/// Resolve the per-request `max_tokens` for a chat turn.
+///
+/// * Explicit `max_tokens > 0` in config → cap at the remaining window
+///   (`context_window - prompt - safety`), floored at 256: a failover to
+///   a smaller-window slot can push the remainder toward zero, and
+///   `"max_tokens": 0` makes servers emit nothing.
+/// * Auto (`max_tokens == 0`) on a LOCAL server (http) → the full
+///   remaining window, sent explicitly. Some local servers default LOW
+///   when the field is omitted, and reasoning models need the room.
+/// * Auto on a CLOUD endpoint (https) → `None`, omitting the field, so
+///   the provider applies its own default — which is legal by
+///   construction. Sending "everything left in the window" breaks here
+///   because cloud APIs enforce a separate OUTPUT cap far below their
+///   context size: DeepSeek's window is 1M but max_tokens must be
+///   ≤ 393 216, so the old computation produced
+///   `LLM error 400: Invalid max_tokens value` on every /online turn
+///   (field report 2026-08-11). There is no portable way to know each
+///   provider's cap; not naming one is the only value that is always
+///   right.
+///
+/// ONE function on purpose. There used to be three private copies
+/// (commands.rs, network/server.rs, telegram/router.rs) and they had
+/// already drifted: the Telegram copy omitted the field for auto while
+/// the app copies sent the full window — which is why the 400 hit app
+/// turns but would not have hit Telegram.
+pub fn compute_max_tokens(
+    llm: &crate::config::LlmSettings,
+    messages: &[crate::context::ChatMessage],
+) -> Option<usize> {
+    const SAFETY: usize = 128;
+    let cloud = llm.base_url.trim_start().starts_with("https");
+    if llm.max_tokens == 0 && cloud {
+        return None;
+    }
+    let prompt = crate::context::token_guard::estimate_messages(messages);
+    let budget = llm
+        .context_window
+        .saturating_sub(prompt + SAFETY)
+        .max(256);
+    Some(if llm.max_tokens == 0 {
+        budget
+    } else {
+        llm.max_tokens.min(budget)
+    })
+}
+
+#[cfg(test)]
+mod max_tokens_tests {
+    use super::compute_max_tokens;
+    use crate::config::LlmSettings;
+    use crate::context::ChatMessage;
+
+    fn slot(base_url: &str, context_window: usize, max_tokens: usize) -> LlmSettings {
+        let mut s = LlmSettings::default_empty();
+        s.base_url = base_url.into();
+        s.model = "m".into();
+        s.context_window = context_window;
+        s.max_tokens = max_tokens;
+        s.enabled = true;
+        s
+    }
+
+    fn msgs() -> Vec<ChatMessage> {
+        vec![ChatMessage::User {
+            content: "what colour is a stop sign?".into(),
+            name: None,
+            image_data_urls: vec![],
+        }]
+    }
+
+    /// The 2026-08-11 field report: a DeepSeek slot with a 1M context
+    /// window and auto max_tokens sent ~999k as max_tokens, and DeepSeek
+    /// answered `400: Invalid max_tokens value, the valid range of
+    /// max_tokens is [1, 393216]`. Auto on a cloud endpoint must omit
+    /// the field so the provider's own default applies.
+    #[test]
+    fn auto_on_cloud_omits_the_field() {
+        let s = slot("https://api.deepseek.com", 1_000_000, 0);
+        assert_eq!(compute_max_tokens(&s, &msgs()), None);
+    }
+
+    /// Local servers keep the explicit remaining-window budget — some
+    /// default LOW when the field is missing, and local reasoning
+    /// models need the room.
+    #[test]
+    fn auto_on_local_sends_the_remaining_window() {
+        let s = slot("http://192.168.1.50:8084", 32_768, 0);
+        let got = compute_max_tokens(&s, &msgs()).expect("local auto must be explicit");
+        assert!(got > 30_000 && got < 32_768, "remaining window, got {got}");
+    }
+
+    /// An explicit user cap is respected everywhere — including cloud.
+    #[test]
+    fn explicit_cap_is_kept_on_cloud() {
+        let s = slot("https://api.deepseek.com", 1_000_000, 4096);
+        assert_eq!(compute_max_tokens(&s, &msgs()), Some(4096));
+    }
+
+    /// Failover to a smaller-window slot: the floor keeps the request
+    /// from degenerating to `max_tokens: 0` (servers emit nothing).
+    #[test]
+    fn small_window_floors_at_256() {
+        let s = slot("http://localhost:11434", 300, 8192);
+        assert_eq!(compute_max_tokens(&s, &msgs()), Some(256));
+    }
+}
+
 #[cfg(test)]
 mod budget_tests {
     use super::prompt_budget;

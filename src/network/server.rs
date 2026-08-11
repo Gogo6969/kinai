@@ -1174,16 +1174,5 @@ pub async fn return_unauthorized() -> impl IntoResponse {
     StatusCode::UNAUTHORIZED
 }
 
-fn compute_max_tokens(llm: &crate::config::LlmSettings, messages: &[crate::context::ChatMessage]) -> Option<usize> {
-    const SAFETY: usize = 128;
-    let prompt = crate::context::token_guard::estimate_messages(messages);
-    let budget = llm
-        .context_window
-        .saturating_sub(prompt + SAFETY)
-        .max(256);
-    Some(if llm.max_tokens == 0 {
-        budget
-    } else {
-        llm.max_tokens.min(budget)
-    })
-}
+// Shared with every other chat surface — crate::context::builder.
+use crate::context::builder::compute_max_tokens;
