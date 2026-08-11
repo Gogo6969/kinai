@@ -439,6 +439,11 @@
       llm,
       llmDeep,
       llmBalanced,
+      // Forgetting a slot here is invisible until someone loses an edit:
+      // the Online card shipped without this line, so filling it in left
+      // the header on "Back to chat" and navigating away discarded the
+      // API key the user had just typed.
+      llmOnline,
       llmFactcheck,
       overlay,
       theme,
