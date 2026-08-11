@@ -1,5 +1,12 @@
 # Build artifacts
 target/
+# The real build tree — named .nosync so iCloud's bird daemon leaves it
+# alone. `target` is a symlink to it. With Documents iCloud-synced,
+# every build's KinAI.app raced the sync daemon and the conflict copies
+# piled up as "KinAI 2.app" … "KinAI 26.app" (and gigabytes of build
+# artifacts were uploading to iCloud besides).
+target.nosync/
+target
 build/release/
 frontend/build/
 frontend/.svelte-kit/
