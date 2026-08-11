@@ -93,6 +93,10 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
         // One offline slot so the client menu's "offline" marker is
         // visible in this scenario.
         { slug: 'deep', model: 'mock-deep-35b', alive: false },
+        // A host-advertised ONLINE slot — the client picker must list it
+        // (clients have no local LLM config; the wire is their only
+        // source of truth).
+        { slug: 'online', model: 'deepseek-v4-flash', alive: true },
       ],
       host_fact_check: true,
       host_reports: true,
