@@ -5,6 +5,44 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.96] — 2026-08-11
+
+### Added
+
+- **An Online model slot.** Settings → Models gains a fourth card: a
+  hosted, OpenAI-compatible model (DeepSeek, OpenAI, Groq, …) reachable
+  as `/online` in chat and from the model picker. It appears nowhere
+  until you configure it — and it is never used automatically. Your
+  local models cover for each other when one goes down; the online one
+  is only ever reached when someone picks it, because what you send
+  there leaves your home network.
+
+### Fixed
+
+- **Windows and Linux no longer get Mac instructions.** The "No KinAI
+  hosts found" screen used to tell every platform to open macOS's
+  System Settings. Each platform now gets the advice that actually
+  applies to it: Local Network permission on a Mac, the firewall and
+  the Private-network setting on Windows, the firewall on Linux. The
+  same treatment for the microphone errors, keyboard-shortcut symbols,
+  "this Mac" wording, and the tray/menu-bar naming throughout the app.
+- **The app icon lost its white corners.** The rounded-corner icon had
+  been exported onto a white square — most visible in the Windows
+  taskbar, but the Mac Dock and Linux launcher icons had it too. All
+  icons are regenerated from the original artwork with proper
+  transparency.
+- **"Scan again" no longer breaks the search it restarts.** Pressing it
+  on the join screen silently stopped host discovery for the rest of
+  the session — the opposite of what the button promises. Found while
+  chasing the Windows report above.
+- **A fresh install starts with setup, not release notes.** First
+  launch used to open the "what's new" window on top of the setup
+  wizard, describing changes to a version the new user had never run.
+  Release notes now only appear after an actual update.
+- **The macOS network-permission prompt explains itself.** When macOS
+  asks about local-network access, the dialog now says what KinAI uses
+  it for (finding your family's host — nothing leaves your home).
+
 ## [0.2.95] — 2026-08-08
 
 ### Fixed

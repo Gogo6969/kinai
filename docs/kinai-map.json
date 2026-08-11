@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-08-08T21:16:58+00:00",
-  "version": "0.2.95",
+  "generated_at": "2026-08-11T15:50:27+00:00",
+  "version": "0.2.96",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 205,
-    "head": "0364669"
+    "commits": 209,
+    "head": "561eb80"
   },
   "totals": {
     "rust_files": 59,
-    "rust_lines": 22974,
-    "frontend_files": 31,
-    "frontend_lines": 11578,
-    "unit_tests": 139,
+    "rust_lines": 23247,
+    "frontend_files": 32,
+    "frontend_lines": 11779,
+    "unit_tests": 146,
     "integration_test_files": 12,
-    "releases": 88,
-    "tags": 82
+    "releases": 89,
+    "tags": 83
   },
   "areas": [
     {
@@ -115,16 +115,16 @@
     {
       "path": "src/commands.rs",
       "area": "entry",
-      "lines": 3229,
+      "lines": 3271,
       "doc": "Tauri command surface — every IPC entrypoint the frontend can call.",
       "tests": 0
     },
     {
       "path": "src/config.rs",
       "area": "entry",
-      "lines": 639,
+      "lines": 718,
       "doc": "Persistent configuration at `~/.kinai/config.toml`.",
-      "tests": 3
+      "tests": 5
     },
     {
       "path": "src/context/builder.rs",
@@ -220,7 +220,7 @@
     {
       "path": "src/discovery.rs",
       "area": "media",
-      "lines": 122,
+      "lines": 140,
       "doc": "mDNS / Bonjour-style discovery for local-network hosts.",
       "tests": 0
     },
@@ -241,7 +241,7 @@
     {
       "path": "src/lib.rs",
       "area": "entry",
-      "lines": 572,
+      "lines": 573,
       "doc": "KinAI library entrypoint — wires Tauri shell, Axum HTTP/WS server, tray, global hotkey, LLM client, and the never-lose-context pipeline.",
       "tests": 0
     },
@@ -332,9 +332,9 @@
     {
       "path": "src/slash.rs",
       "area": "routing",
-      "lines": 920,
+      "lines": 1053,
       "doc": "Slash commands — intercepted BEFORE the LLM pipeline so messages starting with /pic, /picHQ, /help, ? skip the chat model entirely and route to native handlers (ComfyUI for image gen, a static command list for help).",
-      "tests": 13
+      "tests": 18
     },
     {
       "path": "src/stt.rs",
@@ -495,13 +495,13 @@
     {
       "path": "frontend/src/lib/activeModel.ts",
       "kind": "lib",
-      "lines": 96,
+      "lines": 97,
       "doc": "Which slot is answering *right now*, for the composer prompt label. Wolf's ask: \"show in the prompt which model is currently set — so that the user always knows which model is right now working for him\", and then: \"the chat entry in the app should just show fast: balanced: or deep:\". So this resolves the slot, not the model id — the per-message footer already carries the full model name and stays "
     },
     {
       "path": "frontend/src/lib/api.ts",
       "kind": "lib",
-      "lines": 665,
+      "lines": 671,
       "doc": "Pause toggle. When `false` this slot is hidden from slash menus and skipped during message routing. Defaults to `true` for the fast slot, `false` for the deep slot (until the user fills it)."
     },
     {
@@ -513,7 +513,7 @@
     {
       "path": "frontend/src/lib/components/ChatWindow.svelte",
       "kind": "component",
-      "lines": 886,
+      "lines": 899,
       "doc": "↑/↓ prompt recall. `historyIndex === null` means we're editing the live draft; once recall starts it indexes into app.inputHistory and `draftStash` holds whatever the user was typing so ↓ can restore it."
     },
     {
@@ -531,7 +531,7 @@
     {
       "path": "frontend/src/lib/components/MicButton.svelte",
       "kind": "component",
-      "lines": 306,
+      "lines": 322,
       "doc": "Called with the current transcript on every interim/final result."
     },
     {
@@ -573,7 +573,7 @@
     {
       "path": "frontend/src/lib/dev-tauri-mock.ts",
       "kind": "lib",
-      "lines": 329,
+      "lines": 351,
       "doc": "DEV-ONLY Tauri IPC mock. When the frontend runs in a plain browser (`pnpm dev` + localhost:1420, no Tauri shell), `window.__TAURI_INTERNALS__` doesn't exist and every invoke() rejects — the UI is untestable outside the app. This module installs a minimal in-memory backend so the whole UI (most importantly the /setup wizard) can be driven end-to-end in a browser: config mutations persist for the se"
     },
     {
@@ -587,6 +587,12 @@
       "kind": "lib",
       "lines": 149,
       "doc": "Custom image renderer: enforce a safe URL allow-list and a max-height box. Without this a model can drop a `![…](javascript:…)` or a 50 MP image into chat and either pop XSS or blow up the layout. We accept `https://`, `http://` (LAN-only resources from the host), and `data:` for inline previews / vision uploads — and that's it."
+    },
+    {
+      "path": "frontend/src/lib/platform.ts",
+      "kind": "lib",
+      "lines": 78,
+      "doc": "Which desktop OS this window is running on. KinAI ships one Svelte frontend to three very different machines, and for a long time the copy assumed all of them were Macs: a Windows user following a \"No hosts found\" hint was told to open System Settings → Privacy & Security, a pane that does not exist on their computer, and the microphone errors named macOS panes and offered buttons that were only r"
     },
     {
       "path": "frontend/src/lib/stores/app.svelte.ts",
@@ -627,13 +633,13 @@
     {
       "path": "frontend/src/routes/client/+page.svelte",
       "kind": "route",
-      "lines": 260,
-      "doc": "Merge mDNS-discovered hosts with the saved-config fallback. If the user has connected before, we keep the last-known host URL so they can redeem a fresh 6-char code against it even when mDNS comes up empty (Local Network permission off, host on a different subnet, etc.)."
+      "lines": 282,
+      "doc": "Why \"no hosts found\", per platform. Discovery is mDNS (`_kinai._tcp.local.`, UDP 5353) with the host itself on TCP 4847 — so the honest answer is \"same network, and let KinAI through the firewall\", which is a different sentence on each OS. This screen used to show the macOS one to everybody, which is how a Windows user ended up being told to open System Settings → Privacy & Security, a pane Window"
     },
     {
       "path": "frontend/src/routes/host/+page.svelte",
       "kind": "route",
-      "lines": 1264,
+      "lines": 1265,
       "doc": "Secondary \"deep\" slot — same shape, but starts disabled + empty so hosts who only want one model keep their existing single-slot behaviour. The configure step now exposes BOTH slots so the user can pick a fast + deep backend in one screen."
     },
     {
@@ -663,7 +669,7 @@
     {
       "path": "frontend/src/routes/settings/+page.svelte",
       "kind": "route",
-      "lines": 2206,
+      "lines": 2247,
       "doc": "Fast model — the existing single slot. Reachable as `/fast` once the deep slot is also configured; the default routing target for plain (non-slash) messages."
     },
     {
@@ -675,7 +681,7 @@
     {
       "path": "frontend/src/routes/setup/+page.svelte",
       "kind": "route",
-      "lines": 1133,
+      "lines": 1134,
       "doc": "First-run host setup wizard — the implementation of the approved step-by-step mockup. Design contract: * Splash first; once setup completes (or is skipped) the `setup_completed` config flag guarantees neither splash nor wizard ever appears again (root +page.svelte gates on it). * EVERY step except the role fork and Finish is skippable; each step spells out the consequence of skipping and where to "
     }
   ],
@@ -932,7 +938,8 @@
     "slots": [
       "fast",
       "balanced",
-      "deep"
+      "deep",
+      "online"
     ],
     "config_structs": [
       "AppConfig",
@@ -1007,6 +1014,7 @@
       "set_llm_balanced_settings",
       "set_llm_deep_settings",
       "set_llm_factcheck_settings",
+      "set_llm_online_settings",
       "set_llm_settings",
       "set_mode",
       "set_overlay_settings",
@@ -1039,6 +1047,40 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.96",
+      "date": "2026-08-11",
+      "sections": {
+        "Added": [
+          {
+            "title": "An Online model slot.",
+            "detail": "Settings → Models gains a fourth card: a hosted, OpenAI-compatible model (DeepSeek, OpenAI, Groq, …) reachable as `/online` in chat and from the model picker. It appears nowhere until you configure it — and it is never used automatically. Your local models cover for each other when one goes down; the online one is only ever reached when someone picks it, because what you send there leaves your home network."
+          }
+        ],
+        "Fixed": [
+          {
+            "title": "Windows and Linux no longer get Mac instructions.",
+            "detail": "The \"No KinAI hosts found\" screen used to tell every platform to open macOS's System Settings. Each platform now gets the advice that actually applies to it: Local Network permission on a Mac, the firewall and the Private-network setting on Windows, the firewall on Linux. The same treatment for the microphone errors, keyboard-shortcut symbols, \"this Mac\" wording, and the tray/menu-bar naming throughout the app."
+          },
+          {
+            "title": "The app icon lost its white corners.",
+            "detail": "The rounded-corner icon had been exported onto a white square — most visible in the Windows taskbar, but the Mac Dock and Linux launcher icons had it too. All icons are regenerated from the original artwork with proper transparency."
+          },
+          {
+            "title": "\"Scan again\" no longer breaks the search it restarts.",
+            "detail": "Pressing it on the join screen silently stopped host discovery for the rest of the session — the opposite of what the button promises. Found while chasing the Windows report above."
+          },
+          {
+            "title": "A fresh install starts with setup, not release notes.",
+            "detail": "First launch used to open the \"what's new\" window on top of the setup wizard, describing changes to a version the new user had never run. Release notes now only appear after an actual update."
+          },
+          {
+            "title": "The macOS network-permission prompt explains itself.",
+            "detail": "When macOS asks about local-network access, the dialog now says what KinAI uses it for (finding your family's host — nothing leaves your home)."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.95",
       "date": "2026-08-08",
@@ -2918,6 +2960,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.95",
+      "date": "2026-08-08"
+    },
     {
       "tag": "v0.2.94",
       "date": "2026-07-30"
