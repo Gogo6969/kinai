@@ -122,9 +122,17 @@ async fn pump_events(app: AppHandle, receiver: mdns_sd::Receiver<mdns_sd::Servic
 /// made things permanently worse instead of better.
 pub fn rescan(app: AppHandle) -> anyhow::Result<()> {
     if let Some(daemon) = BROWSE_DAEMON.get() {
+        // End the previous subscription FIRST. This is not optional
+        // hygiene: `browse` alone does not retire the old listener —
+        // besides the querier map entry, the daemon keeps a sender clone
+        // in its retransmission chain, which re-adds itself (with doubled
+        // delay, capped at 1h) forever. With that clone alive, the old
+        // pump's channel never closes, so every rescan would leak one
+        // pump task and one immortal multicast-query chain. `stop_browse`
+        // removes the querier entry AND prunes the retransmissions
+        // (exec_command_stop_browse), so the old pump drains and exits.
+        let _ = daemon.stop_browse(SERVICE_TYPE);
         let receiver = daemon.browse(SERVICE_TYPE)?;
-        // Hand the fresh channel to a new pump. The previous pump exits
-        // on its own the moment its sender is replaced.
         tauri::async_runtime::spawn(pump_events(app, receiver));
     }
     Ok(())

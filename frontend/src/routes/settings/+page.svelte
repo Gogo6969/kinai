@@ -85,7 +85,10 @@
     temperature: 0.7,
     max_tokens: 0,
     system_addendum: '',
-    enabled: false,
+    // Starts Active so a first-time configure (fill URL + model, Save)
+    // yields a working slot; the save still forces `enabled: false`
+    // while the base URL is empty.
+    enabled: true,
   });
   // Fact-check model — ONLINE, OpenAI-compatible; powers the per-message
   // "fact check" button only. Never used for chat routing.
@@ -683,12 +686,15 @@
           ...llmBalanced,
           enabled: !!llmBalanced.base_url.trim() && !!llmBalanced.model.trim() && llmBalanced.enabled,
         });
-        // Enabled is derived, not a separate switch: a slot with a
-        // base URL and a model IS configured, and clearing the base URL
-        // is how the host owner removes it again.
+        // Respect the card's Active/Paused toggle, exactly like the
+        // balanced slot: an earlier version derived `enabled` from
+        // base_url+model alone, which silently discarded the checkbox —
+        // the one slot that most needs a working pause switch (it's the
+        // paid endpoint) was the one that couldn't be paused without
+        // deleting its whole configuration.
         await api.setLlmOnlineSettings({
           ...llmOnline,
-          enabled: !!llmOnline.base_url.trim() && !!llmOnline.model.trim(),
+          enabled: !!llmOnline.base_url.trim() && !!llmOnline.model.trim() && llmOnline.enabled,
         });
         await api.setLlmFactcheckSettings({
           ...llmFactcheck,

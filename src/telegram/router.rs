@@ -343,6 +343,7 @@ async fn run_turn_for_peer<R: Runtime>(
         let icon = match slot {
             "deep" => "🧠",
             "balanced" => "⚖️",
+            "online" => "☁️",
             _ => "⚡",
         };
         let others: Vec<String> = crate::slash::SLOTS
@@ -362,16 +363,24 @@ async fn run_turn_for_peer<R: Runtime>(
         };
         // Same heads-up as the app's switch_confirmation: warn NOW when
         // the wanted slot's server is down, not after the next message.
+        //
+        // The automatic-failover promise must be gated on FAILOVER_SLOTS,
+        // not `others`: `others` lists every slot the user can SWITCH to
+        // (including `online`), but failover only ever substitutes from
+        // FAILOVER_SLOTS. With fast+online configured and fast down, the
+        // old `others`-based branch promised a failover that the next
+        // message could not deliver.
         if !active_model.trim().is_empty() && !crate::slash::slot_alive_cached(state, slot).await {
-            if others.is_empty() {
-                body.push_str(
-                    "\n\n⚠️ Heads-up: this model's server isn't responding right now, \
-and no other model is configured — messages will fail until it's back.",
-                );
-            } else {
+            if crate::slash::failover_available(&cfg, slot) {
                 body.push_str(
                     "\n\n⚠️ Heads-up: this model's server isn't responding right now. \
 Your messages will automatically use another available model until it's back.",
+                );
+            } else {
+                body.push_str(
+                    "\n\n⚠️ Heads-up: this model's server isn't responding right now, \
+and no other model can take over automatically — messages will fail until it's \
+back, unless you switch model yourself.",
                 );
             }
         }

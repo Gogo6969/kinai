@@ -9,8 +9,40 @@
   import { api, type Attachment } from '$lib/api';
   import { fileToDataUrl } from '$lib/image';
   import { resolveActiveSlot, slotFromCommand, type SlotSlug } from '$lib/activeModel';
-  import { THIS_COMPUTER, MODIFIERS } from '$lib/platform';
+  import { THIS_COMPUTER, isMac, MODIFIERS } from '$lib/platform';
   import { Send, Square, Paperclip, X, FileText, Image as ImageIcon, Check, ChevronUp } from '@lucide/svelte';
+
+
+  /** The overlay hotkey as the user's keyboard prints it, derived from
+   *  the hotkey actually registered (config), never guessed from the
+   *  platform alone. */
+  const overlayHotkeyLabel = $derived.by(() => {
+    const raw = app.config?.overlay?.hotkey || 'CmdOrCtrl+Space';
+    return raw
+      .split('+')
+      .map((tok) => {
+        switch (tok) {
+          case 'CmdOrCtrl':
+          case 'CommandOrControl':
+            return isMac ? MODIFIERS.cmd : MODIFIERS.ctrl;
+          case 'Cmd':
+          case 'Command':
+          case 'Super':
+            return MODIFIERS.cmd;
+          case 'Ctrl':
+          case 'Control':
+            return MODIFIERS.ctrl;
+          case 'Alt':
+          case 'Option':
+            return MODIFIERS.alt;
+          case 'Shift':
+            return MODIFIERS.shift;
+          default:
+            return tok;
+        }
+      })
+      .join(' ');
+  });
 
   let input = $state('');
   let scrollEl: HTMLDivElement | undefined = $state();
@@ -506,7 +538,7 @@
                 Their chats are private — you only see your own here.</p>
             {/if}
             <p class="pt-2">
-              Press <code class="bg-white/5 px-1.5 py-0.5 rounded">{MODIFIERS.cmd} Space</code>
+              Press <code class="bg-white/5 px-1.5 py-0.5 rounded">{overlayHotkeyLabel}</code>
               anywhere to summon the overlay, or type below.
             </p>
           </div>

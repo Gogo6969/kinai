@@ -610,8 +610,21 @@ mod port_coverage_tests {
 ///     on demand; cold load just adds latency).
 ///   * others   — `GET /v1/models` (the universal OpenAI-compat surface).
 pub async fn probe_alive(settings: &LlmSettings) -> bool {
+    // 1.5s is a LAN budget — a model server one hop away answers in
+    // well under that, and a longer wait would stall menus. A cloud slot
+    // (https — LAN model servers are plain http) crosses the internet:
+    // DNS + TCP + TLS + first byte can exceed 1.5s on a slow uplink
+    // while the endpoint is perfectly able to serve chat. A false "dead"
+    // here is cached 15s, and the known-dead skip would then override an
+    // EXPLICIT `/online` request — so give WAN probes the same 4s the
+    // chat client's connect phase gets.
+    let budget = if settings.base_url.trim_start().starts_with("https") {
+        Duration::from_millis(4000)
+    } else {
+        Duration::from_millis(1500)
+    };
     let client = match reqwest::Client::builder()
-        .timeout(Duration::from_millis(1500))
+        .timeout(budget)
         .danger_accept_invalid_certs(true)
         .build()
     {

@@ -162,7 +162,8 @@ slot's address — then try again.",
         tried.push(label.clone());
         let settings = slot_settings(cfg, &label).clone();
 
-        // Known-dead skip: the cached probe is bounded at 1.5s, versus a
+        // Known-dead skip: the cached probe is bounded (1.5s LAN / 4s
+        // for https cloud endpoints, see probe_alive), versus a
         // full connect-timeout of silent thinking-dots per dead attempt
         // (SYN-dropping servers: host asleep, firewall drop). A stale
         // "alive" cache entry just falls through to the real attempt,
@@ -326,6 +327,21 @@ pub async fn slot_alive_cached(state: &crate::AppState, label: &str) -> bool {
     alive
 }
 
+/// Whether automatic failover could actually cover for `label` going
+/// down: some OTHER active slot must exist in FAILOVER_SLOTS.
+///
+/// One function, used by both surfaces that make the promise (the app's
+/// switch confirmation AND the Telegram bare-switch reply). The list of
+/// slots a user can SWITCH to includes `online`; the list failover may
+/// substitute from does not — and the 0.2.96 pre-tag audit caught the
+/// Telegram copy of this check still using the wrong list. Shared so the
+/// two can never disagree again.
+pub fn failover_available(cfg: &AppConfig, label: &str) -> bool {
+    FAILOVER_SLOTS
+        .iter()
+        .any(|s| *s != label && slot_settings(cfg, s).is_active())
+}
+
 /// The slot to actually serve a request aimed at `wanted`: the wanted
 /// slot when active, else the first active slot in FAILOVER_SLOTS order,
 /// else `wanted` itself (fail loudly downstream — a config problem should
@@ -447,13 +463,7 @@ pub fn switch_confirmation(
             others.join(" or ")
         )
     };
-    // Whether a substitute actually exists. `others` above lists every
-    // slot the user can SWITCH to (including `online`), but failover only
-    // reaches FAILOVER_SLOTS — so a family whose only other configured
-    // slot is `online` must not be told KinAI will cover for them.
-    let failover_available = FAILOVER_SLOTS
-        .iter()
-        .any(|s| *s != label && slot_settings(cfg, s).is_active());
+    let failover_available = failover_available(cfg, label);
     // Honest heads-up when the wanted slot's server failed its liveness
     // probe — the switch still sticks (the wish is recorded), but the
     // user learns NOW rather than after their next message fails over.
