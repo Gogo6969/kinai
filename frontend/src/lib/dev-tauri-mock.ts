@@ -143,7 +143,11 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
     // (with `balanced` marked offline via the mocked slot_health).
     cfg.mode = 'host';
     cfg.setup_completed = true;
-    cfg.llm.model = 'local-fast-8b';
+    // A llama.cpp id in its ugliest real-world form — a filesystem
+    // path from another machine — so the display-name handling stays
+    // visible in the mock (Wolf's real fast slot looks exactly like
+    // this).
+    cfg.llm.model = '/home/olares/models/local-fast-8b-Q4_K_M.gguf';
     if (scenario === 'host-three-slots') {
       Object.assign(cfg.llm_balanced, { base_url: 'http://192.168.1.50:8084', model: 'local-balanced-33b', enabled: true });
       Object.assign(cfg.llm_deep, { base_url: 'http://192.168.1.50:8081', model: 'local-deep-35b', enabled: true });

@@ -10,6 +10,7 @@
     type VisionSettings,
   } from '$lib/api';
   import { THIS_COMPUTER } from '$lib/platform';
+  import { displayModelName } from '$lib/modelName';
   import { app } from '$lib/stores/app.svelte';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
@@ -693,10 +694,10 @@
                   onchange={() => autofillContextWindow()}
                 >
                   {#each availableModels as m}
-                    <option value={m}>{m}</option>
+                    <option value={m}>{displayModelName(m)}</option>
                   {/each}
                   {#if llm.model && !availableModels.includes(llm.model)}
-                    <option value={llm.model}>{llm.model} (custom)</option>
+                    <option value={llm.model}>{displayModelName(llm.model)} (custom)</option>
                   {/if}
                 </select>
                 <p class="text-xs text-white/40 mt-1">
@@ -851,10 +852,10 @@
                   onchange={() => autofillContextWindow('deep')}
                 >
                   {#each availableModelsDeep as m}
-                    <option value={m}>{m}</option>
+                    <option value={m}>{displayModelName(m)}</option>
                   {/each}
                   {#if llmDeep.model && !availableModelsDeep.includes(llmDeep.model)}
-                    <option value={llmDeep.model}>{llmDeep.model} (custom)</option>
+                    <option value={llmDeep.model}>{displayModelName(llmDeep.model)} (custom)</option>
                   {/if}
                 </select>
               {:else}

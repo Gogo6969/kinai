@@ -1,5 +1,6 @@
 <script lang="ts">
   import { app } from '$lib/stores/app.svelte';
+  import { displayModelName } from '$lib/modelName';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { Check, RefreshCw, Trash2, Undo2, Flag } from '@lucide/svelte';
@@ -65,7 +66,7 @@
             {#if r.model}
               <span class="text-white/40"> · </span>
               <span class="font-mono text-xs text-teal-300/70">
-                {r.slot ? r.slot + ' · ' : ''}{r.model}
+                {r.slot ? r.slot + ' · ' : ''}{displayModelName(r.model)}
               </span>
             {/if}
           </div>

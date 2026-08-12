@@ -10,6 +10,7 @@
   import { fileToDataUrl } from '$lib/image';
   import { resolveActiveSlot, slotFromCommand, type SlotSlug } from '$lib/activeModel';
   import { THIS_COMPUTER, isMac, MODIFIERS } from '$lib/platform';
+  import { displayModelName } from '$lib/modelName';
   import { Send, Square, Paperclip, X, FileText, Image as ImageIcon, Check, ChevronUp } from '@lucide/svelte';
 
 
@@ -253,8 +254,8 @@
             cmd: `/${slug}`,
             desc:
               alive === false
-                ? `⚠️ ${SLOT_MENU_TEXT[slug].label} model (${model}) — offline right now, auto-switches`
-                : `Use the ${SLOT_MENU_TEXT[slug].label} model (${model})`,
+                ? `⚠️ ${SLOT_MENU_TEXT[slug].label} model (${displayModelName(model)}) — offline right now, auto-switches`
+                : `Use the ${SLOT_MENU_TEXT[slug].label} model (${displayModelName(model)})`,
             hint: SLOT_MENU_TEXT[slug].hint,
           }))
         : [];
@@ -778,8 +779,8 @@
             }
           }}
           title={activeModel.alive
-            ? `Answering with the ${activeModel.slot} model${activeModel.model ? `: ${activeModel.model}` : ''}. Click to switch.`
-            : `The ${activeModel.slot} model${activeModel.model ? ` (${activeModel.model})` : ''} looks unreachable — KinAI will switch to an available one for this turn.`}
+            ? `Answering with the ${activeModel.slot} model${activeModel.model ? `: ${displayModelName(activeModel.model)}` : ''}. Click to switch.`
+            : `The ${activeModel.slot} model${activeModel.model ? ` (${displayModelName(activeModel.model)})` : ''} looks unreachable — KinAI will switch to an available one for this turn.`}
         >
           <span>{activeModel.slot}:</span>
           {#if slotChoices.length >= 2}
@@ -815,7 +816,7 @@
                 <span class="min-w-0 flex-1">
                   <span class="block text-[13px] capitalize leading-5">{choice.slug}</span>
                   <span class="block text-[11.5px] text-white/45 truncate">
-                    {offline ? 'Offline — auto-switches' : SLOT_BLURB[choice.slug]} · {choice.model}
+                    {offline ? 'Offline — auto-switches' : SLOT_BLURB[choice.slug]} · {displayModelName(choice.model)}
                   </span>
                 </span>
                 {#if active}

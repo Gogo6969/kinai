@@ -16,6 +16,7 @@
     type VisionSettings,
   } from '$lib/api';
   import { THIS_COMPUTER, MODIFIERS, isMac, byPlatform } from '$lib/platform';
+  import { displayModelName } from '$lib/modelName';
   import { app } from '$lib/stores/app.svelte';
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
@@ -1214,10 +1215,12 @@
                   onchange={(e) => set({ ...m, model: (e.currentTarget as HTMLSelectElement).value })}
                 >
                   {#each models as opt}
-                    <option value={opt}>{opt}</option>
+                    <!-- Real id as the VALUE, plain name as the label — a
+                         llama.cpp id can be a whole filesystem path. -->
+                    <option value={opt}>{displayModelName(opt)}</option>
                   {/each}
                   {#if m.model && !models.includes(m.model)}
-                    <option value={m.model}>{m.model} (custom)</option>
+                    <option value={m.model}>{displayModelName(m.model)} (custom)</option>
                   {/if}
                 </select>
               {:else}
