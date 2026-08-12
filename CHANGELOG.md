@@ -5,6 +5,26 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.97] — 2026-08-12
+
+### Changed
+
+- **Questions about now or later always search the web.** Until now a
+  question had to show two independent signals (a live topic plus a
+  time word, say) before KinAI forced a search — "best flights this
+  week to Belize" had only one, so whether it searched was up to the
+  model's mood. New rule: a present- or future-anchored phrase (today,
+  tonight, tomorrow, this week, this weekend, latest, currently, …, in
+  English and German) — or any year at or after the current one
+  ("world cup 2026", "Olympics 2028") — forces the search by itself.
+  Greetings, quizzes, and creative requests ("write a poem about
+  today") stay exempt, and past years stay historical. Travel words
+  (flight, airfare, hotel, airline) now also count as live topics.
+- Fixed along the way: "what's today's date?" could trigger a web
+  search because the apostrophe split "today's" into words the
+  date-question exemption didn't recognise. The exemption now covers
+  the apostrophe-split shapes.
+
 ## [0.2.96] — 2026-08-11
 
 ### Added

@@ -78,9 +78,18 @@ const STRONG: &[&str] = &[
     "stock price", "share price", "stock market", "market cap",
     "exchange rate", "wechselkurs", "aktienkurs", "bitcoin kurs",
     "weather forecast", "wetterbericht", "flight status",
-    "latest news", "news today", "the news", "any news", "breaking news",
-    "die nachrichten", "nachrichten heute", "headlines", "schlagzeilen",
+    "latest news", "news today", "breaking news",
+    "nachrichten heute", "headlines", "schlagzeilen",
     "who won", "wer hat gewonnen", "spielstand", "final score",
+    // 2026-08-12 adversarial panel: "the news"/"any news" moved OUT of
+    // STRONG — "Any news from Oma?" and "I told my husband the news that
+    // I'm pregnant" are personal news and were force-searching. A bare
+    // "any news?" still forces via the whole-message check in
+    // needs_live_data. Added below: confirmed misses from the same panel.
+    "was gibt es neues", "was gibt s neues", "neuesten nachrichten",
+    "flight on time", "flug pünktlich", "flug puenktlich",
+    "temperature outside", "weather outside", "wie warm ist es", "wie kalt ist es",
+    "won last night", "win last night", "game last night",
 ];
 
 /// Live subjects that need a partner signal, because each has a common
@@ -90,6 +99,11 @@ const TOPIC: &[&str] = &[
     "score", "scores", "standings", "ergebnis", "ergebnisse", "traffic",
     "stock", "stocks", "aktie", "aktien", "kurs",
     "bitcoin", "btc", "ethereum", "crypto", "dollar", "euro",
+    // Travel (2026-08-12): "best flights this week to Belize" went
+    // unforced because nothing travel-shaped was listed. Singular AND
+    // plural — matching is word-boundary, one does not imply the other.
+    "flight", "flights", "airfare", "airfares", "airline", "airlines",
+    "hotel", "hotels", "flug", "flüge", "fluege", "flugpreis", "flugpreise",
 ];
 
 /// Words that make a question about a *value*. `rate` is deliberately
@@ -107,7 +121,14 @@ const TEMPORAL: &[&str] = &[
     "currently", "current", "latest", "most recent", "recently",
     "this week", "this month", "at the moment", "as of now", "yesterday",
     "heute", "jetzt", "aktuell", "aktuelle", "aktuellen", "derzeit",
-    "momentan", "neueste", "gestern", "morgen",
+    "momentan", "neueste", "neuesten", "gestern", "morgen",
+    // Panel 2026-08-12: "What's the weather on Friday?" had a live topic
+    // and a day reference yet no listed temporal word. Weekdays are
+    // deictic in chat — nobody asks about a *past* Friday's weather.
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
+    "sunday", "montag", "dienstag", "mittwoch", "donnerstag", "freitag",
+    "samstag", "sonntag", "this evening", "this afternoon", "last night",
+    "am wochenende", "letzte nacht", "gestern abend",
 ];
 
 /// "What happened / what's going on" — live when paired with a temporal.
@@ -131,11 +152,16 @@ const ROLE_NOUN: &[&str] = &[
 /// positive signal: "what did you say today" contains a temporal word but
 /// is a question about us, and searching the web for it is nonsense.
 const META: &[&str] = &[
-    "you say", "you said", "you just", "your last", "your previous", "your answer",
+    // "you say" and bare "what did i" were too greedy: they vetoed
+    // "What would you say the bitcoin price is today" and "What did I
+    // miss in the news today" (panel 2026-08-12). Narrowed to the
+    // conversation-referencing phrasings.
+    "you said", "you just", "your last", "your previous", "your answer",
     "your reply", "did you search", "why did you", "what can you do",
     "how do you work", "who are you", "what are you", "your name",
     "summarize that", "summarise that", "explain that", "rephrase",
-    "translate that", "what did you", "what did i", "what do you mean",
+    "translate that", "what did you", "what did i say", "what did i ask",
+    "what did i tell", "what do you mean",
     "repeat that", "say that again", "was hast du", "was habe ich", "wer bist du",
 ];
 
@@ -144,9 +170,184 @@ const META: &[&str] = &[
 /// is it" would be slower and worse, and the forced round offers only
 /// `web_search`, so it would also hide the right tool.
 const DATETIME_ONLY: &[&str] = &[
-    "what time", "whats the time", "what day", "whats the date", "what is the date",
-    "todays date", "what year", "wie viel uhr", "welcher tag", "welches datum",
+    // Panel 2026-08-12: bare "what time"/"what day" swallowed "what time
+    // does the game start today" and "what time does the DMV open" —
+    // live questions. Only the is-it forms are pure clock/date questions.
+    "what time is it", "what time it is", "whats the time",
+    "what day is it", "what day it is", "whats the date", "what is the date",
+    "todays date", "what year is it", "wie viel uhr", "wie spät ist es",
+    "wie spaet ist es", "welcher tag ist", "welches datum",
+    // normalize() splits apostrophes into spaces, so "what's today's date?"
+    // becomes "what s today s date" — none of the entries above match it.
+    // Latent since day one; exposed when the temporal-alone rule made bare
+    // "today" decisive. Cover the apostrophe-split shapes explicitly.
+    "what s the time", "what s the date", "today s date", "what s today s date",
 ];
+
+/// Deictic present/future phrases that force a search ON THEIR OWN.
+///
+/// Owner rule (Wolf, 2026-08-12): "Everything with today, this week, or
+/// dates in the future should be searched online." The two-signal
+/// discipline above stays for fuzzy cases, but these words anchor the
+/// question to *now or later* — the one region of time the model's
+/// weights cannot know — so a second signal is no longer required.
+///
+/// Deliberately absent: "now" and "rn" (overwhelmingly conversational
+/// filler — "I get it now", "do it now"), "yesterday"/"gestern" (past;
+/// still forces via the two-signal paths when paired with a topic), and
+/// bare "current" (adjective glue: "my current setup"). Those keep
+/// needing a second signal.
+const TEMPORAL_ALONE: &[&str] = &[
+    "today", "todays", "tonight", "tomorrow", "this week", "this weekend",
+    "this month", "this year", "next week", "next weekend", "next month",
+    "next year", "right now", "at the moment", "as of now", "currently",
+    "latest", "most recent",
+    "heute", "heute abend", "morgen", "übermorgen", "uebermorgen",
+    "diese woche", "dieses wochenende", "diesen monat", "dieses jahr",
+    "nächste woche", "naechste woche", "nächsten monat", "naechsten monat",
+    "nächstes jahr", "naechstes jahr", "aktuell", "aktuelle", "aktuellen",
+    "derzeit", "momentan", "zurzeit", "neueste", "neuesten", "kürzlich",
+    "kuerzlich", "this evening", "this afternoon", "am wochenende",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday",
+    "sunday", "montag", "dienstag", "mittwoch", "donnerstag", "freitag",
+    "samstag", "sonntag",
+];
+
+/// Creative-generation asks. Checked GLOBALLY, before even STRONG: the
+/// 2026-08-12 panel found "Tell me a bedtime story about who won the
+/// dragon race" force-searching via STRONG's "who won". Accepted cost:
+/// "write a summary of today's news" is no longer forced either — a
+/// creative framing wins over everything, which is the module's oldest
+/// lesson (v1's worst fires were all creative requests).
+const CREATIVE_VETO: &[&str] = &[
+    "quiz me", "test me on", "frag mich ab", "abfragen",
+    "write me", "write a", "write us", "tell me a story", "tell us a story",
+    "tell her a story", "tell him a story", "bedtime story", "gutenachtgeschichte",
+    "a story", "eine geschichte", "story for", "geschichte über", "geschichte ueber",
+    "erzähl", "erzaehl", "generate a", "generate an", "draw me", "draw a",
+    "draw us", "mal mir", "mal uns", "make up", "invent a", "schreib mir",
+    "schreibe", "zeichne", "erfinde", "gedicht", "poem", "a joke", "a riddle",
+    "a song", "ein witz", "einen witz", "ein rätsel", "ein raetsel", "ein lied",
+    "sing us", "sing me", "sing mir",
+];
+
+/// Greetings, farewells, thanks, wellbeing — smalltalk where a temporal
+/// word is social glue ("see you TOMORROW", "guten MORGEN"). Consulted by
+/// the temporal-alone rule only, so "guten morgen, wie wird das wetter
+/// heute?" still forces via topic+temporal before this list is reached.
+const SMALLTALK_VETO: &[&str] = &[
+    "how are you", "how r u", "how are u", "how was your", "how s your",
+    "how is your", "hows your", "how s it going", "how is it going",
+    "hows it going", "how s everyone", "how did you sleep", "wie geht",
+    "wie war dein", "wie war euer", "wie hast du geschlafen",
+    "guten morgen", "guten abend", "gute nacht", "good morning",
+    "good night", "goodnight", "see you", "bis morgen", "bis später",
+    "bis spaeter", "bis nachher", "bis gleich", "bis nächste", "bis naechste",
+    "schlaf gut", "sleep well", "thanks", "thank you", "danke",
+    "was kannst du",
+];
+
+/// Requests aimed at KinAI's own task tools (reminders, lists, calendar)
+/// or at schoolwork. Forcing a round where web_search is the ONLY tool
+/// would actively hide the right tool from the model — worse than not
+/// forcing (the DATETIME_ONLY lesson, generalised; panel 2026-08-12).
+const TASK_VETO: &[&str] = &[
+    "remind", "reminder", "erinnere", "erinnerung", "calendar", "kalender",
+    "termin", "appointment", "shopping list", "einkaufsliste", "todo",
+    "to do", "alarm", "timer", "hausaufgaben", "vokabeln", "homework",
+];
+
+/// The owner rule only fires on messages shaped like an information
+/// request. Statements never force: "See you tomorrow!", "Thanks for
+/// your help today!", "Not right now, thanks", "I had a bad day today,
+/// can we talk?" all lack every stem below (panel 2026-08-12 — each of
+/// those was a confirmed junk fire when temporal-alone decided by
+/// itself). Broad single words like "is"/"was"/"wie" are safe HERE
+/// because this list is only consulted after a temporal/year signal
+/// already matched.
+const REQUEST_SHAPE: &[&str] = &[
+    "what", "whats", "which", "where", "when", "who", "whos", "why is",
+    "how much", "how many", "how long", "how late", "how warm", "how cold",
+    "how expensive", "is", "are", "does", "do", "can you find",
+    "can you check", "can you search", "can you look", "find", "search",
+    "look up", "check", "show me", "list", "best", "top", "cheapest",
+    "any", "recommend", "compare", "available", "open",
+    "was", "wo", "wann", "wer", "wie viel", "wieviel", "wie lange",
+    "wie teuer", "welche", "welcher", "welches", "gibt es", "gibts",
+    "ist", "sind", "hat", "haben", "kann man", "such", "suche", "finde",
+    "zeig mir", "empfiehl", "günstigste", "guenstigste", "beste", "besten",
+];
+
+/// Live-by-construction phrases that need no temporal word at all
+/// (panel false-misses): release dates and opening status are always
+/// about now or the future.
+const RELEASE_STEM: &[&str] = &[
+    "come out", "comes out", "coming out", "release date", "releases",
+    "kommt raus", "erscheint", "erscheinungsdatum", "wann kommt",
+];
+const OPEN_NOW: &[&str] = &[
+    "still open", "open now", "open today", "open tonight", "open right now",
+    "noch offen", "noch auf", "noch geöffnet", "noch geoeffnet", "offen heute",
+];
+
+/// "Who is the king in The Lion King?" — a role question about fiction
+/// (panel 2026-08-12). Applied to the WHO+ROLE path only.
+const FICTION_VETO: &[&str] = &[
+    "in the movie", "in the film", "in the book", "in the story",
+    "in the show", "in the series", "im film", "im buch", "in der serie",
+    "in der geschichte", "im märchen", "im maerchen",
+];
+
+/// Arithmetic context around a number: "Is 2027 a prime number?" and
+/// "Was ist 2026 mal 4?" are homework, not calendar references
+/// (panel 2026-08-12). Consulted by the year rule only, so common words
+/// like German "mal" cannot suppress anything else.
+const MATH_CONTEXT: &[&str] = &[
+    "prime", "primzahl", "divided", "divide", "geteilt", "teilbar",
+    "multiply", "multiplied", "times", "plus", "minus", "squared",
+    "square root", "wurzel", "quersumme", "mal", "even number", "odd number",
+];
+
+/// A year token at or after the current year ("world cup 2026",
+/// "olympics 2028", "die 2026er Steuerreform") anchors the question to
+/// the present or future exactly like a deictic word does.
+///
+/// Guardrails, each from a confirmed panel finding:
+///  * window is current year .. +10 — "RTX 2070" and "Cyberpunk 2077"
+///    are products, not plans for the 2070s;
+///  * two or more standalone numbers = arithmetic ("Was ist 2026 mal 4?"),
+///    as is any MATH_CONTEXT word ("Is 2027 a prime number?");
+///  * past years stay historical ("population of Rome in 1950");
+///  * "2026er" (German adjectival year) counts.
+fn has_current_or_future_year(norm: &str) -> bool {
+    let this_year = chrono::Local::now().format("%Y").to_string();
+    let Ok(this_year) = this_year.parse::<u32>() else {
+        return false;
+    };
+    if any(norm, MATH_CONTEXT) {
+        return false;
+    }
+    let number_tokens = norm
+        .split_whitespace()
+        .filter(|t| t.chars().all(|c| c.is_ascii_digit()))
+        .count();
+    if number_tokens >= 2 {
+        return false;
+    }
+    let year_of = |tok: &str| -> Option<u32> {
+        let digits = if tok.len() == 4 && tok.chars().all(|c| c.is_ascii_digit()) {
+            tok
+        } else if tok.len() == 6 && tok.ends_with("er") {
+            &tok[..4]
+        } else {
+            return None;
+        };
+        digits.parse::<u32>().ok()
+    };
+    norm.split_whitespace().any(|tok| {
+        year_of(tok).is_some_and(|y| y >= this_year && y <= this_year + 10)
+    })
+}
 
 /// The user's typed prose, with attachment text removed.
 ///
@@ -190,11 +391,28 @@ pub fn needs_live_data(question: &str) -> bool {
     if words == 0 || question.trim_start().starts_with('/') {
         return false;
     }
-    // Vetoes first — each of these contains signals that would otherwise fire.
+    // Creative framing wins over everything, including STRONG — the
+    // panel's "bedtime story about who won the dragon race" fired via
+    // "who won" until this moved ahead of it.
+    if any(&q, CREATIVE_VETO) {
+        return false;
+    }
+    // Conversation-meta and pure clock/date questions never search.
     if any(&q, META) || any(&q, DATETIME_ONLY) {
         return false;
     }
-    if any(&q, STRONG) || (any(&q, WHO_STEM) && any(&q, ROLE_NOUN)) {
+    if any(&q, STRONG) || (any(&q, WHO_STEM) && any(&q, ROLE_NOUN) && !any(&q, FICTION_VETO)) {
+        return true;
+    }
+    // A bare "news?" / "any news?" with nothing else IS a headline
+    // request — the personal-news problem ("any news from Oma?") only
+    // exists once more words follow.
+    if matches!(q.trim(), "news" | "any news" | "the news" | "nachrichten") {
+        return true;
+    }
+    // Release dates and opening status are about now/future by
+    // construction, no temporal word needed.
+    if any(&q, RELEASE_STEM) || any(&q, OPEN_NOW) {
         return true;
     }
     if words < 2 {
@@ -208,10 +426,32 @@ pub fn needs_live_data(question: &str) -> bool {
     //   topic + temporal  "weather today", "news today"
     //   value + temporal  "the price right now"
     //   event + temporal  "what happened today"
-    (value && topic)
+    if (value && topic)
         || (topic && temporal)
         || (value && temporal)
         || (any(&q, EVENT_STEM) && temporal)
+    {
+        return true;
+    }
+    // Owner rule (Wolf, 2026-08-12), after "best flights this week to
+    // Belize" fell through the two-signal net: a deictic present/future
+    // phrase — or a current/future year — forces a search WITHOUT a
+    // second subject signal. Three containment walls, each one a class
+    // of confirmed junk fire from the 2026-08-12 adversarial panel:
+    //   REQUEST_SHAPE   statements never force ("See you tomorrow!")
+    //   SMALLTALK_VETO  greetings/thanks with a question shape
+    //                   ("How was your day today?", "Guten Morgen, wie
+    //                   hast du geschlafen?")
+    //   TASK_VETO       reminder/calendar/homework asks, where forcing
+    //                   web_search-only would hide the right tool
+    // The year path skips the shape gate: "olympics 2028 host city" is a
+    // terse noun-phrase query with no stem, and the year fn already
+    // filters math/product numbers. Statements with future years ("See
+    // you in 2027!") are caught by the smalltalk veto or accepted as the
+    // rare over-fire the owner prefers to a miss.
+    let anchored = (any(&q, TEMPORAL_ALONE) && any(&q, REQUEST_SHAPE))
+        || has_current_or_future_year(&q);
+    anchored && !any(&q, SMALLTALK_VETO) && !any(&q, TASK_VETO)
 }
 
 /// Phrasings of "I have no web access" seen in the field, across both
@@ -289,6 +529,105 @@ mod tests {
         }
     }
 
+    /// Owner rule (2026-08-12): a deictic present/future phrase alone, or a
+    /// current/future year, forces a search — on information requests.
+    /// Includes every confirmed false-MISS from the 2026-08-12 adversarial
+    /// panel (36 agents, 32 confirmed findings).
+    #[test]
+    fn temporal_alone_and_future_years_force_a_search() {
+        for q in [
+            // The two field failures that motivated the rule.
+            "Can you find the best flights this week to Belize?",
+            "Who is the winner of the soccer world cup 2026?",
+            // Travel topics count for the two-signal paths now.
+            "how much are flights to Belize",
+            "best hotel prices in San Pedro",
+            // Deictic-alone information requests.
+            "what movies are playing this weekend",
+            "are there any events in Miami tomorrow",
+            "what should I do this weekend in Miami",
+            "What should we cook for dinner tonight?", // owner-accepted flip
+            // Current/future years (window: this year .. +10).
+            "olympics 2028 host city",
+            "Wer hat die WM 2026 gewonnen?",
+            "Steuerfristen 2026",
+            "Was ändert sich mit der 2026er Steuerreform?", // adjectival year
+            // German deictic-alone.
+            "Welche Filme laufen diese Woche?",
+            "Was ist morgen in Miami los?",
+            "Was ist am Wochenende in Miami los?",
+            // Panel false-misses, now covered.
+            "What time does the game start today?",   // DATETIME_ONLY was too greedy
+            "What time does the DMV open today?",
+            "What's the weather on Friday?",           // weekdays are temporal
+            "When does the new iPhone come out?",      // release stem
+            "Is the store still open?",                // open-now stem
+            "What's the temperature outside?",
+            "Did the Dolphins win last night?",
+            "Is our flight on time?",
+            "Was sind die neuesten Nachrichten?",
+            "Was gibt's Neues?",
+            "What did I miss in the news today?",      // META was too greedy
+            "What would you say the bitcoin price is today?",
+        ] {
+            assert!(needs_live_data(q), "should force a search: {q:?}");
+        }
+    }
+
+    /// Every confirmed false-FIRE from the 2026-08-12 adversarial panel.
+    /// Statements, smalltalk, creative asks, task-tool requests, math on
+    /// year-sized numbers, and product numbers must never burn a search.
+    #[test]
+    fn panel_false_fires_stay_silent() {
+        for q in [
+            // Statements and deferrals -- no REQUEST_SHAPE stem.
+            "Not right now, thanks",
+            "See you tomorrow!",
+            "Thanks for your help today!",
+            "I had a bad day today, can we talk?",
+            "I recently started piano lessons, any tips?",
+            // Greeting class, including question-shaped variants.
+            "How are you today?",
+            "How was your day today?",
+            "Wie war dein Tag heute?",
+            "Was kannst du heute für mich tun?",
+            "Guten Morgen!",
+            "Guten Morgen, wie hast du geschlafen?",
+            "Bis morgen!",
+            "Danke, bis morgen",
+            // Creative asks, third-person included.
+            "Can you tell Emma a story tonight?",
+            "tell me a bedtime story tonight",
+            "write a poem about today",
+            "generate a picture of a sunset tomorrow evening",
+            "Schreibe ein Gedicht über heute",
+            "Erzähl mir eine Gutenachtgeschichte für heute Abend",
+            "Mal mir ein Bild von einem Einhorn für morgen",
+            // Quiz / homework, both languages.
+            "I have a math test this week, can you quiz me",
+            "Ich habe morgen einen Mathetest, kannst du mich abfragen?",
+            "Kannst du mir bei den Hausaufgaben für heute helfen?",
+            // Task-tool requests -- forcing web_search would hide the right tool.
+            "Can you remind me to call grandma tomorrow?",
+            "Ist die Einkaufsliste noch aktuell?",
+            "Ist der Termin morgen noch aktuell?",
+            // Year-sized numbers that are not years.
+            "Is 2027 a prime number?",
+            "Was ist 2026 mal 4?",
+            "Was ist 2048 mal 2?",
+            "Is the RTX 2070 good enough for Fortnite?",
+            "how do I beat the final boss in Cyberpunk 2077",
+            // Personal news is not headlines.
+            "Any news from Oma?",
+            "I told my husband the news that I'm pregnant!",
+            // Past years stay historical.
+            "what was the population of Rome in 1950",
+            "the treaty was signed in 1998",
+        ] {
+            assert!(!needs_live_data(q), "must NOT force a search: {q:?}");
+        }
+    }
+
     /// Every string here was found by an adversarial review of the first
     /// version, which matched raw substrings and fired on all of them.
     #[test]
@@ -310,9 +649,11 @@ mod tests {
             "Ist 7 eine gerade Zahl?",
             "Zeichne eine gerade Linie",
             "Ich habe einen Yoga Kurs gebucht",
-            // Temporal word, nothing to look up.
+            // Temporal word in smalltalk / quiz framing.
+            // NOTE: "What should we cook for dinner tonight?" used to sit
+            // here and now deliberately DOES force — owner rule 2026-08-12
+            // says deictic-now questions get live results.
             "How are you today?",
-            "What should we cook for dinner tonight?",
             "I have a math test this week, can you quiz me",
             "good news! I passed my exam",
             // Definitional / timeless.
