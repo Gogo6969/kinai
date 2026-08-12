@@ -1,19 +1,19 @@
 {
-  "generated_at": "2026-08-12T19:20:08+00:00",
-  "version": "0.2.97",
+  "generated_at": "2026-08-12T19:41:23+00:00",
+  "version": "0.2.98",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 219,
-    "head": "a0c3609"
+    "commits": 221,
+    "head": "fd57fca"
   },
   "totals": {
     "rust_files": 60,
-    "rust_lines": 24148,
+    "rust_lines": 24286,
     "frontend_files": 33,
-    "frontend_lines": 11867,
-    "unit_tests": 163,
+    "frontend_lines": 11868,
+    "unit_tests": 165,
     "integration_test_files": 12,
     "releases": 90,
     "tags": 84
@@ -332,9 +332,9 @@
     {
       "path": "src/network/vpn_hint.rs",
       "area": "network",
-      "lines": 433,
+      "lines": 571,
       "doc": "\"Your VPN is eating the connection\" detection.",
-      "tests": 11
+      "tests": 13
     },
     {
       "path": "src/slash.rs",
@@ -694,7 +694,7 @@
     {
       "path": "frontend/src/routes/setup/+page.svelte",
       "kind": "route",
-      "lines": 1134,
+      "lines": 1135,
       "doc": "First-run host setup wizard — the implementation of the approved step-by-step mockup. Design contract: * Splash first; once setup completes (or is skipped) the `setup_completed` config flag guarantees neither splash nor wizard ever appears again (root +page.svelte gates on it). * EVERY step except the role fork and Finish is skippable; each step spells out the consequence of skipping and where to "
     }
   ],
@@ -1061,7 +1061,7 @@
   },
   "history": [
     {
-      "version": "0.2.97",
+      "version": "0.2.98",
       "date": "2026-08-12",
       "sections": {
         "Changed": [
