@@ -7,6 +7,7 @@ pub mod protocol;
 pub mod ratelimit;
 pub mod server;
 pub mod updates;
+pub mod vpn_hint;
 
 use std::collections::HashMap;
 use std::sync::Arc;

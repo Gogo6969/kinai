@@ -124,7 +124,14 @@ pub async fn connect(
     let (ws, _) = match tokio_tungstenite::connect_async(&url_for_ws).await {
         Ok(v) => v,
         Err(e) => {
-            let msg = format!("Couldn't reach the KinAI host at {url}: {e}");
+            // A LAN address that times out is very often a VPN with its
+            // kill switch on — the packets are dropped, so the error is a
+            // bare timeout with no clue why. Ask the OS and, if a tunnel
+            // is involved, tell the user what to actually change.
+            let mut msg = format!("Couldn't reach the KinAI host at {url}: {e}");
+            if let Some(hint) = super::vpn_hint::lan_vpn_hint(&url_for_ws).await {
+                msg.push_str(&hint);
+            }
             tracing::warn!("{msg}");
             {
                 let mut stats = state.stats.write();
