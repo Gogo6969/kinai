@@ -118,14 +118,51 @@ Telegram-only member has no key, so their facts stay host-readable (see
 the Telegram carve-out) — and that should be stated in the UI rather
 than glossed over.
 
-## 5. Decisions required before implementation
+## 5. Decisions taken
 
-1. **Person or device?** Today a peer *is* a device: the invites are
-   `Quentin`, `Kris`, `Rafael`, `Family device`. Per-device keys are
-   simplest but give one person two disjoint histories across laptop and
-   phone. Per-person keys mean the key must reach a second device — the
-   existing invite/QR flow can carry it. **Recommendation: per person**,
-   with the invite carrying the key.
+**Encryption is opt-in, per person** (Wolf, 2026-08-12). On first
+start of the new version each family member is asked once:
+
+* **Set a password** → their conversations, summaries and remembered
+  facts are sealed; nobody, including the host owner, can read them at
+  rest.
+* **Skip it** → everything is stored as it is today, readable on the
+  family computer.
+
+Rationale: not everyone wants this. Wolf's wife would decline, and
+forcing a password on someone who does not care about it buys nothing
+and costs support calls. A mixed household is expected and supported —
+the database will hold plaintext rows for some peers and sealed rows for
+others.
+
+Consequences to build:
+
+* A per-peer `encrypted` flag, set at that first prompt.
+* The host UI must show which members are sealed and which are not, so
+  the host owner is never confused about what he can and cannot see, and
+  so the promise made to each person is visible rather than assumed.
+* Turning it **on later** must be possible: the client holds the key, so
+  it can re-seal its own existing history. Turning it **off** likewise.
+* Copy at the prompt has to be plain: "If you set a password, nobody —
+  not even the family computer's owner — can read your chats. If you
+  skip it, your chats are stored readable on the family computer."
+
+**Keys are per person, not per device.** A person's laptop and phone
+share one identity and one history.
+
+**Key recovery — three layers, none of which put the key on the host:**
+
+1. **A password they choose** (default). The key is derived from it; a
+   sealed copy sits on the host so any new device can fetch and unlock
+   it. Trivial passwords must be refused — the sealed copy is offline-
+   guessable by anyone holding the database.
+2. **Another of their own paired devices.** A new laptop is paired from
+   the phone that already holds the key. This is the route most people
+   will actually use when a machine dies.
+3. **A printed recovery phrase**, offered and optional, for anyone who
+   wants a backup that depends on nothing else.
+
+## 5b. Still open
 2. **Recovery.** Lose the key, lose the history. Offer a recovery phrase
    at pairing, or accept the loss and say so plainly in the UI.
 3. **Migration of the 2,291 existing messages.** Either (a) each client,
