@@ -55,7 +55,21 @@ and "published".
 - [ ] Relaunch host: `pkill -x kinai; sleep 2; open -a /Applications/KinAI.app`.
 - [ ] Window renders (no blank window, no asset errors) — look at it.
 - [ ] Host is listening: `lsof -nP -iTCP:4847 -sTCP:LISTEN`.
-- [ ] Send one test message on `fast` in the host app and get an answer.
+- [ ] **Test EVERY configured model slot, not just `fast`.** Send one
+      real message on each of `/fast`, `/balanced`, `/deep` and
+      `/online` (skip only the slots that are genuinely unconfigured)
+      and get an answer on each. Then send **one live-data question**
+      (e.g. "what are the top 10 holdings in QQQ today?") on every slot
+      that is configured, because that path differs: it forces a web
+      search, and forcing is the part providers disagree about.
+
+      Wolf's rule, 2026-08-12, after 0.2.98 shipped with `/online`
+      broken for exactly this: the forced-search round sends
+      `tool_choice: "required"`, which llama.cpp and vLLM honour and
+      DeepSeek's thinking mode rejects with a 400. Every live-data
+      question on `/online` failed, and testing `fast` alone could never
+      have found it — the slots run against different providers, so one
+      slot answering proves nothing about the others.
 - [ ] Staged client bundle matches the build:
       `shasum -a 256 ~/.kinai/updates/<ver>/darwin-aarch64/KinAI.app.tar.gz`
       == `shasum -a 256 target/release/bundle/macos/KinAI.app.tar.gz`.

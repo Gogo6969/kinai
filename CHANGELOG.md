@@ -5,6 +5,18 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.99] — 2026-08-12
+
+### Fixed
+
+- **"Look it up for today" now works on the Online model.** Asking the
+  online model anything that needs fresh information — today's numbers,
+  this week's news — came back as a raw error instead of an answer.
+  KinAI was insisting the model use its web search, in a way DeepSeek's
+  thinking mode refuses outright. It now asks rather than insists, and
+  the model searches anyway, so the answer arrives as it should. Only
+  the Online slot was affected; the models running at home were fine.
+
 ## [0.2.98] — 2026-08-12
 
 *(0.2.97 was never released: a build carrying that number had already been
