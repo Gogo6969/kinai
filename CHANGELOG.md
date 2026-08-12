@@ -5,7 +5,12 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.97] — 2026-08-12
+## [0.2.98] — 2026-08-12
+
+*(0.2.97 was never released: a build carrying that number had already been
+installed on this machine and served to Apple-silicon clients, and the
+updater never re-offers a version it has already installed. Per the
+release checklist's amendment rule the fixes ship under a new number.)*
 
 ### Changed
 

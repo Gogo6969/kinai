@@ -13,6 +13,7 @@
   //     prominent "KinAI can't answer yet" warning with the exact fix path.
   import { api, events, type DetectedBackend, type Invite } from '$lib/api';
   import { byPlatform } from '$lib/platform';
+  import { displayModelName } from '$lib/modelName';
   import { app } from '$lib/stores/app.svelte';
   import Logo from '$lib/components/Logo.svelte';
   import QRCode from 'qrcode';
@@ -705,7 +706,7 @@
                   <span class="text-sm text-white/70">Model</span>
                   {#if modelOptions.length}
                     <select class="kin-field mt-1 font-mono" bind:value={model}>
-                      {#each modelOptions as m}<option value={m}>{m}</option>{/each}
+                      {#each modelOptions as m}<option value={m}>{displayModelName(m)}</option>{/each}
                     </select>
                   {:else}
                     <input class="kin-field mt-1 font-mono" bind:value={model} placeholder="e.g. llama3.1:8b" />

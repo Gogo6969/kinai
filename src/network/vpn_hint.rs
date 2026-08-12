@@ -29,31 +29,55 @@ use std::time::Duration;
 /// failed connection, so it must not add a noticeable pause.
 const ROUTE_QUERY_BUDGET: Duration = Duration::from_millis(1500);
 
-/// Interface-name fragments that mean "virtual tunnel".
-///
-/// Matched case-insensitively against the interface the OS says it would
-/// use. Covers the WireGuard/OpenVPN family (`wg0-mullvad`, `tun0`,
-/// `proton0`, `nordlynx`), macOS's `utun*`, Windows adapter aliases that
-/// carry the vendor name, and mesh VPNs (Tailscale, ZeroTier).
-const TUNNEL_MARKERS: &[&str] = &[
-    "wg", "tun", "tap", "ppp", "ipsec", "utun", "mullvad", "proton",
-    "nord", "expressvpn", "surfshark", "wireguard", "openvpn",
-    "tailscale", "zerotier", "zt", "vpn",
+/// Interface names that identify a VPN by vendor. Substring match —
+/// these are unambiguous wherever they appear.
+const VENDOR_MARKERS: &[&str] = &[
+    "mullvad", "proton", "nordlynx", "expressvpn", "surfshark",
+    "wireguard", "openvpn", "tailscale", "zerotier", "vpn",
 ];
+
+/// Generic tunnel prefixes. Matched as a PREFIX followed by a digit or a
+/// dash — not `contains` — so real hardware keeps its name: an earlier
+/// version matched "tun" anywhere and "zt" as a substring, which turned
+/// `ztest0` into a VPN. `ppp` is deliberately absent: `ppp0` is a DSL
+/// user's actual internet connection, not a tunnel.
+const TUNNEL_PREFIXES: &[&str] = &["wg", "utun", "tun", "tap", "ipsec", "zt"];
 
 fn is_tunnel_interface(name: &str) -> bool {
     let n = name.trim().to_ascii_lowercase();
     if n.is_empty() {
         return false;
     }
-    // Guard the obvious physical names first: "wg" would otherwise match
-    // nothing real, but "tun" is a substring of nothing common while
-    // "zt"/"vpn" are short enough to want a sanity check.
-    const PHYSICAL: &[&str] = &["eth", "en", "wl", "wlan", "wifi", "ethernet", "lo", "br", "docker"];
-    if PHYSICAL.iter().any(|p| n == *p) {
+    if VENDOR_MARKERS.iter().any(|m| n.contains(m)) {
+        return true;
+    }
+    TUNNEL_PREFIXES.iter().any(|p| {
+        n.strip_prefix(p).is_some_and(|rest| {
+            rest.is_empty()
+                || rest.starts_with('-')
+                || rest.chars().next().is_some_and(|c| c.is_ascii_digit())
+        })
+    })
+}
+
+/// An address that can actually carry traffic somewhere.
+///
+/// THE macOS DISCRIMINATOR. Every stock Mac runs utun0–utun3 for
+/// Continuity, AWDL, Handoff and Private Relay with no VPN installed at
+/// all, and they hold nothing but an `fe80::` link-local address. A real
+/// VPN tunnel is assigned a routable address (Mullvad handed the Fedora
+/// box 10.160.125.87). Without this test the hint fired on every Mac,
+/// every time, for any connection failure — verified on this machine.
+pub(crate) fn is_routable_addr(addr: &str) -> bool {
+    let a = addr.trim().to_ascii_lowercase();
+    if a.is_empty() {
         return false;
     }
-    TUNNEL_MARKERS.iter().any(|m| n.contains(m))
+    !(a.starts_with("fe80")
+        || a.starts_with("169.254")
+        || a.starts_with("127.")
+        || a == "::1"
+        || a.starts_with("0."))
 }
 
 /// The address KinAI is trying to reach, if the URL names a literal IP.
@@ -154,6 +178,8 @@ Select-Object -First 1 -ExpandProperty InterfaceAlias)"
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     let mut cmd = tokio::process::Command::new("true");
 
+    cmd.kill_on_drop(true);
+    hide_console(&mut cmd);
     let out = tokio::time::timeout(ROUTE_QUERY_BUDGET, cmd.output())
         .await
         .ok()?
@@ -196,81 +222,149 @@ enabled, and turn it off to reach devices at home."
     }
 }
 
-/// Tunnel interfaces that are currently UP on this machine.
+/// Tunnel interfaces that are up AND carry a routable address.
 ///
 /// Checked in addition to the route, because the route table alone is
 /// NOT sufficient: a VPN kill switch filters packets AFTER the routing
 /// decision. On the 2026-08-12 Fedora case `ip route get 192.168.1.56`
-/// correctly reported `dev enp3s0` — the on-link subnet route — while
-/// Mullvad's firewall silently dropped the packets anyway. Routing
-/// looked innocent; the connection still timed out.
-async fn active_tunnel_interfaces() -> Vec<String> {
+/// correctly reported `dev enp3s0` while Mullvad silently dropped the
+/// packets anyway.
+///
+/// The routable-address requirement is what keeps this honest on macOS,
+/// where utun0–utun3 always exist for Continuity/Private Relay.
+async fn active_vpn_tunnels() -> Vec<String> {
     let mut cmd = if cfg!(target_os = "windows") {
         let mut c = tokio::process::Command::new("powershell");
         c.args([
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            "(Get-NetAdapter | Where-Object Status -eq 'Up').Name",
+            "Get-NetIPAddress | Where-Object { $_.AddressState -eq 'Preferred' } | ForEach-Object { \"$($_.InterfaceAlias)\t$($_.IPAddress)\" }",
         ]);
         c
-    } else {
-        // `ip -o link` on Linux, `ifconfig -l` on macOS — both list the
-        // interface names; we only need the names, not their state
-        // details, and a down tunnel simply won't be listed by `ip`.
-        let mut c = if cfg!(target_os = "linux") {
-            let mut c = tokio::process::Command::new("ip");
-            c.args(["-o", "link", "show", "up"]);
-            c
-        } else {
-            let mut c = tokio::process::Command::new("ifconfig");
-            c.arg("-lu");
-            c
-        };
-        c.kill_on_drop(true);
+    } else if cfg!(target_os = "linux") {
+        let mut c = tokio::process::Command::new("ip");
+        c.args(["-o", "addr", "show", "up"]);
         c
+    } else {
+        // macOS: full ifconfig, so each interface block carries its
+        // addresses and we can tell a real tunnel from a Continuity one.
+        tokio::process::Command::new("ifconfig")
     };
+    cmd.kill_on_drop(true);
+    hide_console(&mut cmd);
 
     let Ok(Ok(out)) = tokio::time::timeout(ROUTE_QUERY_BUDGET, cmd.output()).await else {
         return Vec::new();
     };
     let text = String::from_utf8_lossy(&out.stdout);
-    parse_interface_names(&text)
+
+    let pairs = if cfg!(target_os = "windows") {
+        parse_windows_addrs(&text)
+    } else if cfg!(target_os = "linux") {
+        parse_linux_addrs(&text)
+    } else {
+        parse_macos_ifconfig(&text)
+    };
+
+    pairs
         .into_iter()
-        .filter(|n| is_tunnel_interface(n))
+        .filter(|(name, routable)| *routable && is_tunnel_interface(name))
+        .map(|(name, _)| name)
         .collect()
 }
 
-/// Interface names out of any of the three listing formats.
+/// `ip -o addr show up` → (interface, has-routable-address).
 ///
-///   Linux   `ip -o link show up` → "3: enp3s0: <BROADCAST,UP,...> mtu 1500 …"
-///   macOS   `ifconfig -lu`       → "lo0 en0 utun0 utun4"
-///   Windows adapter names        → one per line
-pub(crate) fn parse_interface_names(out: &str) -> Vec<String> {
-    let mut names = Vec::new();
+/// `7: wg0-mullvad    inet 10.160.125.87/32 scope global ...`
+pub(crate) fn parse_linux_addrs(out: &str) -> Vec<(String, bool)> {
+    let mut seen: Vec<(String, bool)> = Vec::new();
     for line in out.lines() {
-        let line = line.trim();
-        if line.is_empty() {
+        let mut it = line.split_whitespace();
+        let Some(_idx) = it.next() else { continue };
+        let Some(name) = it.next() else { continue };
+        let name = name.trim_end_matches(':').split('@').next().unwrap_or("").to_string();
+        if name.is_empty() {
             continue;
         }
-        let mut parts = line.splitn(3, ':');
-        let head = parts.next().unwrap_or("").trim();
-        // Linux form: a numeric interface index before the name.
-        if !head.is_empty() && head.chars().all(|c| c.is_ascii_digit()) {
-            if let Some(name) = parts.next() {
-                // "wg0-mullvad" or "eth0@if12" — keep the part before '@'.
-                let name = name.trim().split('@').next().unwrap_or("").trim();
+        let routable = match (it.next(), it.next()) {
+            (Some(fam), Some(addr)) if fam == "inet" || fam == "inet6" => {
+                is_routable_addr(addr.split('/').next().unwrap_or(""))
+            }
+            _ => false,
+        };
+        match seen.iter_mut().find(|(n, _)| *n == name) {
+            Some(entry) => entry.1 |= routable,
+            None => seen.push((name, routable)),
+        }
+    }
+    seen
+}
+
+/// Full `ifconfig` output (macOS) → (interface, has-routable-address).
+pub(crate) fn parse_macos_ifconfig(out: &str) -> Vec<(String, bool)> {
+    let mut seen: Vec<(String, bool)> = Vec::new();
+    let mut current: Option<String> = None;
+    for line in out.lines() {
+        if !line.starts_with([' ', '\t']) {
+            // "utun3: flags=8051<UP,...> mtu 1500"
+            if let Some((name, _)) = line.split_once(':') {
+                let name = name.trim().to_string();
                 if !name.is_empty() {
-                    names.push(name.to_string());
+                    seen.push((name.clone(), false));
+                    current = Some(name);
                 }
-                continue;
+            }
+            continue;
+        }
+        let t = line.trim();
+        let addr = t
+            .strip_prefix("inet ")
+            .or_else(|| t.strip_prefix("inet6 "))
+            .and_then(|rest| rest.split_whitespace().next())
+            .map(|a| a.split('%').next().unwrap_or(a));
+        if let (Some(addr), Some(name)) = (addr, current.as_ref()) {
+            if is_routable_addr(addr) {
+                if let Some(e) = seen.iter_mut().find(|(n, _)| n == name) {
+                    e.1 = true;
+                }
             }
         }
-        // macOS lists them all on one line; Windows one per line.
-        names.extend(line.split_whitespace().map(str::to_string));
     }
-    names
+    seen
 }
+
+/// PowerShell "alias<TAB>address" lines → (interface, has-routable-address).
+/// Tab-separated on purpose: Windows adapter aliases contain spaces
+/// ("Ethernet 2"), and splitting on whitespace shredded them.
+pub(crate) fn parse_windows_addrs(out: &str) -> Vec<(String, bool)> {
+    let mut seen: Vec<(String, bool)> = Vec::new();
+    for line in out.lines() {
+        let Some((name, addr)) = line.trim_end_matches('\r').split_once('\t') else { continue };
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let routable = is_routable_addr(addr);
+        match seen.iter_mut().find(|(n, _)| *n == name) {
+            Some(e) => e.1 |= routable,
+            None => seen.push((name, routable)),
+        }
+    }
+    seen
+}
+
+/// Release builds are GUI-subsystem on Windows, so spawning a console
+/// program pops a black console window. Two of them, on every reconnect
+/// attempt, forever, for a family whose host is simply switched off.
+#[cfg(target_os = "windows")]
+fn hide_console(cmd: &mut tokio::process::Command) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    cmd.creation_flags(CREATE_NO_WINDOW);
+}
+#[cfg(not(target_os = "windows"))]
+fn hide_console(_cmd: &mut tokio::process::Command) {}
 
 /// The sentence to append to a failed-connection error, when a VPN is
 /// the likely reason. `None` when the address isn't local, or no VPN is
@@ -296,7 +390,7 @@ local devices by default. {}",
     // Weaker but just as common: routing is fine and the VPN's kill
     // switch drops the packets anyway. Only worth saying when a tunnel
     // is actually up — otherwise we would blame a VPN nobody is running.
-    let tunnels = active_tunnel_interfaces().await;
+    let tunnels = active_vpn_tunnels().await;
     let iface = tunnels.first()?;
     Some(format!(
         "\n\nA VPN is running on this computer (\"{iface}\"), and KinAI could not reach \
@@ -380,53 +474,97 @@ mod tests {
     }
 }
 
+
 #[cfg(test)]
-mod interface_list_tests {
+mod interface_tests {
     use super::*;
 
+    /// THE regression this module exists to avoid shipping: a stock Mac
+    /// with no VPN. utun0–utun3 are always up for Continuity/Private
+    /// Relay and carry only link-local addresses. Verbatim `ifconfig`
+    /// shape from the machine that reproduced the false positive.
     #[test]
-    fn parses_linux_ip_link_output() {
-        // Real `ip -o link show up` shape, including the Mullvad tunnel.
-        let out = "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN\n\
-3: enp3s0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UP\n\
-7: wg0-mullvad: <POINTOPOINT,NOARP,UP,LOWER_UP> mtu 1305 qdisc noqueue state UNKNOWN\n";
-        let names = parse_interface_names(out);
-        assert!(names.contains(&"enp3s0".to_string()), "got {names:?}");
-        assert!(names.contains(&"wg0-mullvad".to_string()), "got {names:?}");
-        let tunnels: Vec<_> = names.iter().filter(|n| is_tunnel_interface(n)).collect();
-        assert_eq!(tunnels, vec![&"wg0-mullvad".to_string()]);
-    }
-
-    #[test]
-    fn parses_macos_ifconfig_list() {
-        let names = parse_interface_names("lo0 gif0 stf0 en0 utun0 utun4\n");
-        assert!(names.contains(&"en0".to_string()));
-        assert!(names.iter().filter(|n| is_tunnel_interface(n)).count() == 2);
-    }
-
-    #[test]
-    fn parses_windows_adapter_names() {
-        let names = parse_interface_names("Ethernet\r\nWi-Fi\r\nMullvad\r\n");
-        assert!(names.contains(&"Mullvad".to_string()), "got {names:?}");
-        assert!(!is_tunnel_interface("Ethernet"));
-    }
-
-    /// The exact 2026-08-12 situation: the route to the host is the
-    /// ordinary ethernet link (so the route check alone finds nothing),
-    /// yet Mullvad is up and its kill switch is dropping LAN packets.
-    #[test]
-    fn kill_switch_case_is_still_detected_via_active_tunnels() {
-        let route = "192.168.1.56 dev enp3s0 src 192.168.1.218 uid 1000\n    cache\n";
-        let routed = parse_linux_route(route).unwrap();
-        assert!(!is_tunnel_interface(&routed), "route looks innocent — that is the trap");
-
-        let links = "3: enp3s0: <UP> mtu 1500\n7: wg0-mullvad: <UP> mtu 1305\n";
-        let tunnels: Vec<_> = parse_interface_names(links)
+    fn stock_mac_without_a_vpn_reports_no_tunnel() {
+        let out = "\
+en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500\n\
+\tinet 192.168.1.56 netmask 0xffffff00 broadcast 192.168.1.255\n\
+utun0: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1500\n\
+\tinet6 fe80::ce81:b1c:bd2c:69e%utun0 prefixlen 64 scopeid 0x10\n\
+utun3: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1000\n\
+\tinet6 fe80::5a1b:2ff:fe00:1%utun3 prefixlen 64 scopeid 0x13\n";
+        let vpns: Vec<_> = parse_macos_ifconfig(out)
             .into_iter()
-            .filter(|n| is_tunnel_interface(n))
+            .filter(|(n, routable)| *routable && is_tunnel_interface(n))
             .collect();
-        assert_eq!(tunnels, vec!["wg0-mullvad".to_string()],
-            "an active tunnel must still be found when routing looks fine");
-        assert!(how_to_fix(&tunnels[0]).contains("mullvad lan set allow"));
+        assert!(vpns.is_empty(), "a Mac with no VPN must report none, got {vpns:?}");
+    }
+
+    /// A real VPN on macOS: the tunnel carries a routable address.
+    #[test]
+    fn a_real_macos_vpn_is_still_detected() {
+        let out = "\
+en0: flags=8863<UP,BROADCAST,RUNNING> mtu 1500\n\
+\tinet 192.168.1.56 netmask 0xffffff00\n\
+utun4: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1280\n\
+\tinet 10.64.0.2 --> 10.64.0.2 netmask 0xffffffff\n";
+        let vpns: Vec<_> = parse_macos_ifconfig(out)
+            .into_iter()
+            .filter(|(n, r)| *r && is_tunnel_interface(n))
+            .map(|(n, _)| n)
+            .collect();
+        assert_eq!(vpns, vec!["utun4".to_string()]);
+    }
+
+    /// The Fedora case, end to end: routing looks innocent, Mullvad is
+    /// up with a routable address, so check 2 must catch it.
+    #[test]
+    fn mullvad_kill_switch_case_is_detected() {
+        let route = "192.168.1.56 dev enp3s0 src 192.168.1.218 uid 1000\n    cache\n";
+        assert!(!is_tunnel_interface(&parse_linux_route(route).unwrap()));
+
+        let addrs = "\
+3: enp3s0    inet 192.168.1.218/24 brd 192.168.1.255 scope global dynamic enp3s0\\       valid_lft 6000sec\n\
+7: wg0-mullvad    inet 10.160.125.87/32 scope global wg0-mullvad\\       valid_lft forever\n";
+        let vpns: Vec<_> = parse_linux_addrs(addrs)
+            .into_iter()
+            .filter(|(n, r)| *r && is_tunnel_interface(n))
+            .map(|(n, _)| n)
+            .collect();
+        assert_eq!(vpns, vec!["wg0-mullvad".to_string()]);
+        assert!(how_to_fix("wg0-mullvad").contains("mullvad lan set allow"));
+    }
+
+    #[test]
+    fn real_hardware_is_never_called_a_vpn() {
+        for name in ["en0", "eth0", "enp3s0", "wlan0", "Ethernet", "Ethernet 2", "Wi-Fi",
+                     "bridge0", "lo0", "docker0", "ppp0", "ztest0", "anpi0", "llw0"] {
+            assert!(!is_tunnel_interface(name), "{name} must not read as a VPN");
+        }
+        for name in ["wg0", "wg0-mullvad", "utun4", "tun0", "tap0", "zt0", "nordlynx",
+                     "ProtonVPN", "Mullvad", "tailscale0"] {
+            assert!(is_tunnel_interface(name), "{name} must read as a VPN");
+        }
+    }
+
+    #[test]
+    fn link_local_and_loopback_are_not_routable() {
+        assert!(!is_routable_addr("fe80::1"));
+        assert!(!is_routable_addr("169.254.3.4"));
+        assert!(!is_routable_addr("127.0.0.1"));
+        assert!(!is_routable_addr("::1"));
+        assert!(!is_routable_addr(""));
+        assert!(is_routable_addr("10.160.125.87"));
+        assert!(is_routable_addr("192.168.1.218"));
+    }
+
+    /// Windows aliases contain spaces; splitting on whitespace used to
+    /// shred "Ethernet 2" into two bogus interfaces.
+    #[test]
+    fn windows_aliases_with_spaces_survive() {
+        let out = "Ethernet 2\t192.168.1.10\r\nMullvad\t10.64.0.2\r\nWi-Fi\tfe80::1\r\n";
+        let pairs = parse_windows_addrs(out);
+        assert!(pairs.iter().any(|(n, r)| n == "Ethernet 2" && *r));
+        let vpns: Vec<_> = pairs.iter().filter(|(n, r)| *r && is_tunnel_interface(n)).collect();
+        assert_eq!(vpns.len(), 1, "only Mullvad, got {vpns:?}");
     }
 }
