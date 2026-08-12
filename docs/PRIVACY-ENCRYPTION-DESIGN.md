@@ -64,15 +64,25 @@ exists.
 
 ## 4. Design
 
-**Keys.** Each peer holds a symmetric key. It is generated on the client
-at pairing and stored in the OS secret store — Keychain (macOS), DPAPI /
-Credential Manager (Windows), Secret Service / KWallet (Linux). The host
-never receives it.
+**Keys — asymmetric, not symmetric.** Each peer generates a **keypair**
+on the client at pairing. The *private* key never leaves the device and
+lives in the OS secret store — Keychain (macOS), DPAPI / Credential
+Manager (Windows), Secret Service / KWallet (Linux). The *public* key is
+given to the host.
 
-**Storage.** The host stores ciphertext blobs it can serve back to the
-owning peer and cannot read. AEAD (XChaCha20-Poly1305 or AES-GCM), one
-nonce per row, with `peer_id` + row id as associated data so rows cannot
-be moved between peers.
+This asymmetry is the point, and a symmetric key would not do: the host
+must be able to **write** things it can never **read**. It derives
+memory summaries and personal facts during a turn, and it stores the
+assistant's reply — all of that has to be encrypted at rest even when
+the client is offline or the write happens after the client disconnects.
+With the public key the host can seal any of it; only the family
+member's device can open it.
+
+**Storage.** Hybrid sealing per row (the age/ECIES pattern): a fresh
+random content key per row, the payload under AEAD
+(XChaCha20-Poly1305), the content key sealed to the peer's public key.
+`peer_id` + row id as associated data, so a row cannot be moved between
+peers or replayed into another thread.
 
 **Reading.** `LoadThread` → `ThreadMessages` returns ciphertext; the
 client decrypts for display. Unchanged protocol shape, different payload.
@@ -88,9 +98,25 @@ user message and the reply, stores both, and forgets.
 index over ciphertext is useless and an FTS index over plaintext defeats
 the whole exercise. Search becomes client-side over decrypted local data.
 
-**Memory.** `memory_notes` and `user_facts` are encrypted with the same
-peer key and travel to the client with the context. The host can no
-longer use them to build prompts on its own — the client supplies them.
+**Memory and personality facts — kept, still used, no longer visible.**
+This is a feature worth protecting, not a liability: `user_facts` is what
+lets KinAI answer someone the way that person needs to be answered.
+Nothing about it is removed.
+
+* The host derives a fact during a turn exactly as it does today, seals
+  it to the peer's public key, stores the ciphertext, and forgets the
+  plaintext.
+* On the next turn the client decrypts its own facts and sends them as
+  part of the context, so the model receives the same information it
+  receives today.
+* The host owner cannot read them at rest — including the inferred
+  `personality_traits` judgements, which is the case that prompted this
+  design.
+
+Cost: memory only travels with a client that can decrypt it. A
+Telegram-only member has no key, so their facts stay host-readable (see
+the Telegram carve-out) — and that should be stated in the UI rather
+than glossed over.
 
 ## 5. Decisions required before implementation
 
