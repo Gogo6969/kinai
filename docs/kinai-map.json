@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-08-11T15:50:27+00:00",
-  "version": "0.2.96",
+  "generated_at": "2026-08-12T19:20:08+00:00",
+  "version": "0.2.97",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 209,
-    "head": "561eb80"
+    "commits": 219,
+    "head": "a0c3609"
   },
   "totals": {
-    "rust_files": 59,
-    "rust_lines": 23247,
-    "frontend_files": 32,
-    "frontend_lines": 11779,
-    "unit_tests": 146,
+    "rust_files": 60,
+    "rust_lines": 24148,
+    "frontend_files": 33,
+    "frontend_lines": 11867,
+    "unit_tests": 163,
     "integration_test_files": 12,
-    "releases": 89,
-    "tags": 83
+    "releases": 90,
+    "tags": 84
   },
   "areas": [
     {
@@ -115,7 +115,7 @@
     {
       "path": "src/commands.rs",
       "area": "entry",
-      "lines": 3271,
+      "lines": 3251,
       "doc": "Tauri command surface — every IPC entrypoint the frontend can call.",
       "tests": 0
     },
@@ -129,9 +129,9 @@
     {
       "path": "src/context/builder.rs",
       "area": "context",
-      "lines": 231,
+      "lines": 338,
       "doc": "Build the per-request message list from system prompt + memory + history.",
-      "tests": 3
+      "tests": 7
     },
     {
       "path": "src/context/extractor.rs",
@@ -220,7 +220,7 @@
     {
       "path": "src/discovery.rs",
       "area": "media",
-      "lines": 140,
+      "lines": 148,
       "doc": "mDNS / Bonjour-style discovery for local-network hosts.",
       "tests": 0
     },
@@ -248,7 +248,7 @@
     {
       "path": "src/llm/detect.rs",
       "area": "llm",
-      "lines": 643,
+      "lines": 667,
       "doc": "Backend auto-detection.",
       "tests": 4
     },
@@ -276,7 +276,7 @@
     {
       "path": "src/network/client.rs",
       "area": "network",
-      "lines": 535,
+      "lines": 542,
       "doc": "Client-side WebSocket dialer.",
       "tests": 0
     },
@@ -290,7 +290,7 @@
     {
       "path": "src/network/mod.rs",
       "area": "network",
-      "lines": 124,
+      "lines": 125,
       "doc": "Host (Axum HTTP+WS server) and Client (WS dialer).",
       "tests": 0
     },
@@ -318,7 +318,7 @@
     {
       "path": "src/network/server.rs",
       "area": "network",
-      "lines": 1190,
+      "lines": 1179,
       "doc": "Host-side Axum HTTP+WebSocket server.",
       "tests": 0
     },
@@ -330,9 +330,16 @@
       "tests": 2
     },
     {
+      "path": "src/network/vpn_hint.rs",
+      "area": "network",
+      "lines": 433,
+      "doc": "\"Your VPN is eating the connection\" detection.",
+      "tests": 11
+    },
+    {
       "path": "src/slash.rs",
       "area": "routing",
-      "lines": 1053,
+      "lines": 1063,
       "doc": "Slash commands — intercepted BEFORE the LLM pipeline so messages starting with /pic, /picHQ, /help, ? skip the chat model entirely and route to native handlers (ComfyUI for image gen, a static command list for help).",
       "tests": 18
     },
@@ -381,7 +388,7 @@
     {
       "path": "src/telegram/router.rs",
       "area": "telegram",
-      "lines": 1533,
+      "lines": 1534,
       "doc": "Route incoming Telegram updates into KinAI's chat pipeline.",
       "tests": 10
     },
@@ -402,9 +409,9 @@
     {
       "path": "src/tools/force_search.rs",
       "area": "tools",
-      "lines": 400,
+      "lines": 741,
       "doc": "Taking the \"should I search?\" decision away from the model.",
-      "tests": 6
+      "tests": 8
     },
     {
       "path": "src/tools/image_recover.rs",
@@ -513,8 +520,8 @@
     {
       "path": "frontend/src/lib/components/ChatWindow.svelte",
       "kind": "component",
-      "lines": 899,
-      "doc": "↑/↓ prompt recall. `historyIndex === null` means we're editing the live draft; once recall starts it indexes into app.inputHistory and `draftStash` holds whatever the user was typing so ↓ can restore it."
+      "lines": 932,
+      "doc": "The overlay hotkey as the user's keyboard prints it, derived from the hotkey actually registered (config), never guessed from the platform alone."
     },
     {
       "path": "frontend/src/lib/components/Logo.svelte",
@@ -573,7 +580,7 @@
     {
       "path": "frontend/src/lib/dev-tauri-mock.ts",
       "kind": "lib",
-      "lines": 351,
+      "lines": 359,
       "doc": "DEV-ONLY Tauri IPC mock. When the frontend runs in a plain browser (`pnpm dev` + localhost:1420, no Tauri shell), `window.__TAURI_INTERNALS__` doesn't exist and every invoke() rejects — the UI is untestable outside the app. This module installs a minimal in-memory backend so the whole UI (most importantly the /setup wizard) can be driven end-to-end in a browser: config mutations persist for the se"
     },
     {
@@ -587,6 +594,12 @@
       "kind": "lib",
       "lines": 149,
       "doc": "Custom image renderer: enforce a safe URL allow-list and a max-height box. Without this a model can drop a `![…](javascript:…)` or a 50 MP image into chat and either pop XSS or blow up the layout. We accept `https://`, `http://` (LAN-only resources from the host), and `data:` for inline previews / vision uploads — and that's it."
+    },
+    {
+      "path": "frontend/src/lib/modelName.ts",
+      "kind": "lib",
+      "lines": 23,
+      "doc": "The model id, the way a human should read it. llama-server registers whatever `-m` it was launched with unless an alias was set — so a slot's id can be `/home/olares/models/Qwen3.6-35B-A3B-heretic-MTP-Q4_K_M.gguf`, a filesystem path from another machine, and that string was rendering verbatim in the Settings model dropdown and the composer's picker. Mirror of the Rust rules in slash.rs `display_mo"
     },
     {
       "path": "frontend/src/lib/platform.ts",
@@ -639,7 +652,7 @@
     {
       "path": "frontend/src/routes/host/+page.svelte",
       "kind": "route",
-      "lines": 1265,
+      "lines": 1266,
       "doc": "Secondary \"deep\" slot — same shape, but starts disabled + empty so hosts who only want one model keep their existing single-slot behaviour. The configure step now exposes BOTH slots so the user can pick a fast + deep backend in one screen."
     },
     {
@@ -657,7 +670,7 @@
     {
       "path": "frontend/src/routes/host/reports/+page.svelte",
       "kind": "route",
-      "lines": 146,
+      "lines": 147,
       "doc": ""
     },
     {
@@ -669,7 +682,7 @@
     {
       "path": "frontend/src/routes/settings/+page.svelte",
       "kind": "route",
-      "lines": 2247,
+      "lines": 2269,
       "doc": "Fast model — the existing single slot. Reachable as `/fast` once the deep slot is also configured; the default routing target for plain (non-slash) messages."
     },
     {
@@ -1047,6 +1060,34 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.97",
+      "date": "2026-08-12",
+      "sections": {
+        "Changed": [
+          {
+            "title": "Questions about now or later always search the web.",
+            "detail": "Until now a question had to show two independent signals (a live topic plus a time word, say) before KinAI forced a search — \"best flights this week to Belize\" had only one, so whether it searched was up to the model's mood. New rule: a present- or future-anchored phrase (today, tonight, tomorrow, this week, this weekend, latest, currently, …, in English and German) — or any year at or after the current one (\"world cup 2026\", \"Olympics 2028\") — forces the search by itself. Greetings, quizzes, and creative requests (\"write a poem about today\") stay exempt, and past years stay historical. Travel words (flight, airfare, hotel, airline) now also count as live topics."
+          },
+          {
+            "title": "Fixed along the way: \"what's today's date?\" could trigger a web search because the apostrophe split \"today's\" into words",
+            "detail": ""
+          }
+        ],
+        "Added": [
+          {
+            "title": "KinAI now tells you when your VPN is the reason it can't connect.",
+            "detail": "A family member turned on a VPN and KinAI simply went dark — \"Connection timed out\" and nothing else, while every other device in the house was fine. Most VPNs block your local network by default, so the app could no longer reach the family's own host. When a connection to a home address fails, KinAI now checks whether a VPN is involved and says so, with the setting to change — by name for Mullvad, Proton VPN, NordVPN and Tailscale, and in general terms for anything else."
+          }
+        ],
+        "Fixed": [
+          {
+            "title": "Model names are shown as names, not file paths.",
+            "detail": "A model served by llama.cpp could appear as `/home/olares/models/Qwen3.6-35B-A3B-heretic-MTP-Q4_K_M.gguf` — a filesystem path from another machine — in the model picker, the slash-command menu, the Settings dropdowns and the reported-answers list. All of them now show the plain name."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.96",
       "date": "2026-08-11",
@@ -2960,6 +3001,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.96",
+      "date": "2026-08-11"
+    },
     {
       "tag": "v0.2.95",
       "date": "2026-08-08"
