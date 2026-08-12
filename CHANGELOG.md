@@ -25,6 +25,27 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   date-question exemption didn't recognise. The exemption now covers
   the apostrophe-split shapes.
 
+### Added
+
+- **KinAI now tells you when your VPN is the reason it can't connect.**
+  A family member turned on a VPN and KinAI simply went dark —
+  "Connection timed out" and nothing else, while every other device in
+  the house was fine. Most VPNs block your local network by default, so
+  the app could no longer reach the family's own host. When a
+  connection to a home address fails, KinAI now checks whether a VPN is
+  involved and says so, with the setting to change — by name for
+  Mullvad, Proton VPN, NordVPN and Tailscale, and in general terms for
+  anything else.
+
+### Fixed
+
+- **Model names are shown as names, not file paths.** A model served by
+  llama.cpp could appear as
+  `/home/olares/models/Qwen3.6-35B-A3B-heretic-MTP-Q4_K_M.gguf` — a
+  filesystem path from another machine — in the model picker, the
+  slash-command menu, the Settings dropdowns and the reported-answers
+  list. All of them now show the plain name.
+
 ## [0.2.96] — 2026-08-11
 
 ### Added
