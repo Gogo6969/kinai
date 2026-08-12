@@ -121,9 +121,27 @@ pub async fn run_pipeline(
         } else {
             (tools.as_slice(), false)
         };
-        let mut handle = llm
+        let mut handle = match llm
             .stream_with_choice(&messages, round_tools, max_tokens, cancel.clone(), force_flag)
-            .await?;
+            .await
+        {
+            Ok(h) => h,
+            // The provider refuses to be forced. DeepSeek's thinking mode
+            // rejects `tool_choice: "required"` outright, and before this
+            // the whole turn died with a raw 400 in the chat. Forcing is
+            // an optimisation, not a requirement: drop it and run the
+            // round normally, with the full toolset, so the model can
+            // still choose to search.
+            Err(e) if forcing && crate::llm::is_tool_choice_rejection(&e.to_string()) => {
+                tracing::warn!(
+                    "provider rejects tool_choice=required ({e:#}); running this turn unforced"
+                );
+                force_rounds_left = 0;
+                llm.stream_with_choice(&messages, tools.as_slice(), max_tokens, cancel.clone(), false)
+                    .await?
+            }
+            Err(e) => return Err(e),
+        };
         let mut content_buf = String::new();
         let mut tool_calls: Vec<ToolCallAccum> = Vec::new();
         let mut finished = false;

@@ -336,6 +336,29 @@ fn serialize_message(m: &ChatMessage) -> serde_json::Value {
 /// "503 Loading model", timeouts, and the stall watchdog). Deliberately
 /// narrower than `vision::is_transient_failure`: content-level failures
 /// (bad request, context overflow) are NOT another slot's business.
+/// True when the provider rejected `tool_choice: "required"` itself,
+/// rather than failing for any other reason.
+///
+/// DeepSeek answers a forced tool choice in thinking mode with
+/// `400 {"error":{"message":"Thinking mode does not support this
+/// tool_choice",...}}`. llama.cpp and vLLM both accept `required`, so
+/// KinAI's forced-search round worked everywhere until the Online slot
+/// pointed at a hosted reasoning model (field report 2026-08-12: "which
+/// are the top 10 stocks in the QQQ fund — look it up for today?" died
+/// with a raw 400 instead of an answer).
+///
+/// Matched on the phrase rather than the status code: providers differ
+/// on whether this is a 400 or a 422, but all of them name the
+/// parameter they are refusing.
+pub fn is_tool_choice_rejection(err: &str) -> bool {
+    let lc = err.to_ascii_lowercase();
+    (lc.contains("tool_choice") || lc.contains("tool choice"))
+        && (lc.contains("not support")
+            || lc.contains("unsupported")
+            || lc.contains("invalid")
+            || lc.contains("does not"))
+}
+
 pub fn is_server_down_error(err: &str) -> bool {
     let lc = err.to_ascii_lowercase();
     [
@@ -419,5 +442,40 @@ mod tests {
         let raw = r#"{"choices":[{"message":{"content":"hi"}}]}"#;
         let parsed: ChatRespFull = serde_json::from_str(raw).unwrap();
         assert!(parsed.choices[0].finish_reason.is_none());
+    }
+}
+
+#[cfg(test)]
+mod tool_choice_tests {
+    use super::is_tool_choice_rejection;
+
+    /// Verbatim from the field, 2026-08-12: a `/online` turn on
+    /// deepseek-v4-flash asking for today's QQQ holdings.
+    #[test]
+    fn deepseek_thinking_mode_rejection_is_recognised() {
+        let err = r#"LLM error 400 Bad Request: {"error":{"message":"Thinking mode does not support this tool_choice","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}"#;
+        assert!(is_tool_choice_rejection(err));
+    }
+
+    #[test]
+    fn other_provider_phrasings_are_recognised() {
+        assert!(is_tool_choice_rejection(
+            r#"400: {"error":{"message":"tool_choice is not supported for this model"}}"#
+        ));
+        assert!(is_tool_choice_rejection(
+            r#"422: {"detail":"Unsupported tool choice: required"}"#
+        ));
+    }
+
+    /// Must NOT swallow unrelated failures — those still have to reach
+    /// the user instead of being retried into a different error.
+    #[test]
+    fn unrelated_errors_are_left_alone() {
+        assert!(!is_tool_choice_rejection("LLM error 401 Unauthorized: bad api key"));
+        assert!(!is_tool_choice_rejection("connection refused"));
+        assert!(!is_tool_choice_rejection(
+            r#"400: {"error":{"message":"Invalid max_tokens value, the valid range of max_tokens is [1, 393216]"}}"#
+        ));
+        assert!(!is_tool_choice_rejection("context length exceeded"));
     }
 }
