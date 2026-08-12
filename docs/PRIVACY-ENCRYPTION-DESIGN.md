@@ -2,18 +2,22 @@
 
 Status: **proposal, not implemented.** Written 2026-08-12.
 
-## 1. The promise, and where it currently fails
+## 1. Why do this
 
-Wolf told the family that he cannot read their questions. The app repeats
-it: *"Their chats are private — you only see your own here"*
-(`frontend/src/lib/components/ChatWindow.svelte:539`).
+Wolf told the family he does not read their questions, and he does not.
+Nothing here is a remediation for anything that happened; the point is
+to make the software enforce what he already practises, so the promise
+rests on the design instead of on his restraint.
 
-The UI keeps that promise. The storage does not. Everything lives in one
-unencrypted SQLite file, `~/.kinai/kinai.db` (80 MB, 2,291 messages, all
-peers, back to 2026-05-15). Reading any family member's complete history
-takes one `SELECT`. No password, no deliberate act, no code change.
+Today it rests on restraint. Everything lives in one unencrypted SQLite
+file, `~/.kinai/kinai.db` (80 MB, 2,291 messages, all peers, back to
+2026-05-15), so reading any member's history would take one `SELECT`.
+Nobody has. The goal is that nobody *can* — including a future owner of
+this machine, a future maintainer, or a version of KinAI that changes
+hands.
 
-That gap is the whole problem. It is not about a stolen laptop.
+This is not about a stolen laptop, and the app's existing wording stays
+as it is: it describes the interface accurately and always has.
 
 ## 2. Threat model (Wolf's, stated precisely)
 
@@ -36,11 +40,11 @@ That gap is the whole problem. It is not about a stolen laptop.
 This is a coherent line: it removes the easy, passive path entirely and
 leaves only a path that requires deliberately subverting your own server.
 
-**Consequence:** the existing log already crosses that line by accident —
-`~/.kinai/logs/` records every `web_search` query verbatim, e.g.
-`args={"query":"Proton cancel subscription from another account…"}`.
-Those are user questions in plaintext. Redacting them is part of the
-work, not an optional extra.
+**One practical consequence:** `~/.kinai/logs/` records each
+`web_search` query verbatim in its tool-call lines. That is user text
+living outside the database, so sealing the database alone would leave
+it behind. Redaction belongs in the same phase — keeping everything the
+logs are actually for (tool, timing, result size, errors).
 
 ## 3. What must be encrypted (inventory, measured)
 
@@ -189,9 +193,17 @@ is worth more than a broad one that does not.
 
 ## 7. Phases
 
-* **Phase 0 — honesty (hours).** Fix the UI sentence so it states what is
-  actually true today. Redact `web_search` queries from logs. Add log
-  retention. None of this waits for the crypto.
+* **Phase 0 — folded into Phase 1, not shipped separately.** The only
+  item worth doing is redacting user text from `~/.kinai/logs/`: the
+  tool-call lines record each `web_search` query verbatim, which is
+  content sitting outside the database that encryption would otherwise
+  miss. Keep everything needed to debug — tool name, duration, result
+  size, success or failure, error text — and drop the query string
+  itself. Log retention (delete files older than N days) is ordinary
+  housekeeping and rides along.
+
+  No UI wording change. The sentence on the host chat screen describes
+  that screen and is accurate.
 * **Phase 1 — keys and storage.** Key generation at pairing, OS secret
   store on three platforms, encrypted `messages`, FTS removed,
   client-side search.
@@ -200,5 +212,6 @@ is worth more than a broad one that does not.
 * **Phase 3 — migration and recovery.** Re-encrypt existing history,
   recovery phrase, Telegram labelling.
 
-Phase 0 is worth doing regardless of whether Phases 1–3 ever happen,
-because the current UI text promises something the software does not do.
+The sequence is deliberate: log redaction lands with Phase 1 because it
+closes the same hole — family content readable at rest — in the one
+place the database encryption cannot reach.
