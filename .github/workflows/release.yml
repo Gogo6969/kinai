@@ -135,6 +135,47 @@ jobs:
           chmod 600 ~/private_keys/AuthKey.p8
           echo "APPLE_API_KEY_PATH=$HOME/private_keys/AuthKey.p8" >> "$GITHUB_ENV"
 
+      # Pre-seed the WiX toolset so the Windows bundler never downloads it.
+      #
+      # 0.2.99 failed twice on windows-latest with
+      #   Info Verifying wix package
+      #   Downloading .../wix3/releases/download/wix3141rtm/wix314-binaries.zip
+      #   failed to bundle project `io: Peer disconnected`
+      # — dying in 0.09s, i.e. instantly, not a timeout. The asset itself is
+      # healthy (41 MB, HTTP 200 when fetched by hand); it is the bundler's
+      # own fetch through GitHub's release-asset redirect that fails on the
+      # runner. Every Windows release depends on that one unauthenticated
+      # download at bundle time, so a hiccup there costs the whole platform
+      # — which is exactly how the publish gate caught this.
+      #
+      # Fetching it here with the runner's own token and unpacking it into
+      # the cache directory Tauri probes (%LOCALAPPDATA%\tauri\WixTools314)
+      # makes "Verifying wix package" find it and skip the download.
+      - name: Pre-seed WiX toolset (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $dest = "$env:LOCALAPPDATA\tauri\WixTools314"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          $zip = "$env:RUNNER_TEMP\wix314-binaries.zip"
+          $url = "https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip"
+          for ($i = 1; $i -le 3; $i++) {
+            try {
+              Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing -MaximumRedirection 5
+              break
+            } catch {
+              Write-Host "attempt $i failed: $($_.Exception.Message)"
+              if ($i -eq 3) { throw }
+              Start-Sleep -Seconds (5 * $i)
+            }
+          }
+          Expand-Archive -Path $zip -DestinationPath $dest -Force
+          if (-not (Test-Path "$dest\candle.exe")) {
+            throw "WiX seed failed: candle.exe missing in $dest"
+          }
+          Write-Host "WiX seeded at $dest"
+          Get-ChildItem $dest | Select-Object -First 5 Name
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
