@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-08-12T23:46:00+00:00",
-  "version": "0.2.99",
+  "generated_at": "2026-08-14T14:34:03+00:00",
+  "version": "0.2.100",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 229,
-    "head": "61a358f"
+    "commits": 234,
+    "head": "18b42c9"
   },
   "totals": {
     "rust_files": 60,
-    "rust_lines": 24362,
+    "rust_lines": 24664,
     "frontend_files": 33,
     "frontend_lines": 11868,
-    "unit_tests": 168,
+    "unit_tests": 177,
     "integration_test_files": 12,
-    "releases": 91,
-    "tags": 85
+    "releases": 92,
+    "tags": 86
   },
   "areas": [
     {
@@ -115,7 +115,7 @@
     {
       "path": "src/commands.rs",
       "area": "entry",
-      "lines": 3251,
+      "lines": 3259,
       "doc": "Tauri command surface — every IPC entrypoint the frontend can call.",
       "tests": 0
     },
@@ -255,9 +255,9 @@
     {
       "path": "src/llm/mod.rs",
       "area": "llm",
-      "lines": 482,
+      "lines": 600,
       "doc": "Local LLM client.",
-      "tests": 7
+      "tests": 11
     },
     {
       "path": "src/llm/stream.rs",
@@ -374,9 +374,9 @@
     {
       "path": "src/telegram/mod.rs",
       "area": "telegram",
-      "lines": 134,
+      "lines": 290,
       "doc": "Telegram bot integration — host-side only.",
-      "tests": 0
+      "tests": 5
     },
     {
       "path": "src/telegram/polling.rs",
@@ -430,7 +430,7 @@
     {
       "path": "src/tools/loop_pipeline.rs",
       "area": "tools",
-      "lines": 978,
+      "lines": 998,
       "doc": "Tool-calling pipeline.",
       "tests": 22
     },
@@ -1060,6 +1060,22 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.100",
+      "date": "2026-08-13",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "The fast model stopped answering after a new model was installed.",
+            "detail": "Some models are stricter than others about the order KinAI sends its instructions in, and a newly installed one rejected every message with a \"System message must be at the beginning\" error — so the fast model replied with nothing but an error box. KinAI now always puts its standing instructions first, whatever model you point it at."
+          },
+          {
+            "title": "Telegram now lists every command KinAI actually has.",
+            "detail": "The Online model was missing from the command menu on your phone: typing `/online` worked, but Telegram never offered it. The menu is now built from the models you have configured, so it also stops offering image commands when no image server is set up, and stops offering model switches when there is only one model to choose from."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.99",
       "date": "2026-08-12",
@@ -3013,6 +3029,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.99",
+      "date": "2026-08-12"
+    },
     {
       "tag": "v0.2.98",
       "date": "2026-08-12"
