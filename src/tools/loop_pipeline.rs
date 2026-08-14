@@ -81,7 +81,20 @@ pub async fn run_pipeline(
     // balanced slot with an otherwise identical prompt. Injecting a
     // correction restored 8/8. Cheap, and only present when the poison is.
     if let Some(note) = correction_for_history(&messages) {
-        messages.push(ChatMessage::System { content: note });
+        // Merge into the LEADING system message rather than appending a
+        // second one at the end. Strict chat templates reject a system
+        // message anywhere but position 0 —
+        // `Qwen3.6-35B-A3B-base-static` raises "System message must be at
+        // the beginning" and the whole turn dies with a 400. It also
+        // belongs at the top semantically: it is a standing instruction,
+        // not a mid-conversation aside.
+        match messages.first_mut() {
+            Some(ChatMessage::System { content }) => {
+                content.push_str("\n\n");
+                content.push_str(&note);
+            }
+            _ => messages.insert(0, ChatMessage::System { content: note }),
+        }
     }
 
     // For questions that plainly need live data, don't ask the model
@@ -458,8 +471,15 @@ tools available — write the final answer to the user's question now, in plain 
 the most relevant facts from the SUCCESSFUL tool results. Results marked TOOL FAILED \
 contained no information — do not fabricate what they were meant to provide."
         };
-        messages.push(ChatMessage::System {
+        // Sent as a USER turn, not a system one: it has to sit AFTER the
+        // tool results to mean anything, and a system message in that
+        // position is rejected outright by strict templates (see the
+        // correction-note comment above). It follows tool messages, so
+        // this never creates two user turns in a row.
+        messages.push(ChatMessage::User {
             content: synthesis_note.into(),
+            name: None,
+            image_data_urls: vec![],
         });
         let mut handle = llm.stream(&messages, &[], max_tokens, cancel.clone()).await?;
         while let Some(delta) = handle.rx.recv().await {

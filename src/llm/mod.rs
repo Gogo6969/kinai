@@ -115,7 +115,7 @@ impl LlmClient {
         force_tool: bool,
     ) -> Result<StreamHandle> {
         let payload_messages: Vec<serde_json::Value> =
-            messages.iter().map(serialize_message).collect();
+            normalize_for_strict_templates(messages.iter().map(serialize_message).collect());
         let tools_json: Vec<serde_json::Value> = tools.iter().map(|t| t.schema.clone()).collect();
 
         let url = format!(
@@ -159,7 +159,7 @@ impl LlmClient {
         max_tokens: Option<usize>,
     ) -> Result<CompleteResult> {
         let payload_messages: Vec<serde_json::Value> =
-            messages.iter().map(serialize_message).collect();
+            normalize_for_strict_templates(messages.iter().map(serialize_message).collect());
         let tools_json: Vec<serde_json::Value> = tools.iter().map(|t| t.schema.clone()).collect();
         let url = format!(
             "{}/v1/chat/completions",
@@ -260,6 +260,53 @@ struct ChatChoiceMsgFull {
     /// KinAI supports.
     #[serde(default, alias = "reasoning_content")]
     reasoning: Option<String>,
+}
+
+/// Make the message list safe for strict chat templates.
+///
+/// Some templates refuse a `system` role anywhere but position 0 —
+/// `Qwen3.6-35B-A3B-base-static` raises
+/// `Jinja Exception: System message must be at the beginning`, which
+/// llama.cpp returns as a 400 and the user sees instead of an answer
+/// (field report 2026-08-13, right after that model was installed).
+///
+/// Callers are expected to get this right, and the two places that got
+/// it wrong were fixed at the source. This is the net: any stray system
+/// message after the first is demoted to `user`, folded into the
+/// preceding user turn when there is one, so a future caller cannot
+/// break every strict-template model again.
+fn normalize_for_strict_templates(mut msgs: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    let mut out: Vec<serde_json::Value> = Vec::with_capacity(msgs.len());
+    for (i, mut m) in msgs.drain(..).enumerate() {
+        let is_system = m.get("role").and_then(|r| r.as_str()) == Some("system");
+        if i == 0 || !is_system {
+            out.push(m);
+            continue;
+        }
+        let text = m
+            .get("content")
+            .and_then(|c| c.as_str())
+            .unwrap_or_default()
+            .to_string();
+        // Fold into the previous turn when it is a plain-text user
+        // message: two user turns in a row upset other templates, and
+        // this keeps the instruction exactly where it was written.
+        let folded = out.last_mut().and_then(|prev| {
+            let prev_is_text_user = prev.get("role").and_then(|r| r.as_str()) == Some("user")
+                && prev.get("content").map(|c| c.is_string()).unwrap_or(false);
+            if !prev_is_text_user {
+                return None;
+            }
+            let joined = format!("{}\n\n{}", prev["content"].as_str().unwrap_or(""), text);
+            prev["content"] = serde_json::Value::String(joined);
+            Some(())
+        });
+        if folded.is_none() {
+            m["role"] = serde_json::Value::String("user".into());
+            out.push(m);
+        }
+    }
+    out
 }
 
 fn serialize_message(m: &ChatMessage) -> serde_json::Value {
@@ -477,5 +524,76 @@ mod tool_choice_tests {
             r#"400: {"error":{"message":"Invalid max_tokens value, the valid range of max_tokens is [1, 393216]"}}"#
         ));
         assert!(!is_tool_choice_rejection("context length exceeded"));
+    }
+}
+
+#[cfg(test)]
+mod strict_template_tests {
+    use super::*;
+
+    fn msg(role: &str, text: &str) -> serde_json::Value {
+        serde_json::json!({ "role": role, "content": text })
+    }
+    fn roles(v: &[serde_json::Value]) -> Vec<String> {
+        v.iter().map(|m| m["role"].as_str().unwrap().to_string()).collect()
+    }
+
+    /// The 2026-08-13 failure: Qwen3.6-35B-A3B-base-static raised
+    /// "System message must be at the beginning" and llama.cpp returned
+    /// a 400, so the fast slot answered nothing at all.
+    #[test]
+    fn a_trailing_system_message_is_demoted() {
+        let out = normalize_for_strict_templates(vec![
+            msg("system", "You are KinAI."),
+            msg("user", "hello"),
+            msg("assistant", "hi"),
+            msg("system", "write the final answer now"),
+        ]);
+        assert_eq!(roles(&out), vec!["system", "user", "assistant", "user"]);
+        assert_eq!(out.iter().filter(|m| m["role"] == "system").count(), 1);
+    }
+
+    /// Demoting must not create two user turns in a row — other
+    /// templates dislike that as much as this one dislikes late system
+    /// messages. The stray text is folded into the preceding user turn.
+    #[test]
+    fn a_system_after_a_user_turn_is_folded_not_appended() {
+        let out = normalize_for_strict_templates(vec![
+            msg("system", "You are KinAI."),
+            msg("user", "what is the weather?"),
+            msg("system", "you do have web access"),
+        ]);
+        assert_eq!(roles(&out), vec!["system", "user"]);
+        let user = out[1]["content"].as_str().unwrap();
+        assert!(user.contains("what is the weather?"));
+        assert!(user.contains("you do have web access"), "note lost: {user}");
+    }
+
+    /// The ordinary case must pass through untouched.
+    #[test]
+    fn a_well_formed_conversation_is_unchanged() {
+        let input = vec![
+            msg("system", "You are KinAI."),
+            msg("user", "hi"),
+            msg("assistant", "hello"),
+            msg("user", "and now?"),
+        ];
+        let out = normalize_for_strict_templates(input.clone());
+        assert_eq!(out, input);
+    }
+
+    /// A multipart (image) user turn must not be corrupted by folding —
+    /// its content is an array, not a string.
+    #[test]
+    fn multipart_user_turns_are_not_folded_into() {
+        let mut img = msg("user", "");
+        img["content"] = serde_json::json!([{ "type": "text", "text": "look" }]);
+        let out = normalize_for_strict_templates(vec![
+            msg("system", "You are KinAI."),
+            img,
+            msg("system", "answer now"),
+        ]);
+        assert_eq!(roles(&out), vec!["system", "user", "user"]);
+        assert!(out[1]["content"].is_array(), "image turn was mangled");
     }
 }
