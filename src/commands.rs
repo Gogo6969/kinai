@@ -88,6 +88,8 @@ pub async fn set_llm_settings(
     state.stats.write().model_loaded = Some(new_cfg.llm.model.clone());
     // The old liveness verdict may describe a different server entirely.
     state.slot_health.lock().remove("fast");
+    // A changed slot changes what Telegram should offer.
+    crate::telegram::refresh_command_menu(&state);
     Ok(new_cfg)
 }
 
@@ -106,6 +108,8 @@ pub async fn set_llm_balanced_settings(
     };
     cfg.save().map_err(err)?;
     state.slot_health.lock().remove("balanced");
+    // A changed slot changes what Telegram should offer.
+    crate::telegram::refresh_command_menu(&state);
     Ok(cfg)
 }
 
@@ -128,6 +132,8 @@ pub async fn set_llm_online_settings(
     };
     cfg.save().map_err(err)?;
     state.slot_health.lock().remove("online");
+    // A changed slot changes what Telegram should offer.
+    crate::telegram::refresh_command_menu(&state);
     Ok(cfg)
 }
 
@@ -148,6 +154,8 @@ pub async fn set_llm_deep_settings(
         cfg.clone()
     };
     state.slot_health.lock().remove("deep");
+    // A changed slot changes what Telegram should offer.
+    crate::telegram::refresh_command_menu(&state);
     Ok(new_cfg)
 }
 
