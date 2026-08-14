@@ -5,6 +5,23 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.100] — 2026-08-13
+
+### Fixed
+
+- **The fast model stopped answering after a new model was installed.**
+  Some models are stricter than others about the order KinAI sends its
+  instructions in, and a newly installed one rejected every message with
+  a "System message must be at the beginning" error — so the fast model
+  replied with nothing but an error box. KinAI now always puts its
+  standing instructions first, whatever model you point it at.
+- **Telegram now lists every command KinAI actually has.** The Online
+  model was missing from the command menu on your phone: typing
+  `/online` worked, but Telegram never offered it. The menu is now built
+  from the models you have configured, so it also stops offering image
+  commands when no image server is set up, and stops offering model
+  switches when there is only one model to choose from.
+
 ## [0.2.99] — 2026-08-12
 
 ### Fixed
