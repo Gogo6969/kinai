@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-08-14T14:34:03+00:00",
-  "version": "0.2.100",
+  "generated_at": "2026-08-18T16:23:26+00:00",
+  "version": "0.2.101",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 234,
-    "head": "18b42c9"
+    "commits": 237,
+    "head": "3e042da"
   },
   "totals": {
     "rust_files": 60,
-    "rust_lines": 24664,
+    "rust_lines": 24801,
     "frontend_files": 33,
     "frontend_lines": 11868,
-    "unit_tests": 177,
+    "unit_tests": 178,
     "integration_test_files": 12,
-    "releases": 92,
-    "tags": 86
+    "releases": 93,
+    "tags": 87
   },
   "areas": [
     {
@@ -129,9 +129,9 @@
     {
       "path": "src/context/builder.rs",
       "area": "context",
-      "lines": 338,
+      "lines": 441,
       "doc": "Build the per-request message list from system prompt + memory + history.",
-      "tests": 7
+      "tests": 8
     },
     {
       "path": "src/context/extractor.rs",
@@ -150,7 +150,7 @@
     {
       "path": "src/context/mod.rs",
       "area": "context",
-      "lines": 330,
+      "lines": 337,
       "doc": "The never-lose-context system.",
       "tests": 1
     },
@@ -255,7 +255,7 @@
     {
       "path": "src/llm/mod.rs",
       "area": "llm",
-      "lines": 600,
+      "lines": 611,
       "doc": "Local LLM client.",
       "tests": 11
     },
@@ -402,7 +402,7 @@
     {
       "path": "src/tools/datetime.rs",
       "area": "tools",
-      "lines": 20,
+      "lines": 36,
       "doc": "Current date / time on the host machine.",
       "tests": 0
     },
@@ -1060,6 +1060,18 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.101",
+      "date": "2026-08-18",
+      "sections": {
+        "Changed": [
+          {
+            "title": "Answers start much sooner in ongoing conversations.",
+            "detail": "Most of the wait before a reply was KinAI re-reading the entire conversation on every turn — the model server keeps a memory of what it has already read, but two details in how KinAI assembled its instructions were invalidating that memory each time (a clock that changed every minute, and per-question memory notes placed ahead of the history). Measured on the family's own fast model: follow-up turns now re-process about 2% of what they used to, so the \"thinking\" pause before the first word shrinks accordingly. First messages in a fresh conversation still take the full time — there is nothing to reuse yet."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.100",
       "date": "2026-08-13",
@@ -3029,6 +3041,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.100",
+      "date": "2026-08-16"
+    },
     {
       "tag": "v0.2.99",
       "date": "2026-08-12"
