@@ -5,6 +5,21 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.101] — 2026-08-18
+
+### Changed
+
+- **Answers start much sooner in ongoing conversations.** Most of the
+  wait before a reply was KinAI re-reading the entire conversation on
+  every turn — the model server keeps a memory of what it has already
+  read, but two details in how KinAI assembled its instructions were
+  invalidating that memory each time (a clock that changed every
+  minute, and per-question memory notes placed ahead of the history).
+  Measured on the family's own fast model: follow-up turns now
+  re-process about 2% of what they used to, so the "thinking" pause
+  before the first word shrinks accordingly. First messages in a fresh
+  conversation still take the full time — there is nothing to reuse yet.
+
 ## [0.2.100] — 2026-08-13
 
 ### Fixed
