@@ -114,7 +114,14 @@ pub fn system_prompt(family_name: &str, addendum: &str) -> ChatMessage {
     // assistant injects the current date for exactly this reason; relying
     // on the datetime() tool isn't enough, because a model that wrongly
     // believes it already knows the answer never thinks to call it.
-    let now = crate::tools::datetime::now_pretty();
+    // Date only — NEVER the clock. The system prompt is the cached
+    // prefix for every request on a llama.cpp slot; a minute-resolution
+    // timestamp here invalidated that cache every single minute, forcing
+    // a full reprocess of system prompt + history on almost every turn
+    // ("prefill lasts longer than the answer", 2026-08-18). The precise
+    // time is appended to the newest user message instead — that message
+    // is new each turn, so it costs the cache nothing.
+    let now = crate::tools::datetime::today_pretty();
     let mut content = format!(
         "You are KinAI — a private family assistant running entirely on the {family_name} \
 household's own hardware. You are warm, direct, helpful, and honest. \
@@ -124,8 +131,8 @@ including ```code blocks```, LaTeX between $$ delimiters, and tables.
 
 # CURRENT DATE & TIME
 
-Right now it is **{now}** on the host machine. Treat this as the present \
-moment. Your training data has a cutoff, but everything up to and including \
+Today is **{now}** on the host machine. The exact current time is noted \
+at the end of the newest user message. Treat this as the present moment. Your training data has a cutoff, but everything up to and including \
 today has already happened — never tell the user a recent or in-progress \
 event \"hasn't happened yet\" or is \"scheduled\" just because it falls after \
 your training cutoff. If a question needs current facts you don't reliably \

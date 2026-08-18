@@ -38,6 +38,13 @@ struct ChatRequest<'a> {
     tool_choice: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<usize>,
+    /// llama.cpp: reuse the server-side prompt cache across requests.
+    /// Explicit rather than relying on the server default, because the
+    /// whole prompt layout is now built around prefix stability.
+    /// Omitted for every other provider — OpenAI-style APIs reject or
+    /// ignore unknown fields depending on vendor mood.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cache_prompt: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,6 +136,7 @@ impl LlmClient {
         } else {
             Some("auto")
         };
+        let cache_prompt = (self.settings.provider == "llamacpp").then_some(true);
         let req = ChatRequest {
             model: &self.settings.model,
             messages: &payload_messages,
@@ -137,6 +145,7 @@ impl LlmClient {
             tools: tools_json,
             tool_choice,
             max_tokens,
+            cache_prompt,
         };
         let mut builder = self.http.post(&url).json(&req);
         // Only attach an Authorization header when there's actually a key.
@@ -166,6 +175,7 @@ impl LlmClient {
             self.settings.base_url.trim_end_matches('/')
         );
         let tool_choice = if tools_json.is_empty() { None } else { Some("auto") };
+        let cache_prompt = (self.settings.provider == "llamacpp").then_some(true);
         let req = ChatRequest {
             model: &self.settings.model,
             messages: &payload_messages,
@@ -174,6 +184,7 @@ impl LlmClient {
             tools: tools_json,
             tool_choice,
             max_tokens,
+            cache_prompt,
         };
         // Non-streaming call → keep a finite ceiling (the client itself no
         // longer sets one, since streaming requests must be uncapped).

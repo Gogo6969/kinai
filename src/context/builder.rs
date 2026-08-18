@@ -41,18 +41,6 @@ pub async fn build_context(
 
     messages.push(system_prompt(&cfg.host.family_name, &llm.system_addendum));
 
-    if !user_facts.is_empty() {
-        messages.push(ChatMessage::System {
-            content: memory::format_user_facts(&user_facts),
-        });
-    }
-
-    if !memories.is_empty() {
-        messages.push(ChatMessage::System {
-            content: memory::format_memories(&memories),
-        });
-    }
-
     for m in recent {
         if m.id == new_message.id {
             continue;
@@ -60,7 +48,46 @@ pub async fn build_context(
         messages.push(message_to_chat(&m));
     }
 
-    messages.push(message_to_chat(new_message));
+    // Facts, retrieved memories and the precise clock ride WITH the
+    // newest user message instead of sitting in system messages before
+    // the history. Two reasons, one of them measured:
+    //
+    //   * Cache. llama.cpp reuses the prompt cache only up to the first
+    //     token that differs. Memory retrieval is keyed on the new
+    //     question, so a memories block placed before the history
+    //     changed every turn and forced a full reprocess of everything
+    //     after it — the "prefill lasts longer than the answer" report.
+    //     Measured on the fast slot: 2.3k tokens reprocessed per turn
+    //     with the old layout, 41 with a stable prefix (20x).
+    //     The newest user message is new each turn anyway, so context
+    //     attached to it is the one place it can live rent-free.
+    //
+    //   * Strict templates (0.2.100) reject system messages after the
+    //     first, so the old layout was living on borrowed time anyway.
+    //
+    // The block is labelled as KinAI's own notes so the model does not
+    // mistake it for something the user typed.
+    let mut tail = message_to_chat(new_message);
+    let mut note = String::new();
+    if !user_facts.is_empty() {
+        note.push_str(&memory::format_user_facts(&user_facts));
+        note.push('\n');
+    }
+    if !memories.is_empty() {
+        note.push_str(&memory::format_memories(&memories));
+        note.push('\n');
+    }
+    note.push_str(&format!(
+        "Current time: {}",
+        crate::tools::datetime::now_pretty()
+    ));
+    if let ChatMessage::User { content, .. } = &mut tail {
+        content.push_str(&format!(
+            "\n\n---\n(KinAI context — your own saved notes and the clock, \
+not written by the user:\n{note})"
+        ));
+    }
+    messages.push(tail);
 
     // Reserve generation headroom so the prompt never fills the entire
     // context window. This is the fix for "the deep model thinks for a
@@ -334,4 +361,80 @@ fn sanitize_name(name: &str) -> String {
     name.chars()
         .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
         .collect()
+}
+
+#[cfg(test)]
+mod cache_stability_tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    async fn fresh_db() -> crate::db::Db {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open in-memory sqlite");
+        crate::db::migrate::run(&pool).await.expect("migrations");
+        crate::db::Db { pool }
+    }
+
+    /// THE property the fast slot's speed depends on: across consecutive
+    /// turns in one thread, every prompt message except the newest user
+    /// turn must be BYTE-identical. llama.cpp reuses its prompt cache
+    /// only up to the first differing token, so a clock in the system
+    /// prompt or a per-turn memories block before the history forced a
+    /// full ~2.3k-token reprocess every turn (measured; 41 tokens with a
+    /// stable prefix). Prefill was taking longer than the answer.
+    #[tokio::test]
+    async fn prompt_prefix_is_stable_across_turns() {
+        let db = fresh_db().await;
+        let cfg = crate::config::AppConfig::default();
+        let mut llm = cfg.llm.clone();
+        // The real fast slot's window. On the 8k default the system
+        // prompt alone overruns the trim budget and history is evicted
+        // before this test can observe prefix stability.
+        llm.context_window = 32768;
+        let t = db.create_thread("host", Some("t")).await.unwrap();
+
+        let m1 = db
+            .append_message(&t.id, "user", "Wolf", "what colour is grass?", &[])
+            .await
+            .unwrap();
+        let ctx1 = build_context(&db, &cfg, &llm, "host", &t.id, &m1).await.unwrap();
+
+        db.append_message(&t.id, "assistant", "KinAI", "Green.", &[])
+            .await
+            .unwrap();
+        let m2 = db
+            .append_message(&t.id, "user", "Wolf", "and the sky?", &[])
+            .await
+            .unwrap();
+        let ctx2 = build_context(&db, &cfg, &llm, "host", &t.id, &m2).await.unwrap();
+
+        // ctx2 must extend ctx1: same system prompt, same history bytes,
+        // with only the trailing turns appended/replaced.
+        assert!(ctx2.len() > ctx1.len(), "second turn should be longer");
+        let shared = ctx1.len() - 1; // everything except turn 1's newest message
+        for i in 0..shared {
+            assert_eq!(
+                ctx1[i].content(),
+                ctx2[i].content(),
+                "message {i} changed between turns — prefix cache destroyed"
+            );
+        }
+
+        // The system prompt must not contain a clock (minutes) — the date
+        // is fine, minute resolution is what invalidated per-minute.
+        let sys = ctx1[0].content();
+        assert!(
+            !sys.contains(" AM") && !sys.contains(" PM"),
+            "system prompt carries a clock again: {}",
+            &sys[..sys.len().min(400)]
+        );
+
+        // The clock and context notes ride with the newest user message.
+        let tail = ctx2.last().unwrap().content();
+        assert!(tail.contains("and the sky?"));
+        assert!(tail.contains("Current time:"), "clock missing from tail");
+    }
 }
