@@ -259,7 +259,10 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
     ],
     query_model_caps: () => ({ context_length: 32768 }),
     test_llm_endpoint: () => ({ ok: true, latency_ms: 850, reply: 'Hello! I’m ready to help your family.', error: null }),
-    test_llm_connection: () => ({ ok: true, models: ['llama3.1:8b', 'qwen2.5:14b'], error: null }),
+    // Serves a model list that does NOT contain the host-three-slots
+    // fast id (a path), so the Settings mismatch warning is visible in
+    // the mock — and latency_ms because the real command returns it.
+    test_llm_connection: () => ({ ok: true, models: ['llama3.1:8b', 'qwen2.5:14b'], error: null, latency_ms: 12 }),
     test_vision_endpoint: () => ({ ok: true, latency_ms: 1200, reply: 'Red', error: null }),
     test_comfy_endpoint: () => ({ ok: true, error: null }),
     test_telegram_token: () => ({ ok: true, bot_username: 'mock_family_bot', error: null }),

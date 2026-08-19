@@ -41,11 +41,30 @@ pub async fn build_context(
 
     messages.push(system_prompt(&cfg.host.family_name, &llm.system_addendum));
 
-    for m in recent {
-        if m.id == new_message.id {
-            continue;
-        }
-        messages.push(message_to_chat(&m));
+    // History, three passes (rationale on the helpers below):
+    //   1. drop the current message (it is appended separately, with the
+    //      context note attached),
+    //   2. drop stale unanswered questions so a failed turn cannot
+    //      hijack the next one,
+    //   3. cap the history's token weight, advancing the window in
+    //      quantized steps so the prefix cache survives.
+    let history: Vec<&Message> = recent.iter().filter(|m| m.id != new_message.id).collect();
+    let roles: Vec<&str> = history.iter().map(|m| m.role.as_str()).collect();
+    let keep = history_keep_mask(&roles);
+    let history: Vec<&Message> = history
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(m, k)| k.then_some(m))
+        .collect();
+    let roles: Vec<&str> = history.iter().map(|m| m.role.as_str()).collect();
+    let costs: Vec<usize> = history
+        .iter()
+        .map(|m| token_guard::count_tokens(&m.content) + 4)
+        .collect();
+    let cap = history_token_cap(prompt_budget(llm.context_window, llm.max_tokens));
+    let start = history_start_index(&costs, &roles, cap);
+    for m in &history[start..] {
+        messages.push(message_to_chat(m));
     }
 
     // Facts, retrieved memories and the precise clock ride WITH the
@@ -141,11 +160,106 @@ pub(crate) fn prompt_budget(context_window: usize, max_tokens: usize) -> usize {
     let reserve = if max_tokens > 0 {
         max_tokens
     } else {
-        (context_window / 2).max(8192)
+        // Half the window, full stop. The old `max(cw/2, 8192)` was meant
+        // to guarantee reasoning models room to think, but on any window
+        // under 16k the 8192 floor swallowed half-to-all of the window:
+        // an 8k model reserved 8192 of its 8192, the budget collapsed to
+        // the cw/4 floor (2048), and after the ~1.5k system prompt plus
+        // the current turn there was nothing left — trim_to_fit silently
+        // dropped ALL history, and the model answered every message as if
+        // it were the first. For cw >= 16384, cw/2 >= 8192, so large
+        // windows keep exactly the reserve they had.
+        context_window / 2
     };
     context_window
         .saturating_sub(reserve)
         .max(context_window / 4)
+}
+
+/// Token cap for the HISTORY portion of the prompt (item: "prefill lasts
+/// longer than the answer", part two).
+///
+/// The prompt budget alone let history grow to ~15k tokens on a 32k
+/// slot: fine for the llama.cpp prefix cache on back-to-back turns by
+/// the same person, but the family SHARES one server slot — every time a
+/// different member speaks, the whole prompt re-prefills. Half the
+/// budget, capped at 6k, keeps the worst-case re-prefill bounded while
+/// leaving 25 - 40 turns of verbatim recall; memory notes and user facts
+/// carry the older gist.
+pub(crate) fn history_token_cap(prompt_budget: usize) -> usize {
+    (prompt_budget / 2).min(6000)
+}
+
+/// Number of oldest history messages to drop so the kept tail fits
+/// `cap`, quantized so the KEPT-START moves rarely.
+///
+/// Why quantize: a plain sliding window drops one more message almost
+/// every turn once the cap is reached, which moves the first token of
+/// the prompt every turn — and the llama.cpp prefix cache reuses tokens
+/// only up to the first difference, so a per-turn slide would undo the
+/// 0.2.101 cache work exactly when threads get long. Rounding the drop
+/// count up to a multiple of 8 makes the window advance in steps: one
+/// full re-prefill roughly every fourth turn, cheap cached turns in
+/// between. The start then advances to the next `user` message so the
+/// kept history always begins at a turn boundary (templates dislike
+/// leading assistant messages, and half a turn helps nobody).
+pub(crate) fn history_start_index(costs: &[usize], roles: &[&str], cap: usize) -> usize {
+    debug_assert_eq!(costs.len(), roles.len());
+    let total: usize = costs.iter().sum();
+    if total <= cap || costs.is_empty() {
+        return 0;
+    }
+    // Walk from the newest backwards until the cap is spent.
+    let mut kept = 0usize;
+    let mut start = costs.len();
+    while start > 0 && kept + costs[start - 1] <= cap {
+        kept += costs[start - 1];
+        start -= 1;
+    }
+    // Quantize the drop count upward to a multiple of 8.
+    const QUANTUM: usize = 8;
+    let mut start = start.div_ceil(QUANTUM) * QUANTUM;
+    if start >= costs.len() {
+        // Cap smaller than even the newest message — keep just that one;
+        // trim_to_fit truncates it if it alone is oversized.
+        return costs.len() - 1;
+    }
+    // Advance to a turn boundary.
+    while start < costs.len() - 1 && roles[start] != "user" {
+        start += 1;
+    }
+    start
+}
+
+/// Which history messages to keep, given their roles in order (item:
+/// the dangling-question hijack).
+///
+/// When a turn fails — provider error, network drop — the user's
+/// question is already persisted but no assistant reply ever follows
+/// it. On the NEXT turn that orphan sits directly before the new
+/// question, and the model answers the orphan instead: observed live on
+/// 2026-08-12, when a smoke-test "what colour is grass?" was answered
+/// with the previous turn's QQQ holdings. A user message with no
+/// assistant reply before the next user message carries no information
+/// the model should act on — the person asked, nothing was answered,
+/// and they moved on — so it is dropped from context. (The CURRENT
+/// question is not part of this list; the builder appends it
+/// separately, so the newest orphan here is always a stale one.)
+pub(crate) fn history_keep_mask(roles: &[&str]) -> Vec<bool> {
+    let mut keep = vec![true; roles.len()];
+    for i in 0..roles.len() {
+        if roles[i] != "user" {
+            continue;
+        }
+        let answered = roles[i + 1..]
+            .iter()
+            .take_while(|r| **r != "user")
+            .any(|r| *r == "assistant");
+        if !answered {
+            keep[i] = false;
+        }
+    }
+    keep
 }
 
 /// Resolve the per-request `max_tokens` for a chat turn.
@@ -257,14 +371,98 @@ mod max_tokens_tests {
 
 #[cfg(test)]
 mod budget_tests {
-    use super::prompt_budget;
+    use super::{history_keep_mask, history_start_index, history_token_cap, prompt_budget};
 
     #[test]
     fn small_windows_keep_context() {
-        // 8k model, auto max_tokens: old formula gave 0. Floor = 2048.
-        assert_eq!(prompt_budget(8192, 0), 2048);
-        // 4k model: floor = 1024 (was 0).
-        assert_eq!(prompt_budget(4096, 0), 1024);
+        // 8k model, auto max_tokens: half the window each way. The old
+        // 8192 reserve floor ate the whole window and the cw/4 floor
+        // left 2048 — too little for system prompt + current turn, so
+        // ALL history was silently dropped (the 8k-window hazard).
+        assert_eq!(prompt_budget(8192, 0), 4096);
+        // 4k model: 2048 each way (was 1024).
+        assert_eq!(prompt_budget(4096, 0), 2048);
+    }
+
+    /// The hazard itself, stated as arithmetic: after a ~1.5k system
+    /// prompt and a ~0.5k current turn, an 8k model must still have
+    /// room for history.
+    #[test]
+    fn an_8k_model_keeps_room_for_history() {
+        let budget = prompt_budget(8192, 0);
+        let system_and_tail = 1500 + 500;
+        assert!(
+            budget - system_and_tail >= 1500,
+            "8k budget {budget} leaves less than 1500 tokens of history"
+        );
+        // And the history cap respects the smaller budget too.
+        assert_eq!(history_token_cap(budget), 2048);
+    }
+
+    #[test]
+    fn history_cap_bounds_large_windows() {
+        // 32k window -> 16k budget -> history capped at 6k, not 15k.
+        assert_eq!(history_token_cap(16_384), 6000);
+    }
+
+    #[test]
+    fn unanswered_questions_are_dropped_from_history() {
+        // user, assistant, user(FAILED - no reply), user, assistant
+        let roles = ["user", "assistant", "user", "user", "assistant"];
+        assert_eq!(
+            history_keep_mask(&roles),
+            vec![true, true, false, true, true],
+            "the unanswered question must be dropped"
+        );
+        // The hijack case observed live 2026-08-12: history ENDS with an
+        // unanswered question (its turn errored); the next question gets
+        // answered as if it were that one.
+        let roles = ["user", "assistant", "user"];
+        assert_eq!(history_keep_mask(&roles), vec![true, true, false]);
+        // A stop-pressed turn saves an assistant note, so it survives.
+        let roles = ["user", "assistant"];
+        assert_eq!(history_keep_mask(&roles), vec![true, true]);
+    }
+
+    #[test]
+    fn history_window_advances_in_quantized_steps() {
+        // 30 alternating turns of 100 tokens each; cap of 1000 keeps 10.
+        let costs = vec![100usize; 30];
+        let roles: Vec<&str> = (0..30)
+            .map(|i| if i % 2 == 0 { "user" } else { "assistant" })
+            .collect();
+        let start = history_start_index(&costs, &roles, 1000);
+        // Minimal drop is 20; already a multiple of 8? 20 -> quantized 24,
+        // then advanced to the next user boundary (24 is even = user).
+        assert_eq!(start, 24);
+        // One more turn appended: minimal drop 22 -> still quantized 24.
+        // The START DOES NOT MOVE — that is the cache-stability property.
+        let costs = vec![100usize; 32];
+        let roles: Vec<&str> = (0..32)
+            .map(|i| if i % 2 == 0 { "user" } else { "assistant" })
+            .collect();
+        assert_eq!(history_start_index(&costs, &roles, 1000), 24);
+    }
+
+    #[test]
+    fn history_under_cap_is_untouched() {
+        let costs = vec![100usize; 10];
+        let roles: Vec<&str> = (0..10)
+            .map(|i| if i % 2 == 0 { "user" } else { "assistant" })
+            .collect();
+        assert_eq!(history_start_index(&costs, &roles, 6000), 0);
+    }
+
+    #[test]
+    fn kept_history_starts_at_a_user_turn() {
+        // Odd offsets: quantized start lands on an assistant message and
+        // must advance to the next user one.
+        let costs = vec![100usize; 31];
+        let roles: Vec<&str> = (0..31)
+            .map(|i| if i % 2 == 1 { "user" } else { "assistant" })
+            .collect();
+        let start = history_start_index(&costs, &roles, 1000);
+        assert_eq!(roles[start], "user", "kept history must begin at a turn boundary");
     }
 
     #[test]

@@ -405,6 +405,49 @@
 
   let displayName = $state('');
   let models = $state<string[]>([]);
+  /** What each slot's SERVER actually has loaded, keyed by slug.
+   *  Fetched silently when Settings opens. Drives the mismatch warning:
+   *  llama.cpp ignores the model field in requests and serves whatever
+   *  it was launched with, so a swapped model on the server leaves the
+   *  config — and every model badge in the app — naming the wrong one.
+   *  Found live on 2026-08-17: the fast slot claimed base-static while
+   *  the server had the MTP-UD build loaded. */
+  let servedModels = $state<Record<string, string[]>>({});
+  async function checkServedModels() {
+    const cfg = app.config;
+    if (!cfg) return;
+    const slots: Array<[string, { provider: string; base_url: string; api_key: string | null; model: string; enabled: boolean }]> = [
+      ['fast', cfg.llm],
+      ['balanced', cfg.llm_balanced],
+      ['deep', cfg.llm_deep],
+      ['online', cfg.llm_online],
+      ['factcheck', cfg.llm_factcheck],
+    ];
+    for (const [slug, llmCfg] of slots) {
+      if (!llmCfg?.base_url?.trim() || !llmCfg.model?.trim()) continue;
+      try {
+        const r = await api.testLlmConnection({
+          provider: llmCfg.provider,
+          base_url: llmCfg.base_url,
+          api_key: llmCfg.api_key,
+        });
+        if (r.ok && r.models.length > 0) {
+          servedModels = { ...servedModels, [slug]: r.models };
+        }
+      } catch {
+        // Server unreachable — the liveness UI covers that; no warning here.
+      }
+    }
+  }
+  /** The warning line for a card, or null. Only warns when the server
+   *  reported a NON-EMPTY list that does not contain the configured id —
+   *  an empty or failed listing proves nothing. */
+  function servedMismatch(slug: string, configured: string): string | null {
+    const served = servedModels[slug];
+    if (!served || served.length === 0 || !configured.trim()) return null;
+    if (served.includes(configured.trim())) return null;
+    return served.join(', ');
+  }
   let saving = $state(false);
   let refreshing = $state(false);
   // Autostart toggle state. `null` while we hydrate from the OS; the
@@ -536,6 +579,7 @@
     // on another machine and there's nothing to refresh here.
     if (app.config?.mode === 'host') {
       void refreshModels({ silent: true });
+      void checkServedModels();
     }
     api.kinaiVersion().then((v) => (versionInfo = v)).catch(() => {});
     // Hydrate the autostart toggle from the OS. The plugin reads the
@@ -1250,6 +1294,15 @@
             </div>
             {#if slug === 'fast' && refreshMessage}
               <p class="text-xs text-white/50 mt-1">{refreshMessage}</p>
+            {/if}
+            {#if servedMismatch(slug, m.model)}
+              <p class="text-xs text-amber-400/90 mt-1">
+                ⚠ The server at this address reports
+                <code class="font-mono">{servedMismatch(slug, m.model)}</code>
+                — not the model configured here. Answers come from whatever
+                the server has loaded, so the name shown under replies is
+                wrong until they match.
+              </p>
             {/if}
           </label>
           <label class="block">
