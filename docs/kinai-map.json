@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-08-18T16:23:26+00:00",
-  "version": "0.2.101",
+  "generated_at": "2026-08-19T13:01:02+00:00",
+  "version": "0.2.102",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 237,
-    "head": "3e042da"
+    "commits": 240,
+    "head": "540a873"
   },
   "totals": {
     "rust_files": 60,
-    "rust_lines": 24801,
+    "rust_lines": 24999,
     "frontend_files": 33,
-    "frontend_lines": 11868,
-    "unit_tests": 178,
+    "frontend_lines": 11924,
+    "unit_tests": 184,
     "integration_test_files": 12,
-    "releases": 93,
-    "tags": 87
+    "releases": 94,
+    "tags": 88
   },
   "areas": [
     {
@@ -129,9 +129,9 @@
     {
       "path": "src/context/builder.rs",
       "area": "context",
-      "lines": 441,
+      "lines": 639,
       "doc": "Build the per-request message list from system prompt + memory + history.",
-      "tests": 8
+      "tests": 14
     },
     {
       "path": "src/context/extractor.rs",
@@ -580,7 +580,7 @@
     {
       "path": "frontend/src/lib/dev-tauri-mock.ts",
       "kind": "lib",
-      "lines": 359,
+      "lines": 362,
       "doc": "DEV-ONLY Tauri IPC mock. When the frontend runs in a plain browser (`pnpm dev` + localhost:1420, no Tauri shell), `window.__TAURI_INTERNALS__` doesn't exist and every invoke() rejects — the UI is untestable outside the app. This module installs a minimal in-memory backend so the whole UI (most importantly the /setup wizard) can be driven end-to-end in a browser: config mutations persist for the se"
     },
     {
@@ -682,7 +682,7 @@
     {
       "path": "frontend/src/routes/settings/+page.svelte",
       "kind": "route",
-      "lines": 2269,
+      "lines": 2322,
       "doc": "Fast model — the existing single slot. Reachable as `/fast` once the deep slot is also configured; the default routing target for plain (non-slash) messages."
     },
     {
@@ -1060,6 +1060,32 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.102",
+      "date": "2026-08-19",
+      "sections": {
+        "Changed": [
+          {
+            "title": "Long conversations stay fast for everyone.",
+            "detail": "The speed-up in 0.2.101 helped most when the same person kept chatting; the moment another family member spoke, the model had to re-read the first person's whole conversation again. KinAI now sends a bounded slice of recent history (roughly the last 25–40 turns) instead of everything it can fit, and moves that window in occasional steps rather than every turn — so switching between family members costs far less, and follow-ups stay as fast as 0.2.101 made them. Older parts of a conversation still reach the model through its saved notes."
+          }
+        ],
+        "Fixed": [
+          {
+            "title": "A failed answer no longer confuses the next question.",
+            "detail": "When a turn ended in an error, the unanswered question stayed in the conversation and the model would answer *it* instead of what you asked next. Those orphaned questions are now left out of what the model sees."
+          },
+          {
+            "title": "Settings warns when the server has a different model loaded.",
+            "detail": "Swap the model on your server and KinAI kept displaying the old name under every reply. Settings now checks each configured server and shows a warning when the name in your config is not what the server actually has loaded."
+          },
+          {
+            "title": "Small models remember the conversation again.",
+            "detail": "On models with an 8k context window, KinAI's own instructions could crowd out the entire conversation history — the model answered every message as if it were the first. The space split now scales with the window, so small models keep real history."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.101",
       "date": "2026-08-18",
@@ -3041,6 +3067,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.101",
+      "date": "2026-08-18"
+    },
     {
       "tag": "v0.2.100",
       "date": "2026-08-16"
