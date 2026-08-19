@@ -32,9 +32,14 @@ async fn a_failed_lookup_is_reported_honestly() {
     );
 
     // Exa selected, key absent -> every search fails before any network I/O.
+    // The fallback chain must be OFF: with it on, the missing-key error
+    // falls through to the user's real SearXNG/DuckDuckGo and the search
+    // SUCCEEDS whenever the network is up, inverting this test's premise.
     let broken = ToolSettings {
         search_engine: SearchEngine::Exa,
         search_api_key: None,
+        search_fallback_searxng: false,
+        searxng_url: String::new(),
         ..cfg.tools.clone()
     };
     let runtime = ToolRuntime::from_tool_settings(&broken);

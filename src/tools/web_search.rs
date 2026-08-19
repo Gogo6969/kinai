@@ -10,9 +10,10 @@
 //!     hardware, which is the promise the rest of the product makes.
 //!     Needs `formats: [json]` enabled on the instance.
 //!
-//! Exa additionally falls back to SearXNG when it is permanently
-//! unavailable (credits exhausted, key rejected) rather than letting the
-//! whole family lose search — see `search`.
+//! When Exa cannot answer (credits exhausted, key rejected, or still down
+//! after its own retry), searches fall back to SearXNG and then DuckDuckGo
+//! rather than letting the whole family lose search — see
+//! `exa_fallback_chain`.
 //!
 //! The engines have very different result shapes; we normalize to a
 //! single text block formatted as `N. <title>\n   <snippet>\n   <url>` so
@@ -46,34 +47,17 @@ DuckDuckGo to skip the key requirement."
             };
             match primary {
                 Ok(out) => Ok(out),
-                // Out of credits, or a key Exa refuses. Retrying Exa cannot
-                // help — but the family's own instance costs nothing and is
-                // already on the LAN, so the turn need not go dark. Only
-                // permanent failures land here: timeouts and 5xx are retried
-                // inside `exa_search` and never reach this point.
-                Err(e) if fallback_to_searxng && is_permanently_unavailable(&e) => {
-                    if searxng_url.trim().is_empty() {
-                        return Err(e);
-                    }
-                    tracing::warn!(
-                        "Exa unavailable ({e:#}); falling back to SearXNG at {}",
-                        searxng_url.trim()
-                    );
-                    match searxng_search(query, max_results, searxng_url).await {
-                        // Say which engine answered. Without this the model
-                        // cannot tell the user that its paid search is down,
-                        // and the host never learns to top it up.
-                        Ok(out) => Ok(format!(
-                            "(Exa is unavailable — {}. These results come from your own \
-SearXNG instead.)\n{out}",
-                            short_reason(&e)
-                        )),
-                        // Report the ORIGINAL failure too: "SearXNG refused"
-                        // alone would send the host looking at the wrong box.
-                        Err(fb) => Err(anyhow!(
-                            "Exa failed ({e:#}) and the SearXNG fallback also failed ({fb:#})"
-                        )),
-                    }
+                // Any Exa failure lands here — credits gone, key rejected,
+                // or a timeout that outlived the retry inside `exa_search`.
+                // Exa has already spent its "maybe a second later" budget by
+                // this point, so a DIFFERENT engine is the only move that
+                // beats going dark: the family's own SearXNG first, then
+                // DuckDuckGo, which needs no configuration at all. Transient
+                // failures used to stop here without falling back; then both
+                // Exa attempts timed out on a live-data question and the
+                // model answered it from memory.
+                Err(e) if fallback_to_searxng => {
+                    exa_fallback_chain(query, max_results, searxng_url, e).await
                 }
                 Err(e) => Err(e),
             }
@@ -81,14 +65,52 @@ SearXNG instead.)\n{out}",
     }
 }
 
-/// Errors that will not resolve by trying the same engine again: billing,
-/// authentication, and missing configuration.
-fn is_permanently_unavailable(e: &anyhow::Error) -> bool {
-    let msg = format!("{e:#}").to_lowercase();
-    ["(401", "(402", "(403", "no_more_credits", "credits limit", "payment required",
-     "no api key is configured", "invalid api key"]
-        .iter()
-        .any(|m| msg.contains(m))
+/// SearXNG (when a URL is configured), then DuckDuckGo. Each fallback
+/// result says which engine answered and why Exa did not — without that
+/// the model cannot tell the user its paid search is down, and the host
+/// never learns to top it up. Every failure stays in the final error:
+/// "SearXNG refused" alone would send the host looking at the wrong box.
+async fn exa_fallback_chain(
+    query: &str,
+    max_results: usize,
+    searxng_url: &str,
+    primary_err: anyhow::Error,
+) -> Result<String> {
+    let mut failures = format!("Exa failed ({primary_err:#})");
+    if !searxng_url.trim().is_empty() {
+        tracing::warn!(
+            "Exa unavailable ({primary_err:#}); falling back to SearXNG at {}",
+            searxng_url.trim()
+        );
+        match searxng_search(query, max_results, searxng_url).await {
+            Ok(out) => {
+                return Ok(format!(
+                    "(Exa is unavailable — {}. These results come from your own \
+SearXNG instead.)\n{out}",
+                    short_reason(&primary_err)
+                ))
+            }
+            Err(fb) => {
+                // Warn even though DuckDuckGo may rescue the search:
+                // otherwise a permanently misconfigured family instance
+                // (formats: [json] missing, wrong port) is masked for as
+                // long as the public fallback keeps answering.
+                tracing::warn!("SearXNG fallback failed ({fb:#}); falling back further");
+                failures.push_str(&format!("; the SearXNG fallback also failed ({fb:#})"));
+            }
+        }
+    }
+    tracing::warn!("Exa unavailable ({primary_err:#}); falling back to DuckDuckGo");
+    match duckduckgo_or_wikipedia(query, max_results).await {
+        Ok((out, engine)) => Ok(format!(
+            "(Exa is unavailable — {}. These results come from {engine} \
+instead.)\n{out}",
+            short_reason(&primary_err)
+        )),
+        Err(fb) => Err(anyhow!(
+            "{failures}; the DuckDuckGo fallback also failed ({fb:#})"
+        )),
+    }
 }
 
 /// One short clause for the note shown above fallback results.
@@ -100,6 +122,8 @@ fn short_reason(e: &anyhow::Error) -> &'static str {
         "its API key was rejected"
     } else if msg.contains("no api key is configured") {
         "no API key is configured"
+    } else if msg.contains("timed out") || msg.contains("connection") {
+        "it did not respond"
     } else {
         "it is unavailable"
     }
@@ -199,17 +223,28 @@ its settings.yml (`search: formats: [html, json]`) and restart it."
 // ---- DuckDuckGo (free, scrape) -------------------------------------------
 
 async fn duckduckgo_with_fallback(query: &str, max_results: usize) -> Result<String> {
+    Ok(duckduckgo_or_wikipedia(query, max_results).await?.0)
+}
+
+/// Same as `duckduckgo_with_fallback`, but says which engine answered —
+/// the Exa fallback note must not credit DuckDuckGo for Wikipedia's work.
+async fn duckduckgo_or_wikipedia(query: &str, max_results: usize) -> Result<(String, &'static str)> {
     if let Ok(text) = duckduckgo(query, max_results).await {
         if !text.trim().is_empty() && !text.contains("No results found") {
-            return Ok(text);
+            return Ok((text, "DuckDuckGo"));
         }
     }
-    wikipedia(query, max_results).await
+    wikipedia(query, max_results).await.map(|t| (t, "Wikipedia"))
 }
 
 async fn duckduckgo(query: &str, max: usize) -> Result<String> {
     let url = format!("https://duckduckgo.com/html/?q={}", urlencode(query));
-    let resp = reqwest::Client::new()
+    let resp = reqwest::Client::builder()
+        // Same ceiling as the other engines. Without it a stalled read
+        // hangs the whole turn — and this path runs precisely when the
+        // network is already misbehaving (it is Exa's fallback tail).
+        .timeout(Duration::from_secs(15))
+        .build()?
         .get(&url)
         .header("User-Agent", user_agent())
         .send()
@@ -235,7 +270,9 @@ async fn wikipedia(query: &str, max: usize) -> Result<String> {
         urlencode(query),
         max
     );
-    let resp = reqwest::Client::new()
+    let resp = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()?
         .get(&url)
         .header("User-Agent", user_agent())
         .send()
@@ -533,10 +570,10 @@ mod retry_tests {
 
 #[cfg(test)]
 mod fallback_tests {
-    use super::{is_permanently_unavailable, short_reason};
+    use super::short_reason;
 
     #[test]
-    fn credit_and_auth_failures_trigger_the_fallback() {
+    fn fallback_notes_name_the_reason_exa_is_out() {
         for (msg, reason) in [
             // The exact 2026-07-29 outage.
             ("Exa search failed (402 Payment Required): {\"error\":\"You have exceeded your \
@@ -544,28 +581,15 @@ credits limit\",\"tag\":\"NO_MORE_CREDITS\"}", "its credits are used up"),
             ("Exa search failed (401): invalid API key", "its API key was rejected"),
             ("Exa is selected as the search engine but no API key is configured.",
              "no API key is configured"),
+            // The exact 2026-08-19 13:15 incident: both Exa attempts timed
+            // out and the turn answered a live-data question from memory.
+            // Since then transient failures fall back too.
+            ("error sending request for url (https://api.exa.ai/search): operation timed out",
+             "it did not respond"),
+            ("error sending request: connection closed", "it did not respond"),
+            ("Exa search failed (503): unavailable", "it is unavailable"),
         ] {
-            let e = anyhow::anyhow!("{msg}");
-            assert!(is_permanently_unavailable(&e), "should fall back: {msg}");
-            assert_eq!(short_reason(&e), reason);
-        }
-    }
-
-    #[test]
-    fn transient_failures_do_not_fall_back() {
-        // These are retried on Exa itself; silently switching engines would
-        // hide a blip and make results inconsistent for no reason.
-        for msg in [
-            "Exa search failed (500): upstream error",
-            "Exa search failed (503): unavailable",
-            "Exa search failed (429): slow down",
-            "operation timed out",
-            "error sending request: connection closed",
-        ] {
-            assert!(
-                !is_permanently_unavailable(&anyhow::anyhow!("{msg}")),
-                "must stay on Exa: {msg}"
-            );
+            assert_eq!(short_reason(&anyhow::anyhow!("{msg}")), reason, "for: {msg}");
         }
     }
 }

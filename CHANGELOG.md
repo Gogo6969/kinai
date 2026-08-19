@@ -5,6 +5,24 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Fresh search results now outrank the model's memory.** Asked for live
+  data, a model could run the search, get the right answer back, and still
+  reply from its stale training data (one slot named Apple as QQQ's top
+  holding straight over a result saying NVIDIA). Search results now carry
+  an explicit instruction that they win over anything the model remembers.
+- **Search falls back instead of failing when Exa doesn't respond.** A
+  timed-out Exa call used to retry once and then give up, leaving the
+  model to answer a live-data question with no data. Any Exa failure now
+  falls back to your own SearXNG, then to the free public engines
+  (DuckDuckGo, then Wikipedia), and the reply says which engine answered.
+  This widens the existing "fall back" switch in Settings — previously it
+  covered only exhausted credits and rejected keys, and only your own
+  SearXNG; turn it off if a failed Exa search should stay failed.
+
 ## [0.2.102] — 2026-08-19
 
 ### Changed

@@ -429,6 +429,28 @@ Say the lookup failed and offer to try again.",
                 ok,
                 result: result.clone(),
             });
+            // Search results reach the model through this preamble because
+            // a model whose training data confidently "knows" the answer
+            // will override fresh results with its prior: asked for QQQ's
+            // top holding, one slot cited Apple straight over a search
+            // result saying NVIDIA. Scoped to the current state of the
+            // world — snippets can be stale or cached, so evergreen
+            // knowledge must not be overridden by an SEO fragment. Skipped
+            // when the engine found nothing: an empty result set under a
+            // "results win" order reads as "refuse to answer". Prepended,
+            // not appended, so `fit_tool_result` trims results — never the
+            // instruction.
+            let result = if ok && call.function.name == "web_search" && search_found_something(&result) {
+                format!(
+                    "(Live web search results, retrieved just now. Your training data is \
+older than these results: where they disagree about the current state of the world — \
+prices, holdings, standings, office-holders, news — the results win. Do not present \
+remembered figures as current when the results answer the question; if they do not \
+answer it, say the search came up short rather than guessing.)\n{result}"
+                )
+            } else {
+                result
+            };
             let (result, truncated) = fit_tool_result(result, tool_tokens_left);
             let cost = crate::context::token_guard::count_tokens(&result);
             tool_tokens_left = tool_tokens_left.saturating_sub(cost);
@@ -570,8 +592,26 @@ if your server doesn't support harmony tool-calling — toggle tools off in Sett
 /// Substring matching is safe here because this only ever sees error
 /// strings from `registry::execute`, never successful result text — a
 /// search result *about* HTTP 402 cannot disable the tool.
+/// Whether a successful `web_search` result actually contains results.
+/// Every engine reports an empty set as a final "No results…" line — which
+/// survives as the last line even under the fallback chain's "(Exa is
+/// unavailable — …)" prefix.
+fn search_found_something(result: &str) -> bool {
+    result
+        .lines()
+        .rev()
+        .find(|l| !l.trim().is_empty())
+        .is_some_and(|l| !l.trim().starts_with("No results"))
+}
+
 fn is_permanent_tool_failure(err: &str) -> bool {
     let e = err.to_lowercase();
+    // A failed fallback CHAIN is never permanent for the tool: the message
+    // carries Exa's 402/401 verbatim, but the chain's tail (SearXNG,
+    // DuckDuckGo) fails transiently, so a later call this turn can succeed.
+    if e.contains("fallback also failed") {
+        return false;
+    }
     ["(401", "(402", "(403", "(404", "no_more_credits", "payment required",
      "no api key", "api key is not configured", "invalid api key", "unauthorized"]
         .iter()
@@ -803,6 +843,42 @@ mod force_tests {
             user("thanks, that's all"),
         ];
         assert!(!should_force_search(&msgs));
+    }
+
+    #[test]
+    fn empty_search_results_are_recognized_across_engines() {
+        use super::search_found_something;
+        // The three engines' empty-set markers, bare and behind the
+        // fallback chain's note — none may earn the "results win" preamble.
+        for empty in [
+            "No results.",
+            "No results found",
+            "(Exa is unavailable — it did not respond. These results come \
+from DuckDuckGo instead.)\nNo results found",
+            "  \n",
+            "",
+        ] {
+            assert!(!search_found_something(empty), "for: {empty:?}");
+        }
+        for real in [
+            "1. NVIDIA tops QQQ\n   nvda is 8.3%\n   https://example.com",
+            "(Exa is unavailable — its credits are used up. These results \
+come from your own SearXNG instead.)\n1. A result\n   https://example.com",
+        ] {
+            assert!(search_found_something(real), "for: {real:?}");
+        }
+    }
+
+    #[test]
+    fn chain_failures_never_kill_the_tool_permanently() {
+        use super::is_permanent_tool_failure;
+        // Exa's 402 is permanent alone, but a failed chain's tail is
+        // transient — the combined message must not disable web_search.
+        assert!(is_permanent_tool_failure("Exa search failed (402): no credits"));
+        assert!(!is_permanent_tool_failure(
+            "Exa failed ((402): no credits); the SearXNG fallback also \
+failed (connect refused); the DuckDuckGo fallback also failed (timed out)"
+        ));
     }
 
     #[test]

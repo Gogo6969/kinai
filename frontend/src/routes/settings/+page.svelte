@@ -1496,12 +1496,14 @@
         <label class="flex items-start gap-2.5 cursor-pointer">
           <input type="checkbox" class="mt-0.5" bind:checked={tools.search_fallback_searxng} />
           <span class="text-sm text-white/70">
-            Use SearXNG if Exa runs out of credit
+            Fall back if Exa can't answer
             <span class="block text-xs text-white/40 mt-0.5">
-              Exa is metered. If its credits run out or the key is rejected,
-              searches fall back to your own instance
-              ({tools.searxng_url || 'not set'}) instead of failing, and the
-              reply says which engine answered. Brief outages still retry Exa.
+              Exa is metered. If any Exa search fails — credits out, key
+              rejected, or no answer after a retry — it falls back to your
+              own SearXNG instance ({tools.searxng_url || 'not set'}), then
+              to the free public engines (DuckDuckGo, then Wikipedia),
+              instead of failing — and the reply says which engine answered.
+              Off means a failed Exa search stays failed.
             </span>
           </span>
         </label>
