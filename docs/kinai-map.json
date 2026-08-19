@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-08-19T13:01:02+00:00",
+  "generated_at": "2026-08-19T22:03:27+00:00",
   "version": "0.2.102",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 240,
-    "head": "540a873"
+    "commits": 243,
+    "head": "a7c79a1"
   },
   "totals": {
     "rust_files": 60,
-    "rust_lines": 24999,
+    "rust_lines": 25230,
     "frontend_files": 33,
-    "frontend_lines": 11924,
-    "unit_tests": 184,
+    "frontend_lines": 11931,
+    "unit_tests": 188,
     "integration_test_files": 12,
     "releases": 94,
-    "tags": 88
+    "tags": 89
   },
   "areas": [
     {
@@ -129,9 +129,9 @@
     {
       "path": "src/context/builder.rs",
       "area": "context",
-      "lines": 639,
+      "lines": 753,
       "doc": "Build the per-request message list from system prompt + memory + history.",
-      "tests": 14
+      "tests": 17
     },
     {
       "path": "src/context/extractor.rs",
@@ -178,7 +178,7 @@
     {
       "path": "src/db/messages.rs",
       "area": "db",
-      "lines": 788,
+      "lines": 802,
       "doc": "Thread + message persistence (async via SQLx).",
       "tests": 7
     },
@@ -192,7 +192,7 @@
     {
       "path": "src/db/mod.rs",
       "area": "db",
-      "lines": 260,
+      "lines": 263,
       "doc": "SQLx-backed SQLite layer.",
       "tests": 0
     },
@@ -430,9 +430,9 @@
     {
       "path": "src/tools/loop_pipeline.rs",
       "area": "tools",
-      "lines": 998,
+      "lines": 1074,
       "doc": "Tool-calling pipeline.",
-      "tests": 22
+      "tests": 24
     },
     {
       "path": "src/tools/mod.rs",
@@ -451,9 +451,9 @@
     {
       "path": "src/tools/web_search.rs",
       "area": "tools",
-      "lines": 572,
+      "lines": 596,
       "doc": "Web search dispatcher.",
-      "tests": 5
+      "tests": 4
     },
     {
       "path": "src/tools/x_search.rs",
@@ -682,7 +682,7 @@
     {
       "path": "frontend/src/routes/settings/+page.svelte",
       "kind": "route",
-      "lines": 2322,
+      "lines": 2329,
       "doc": "Fast model — the existing single slot. Reachable as `/fast` once the deep slot is also configured; the default routing target for plain (non-slash) messages."
     },
     {
@@ -3067,6 +3067,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.102",
+      "date": "2026-08-19"
+    },
     {
       "tag": "v0.2.101",
       "date": "2026-08-18"
