@@ -44,28 +44,46 @@ pub async fn build_context(
     // History, three passes (rationale on the helpers below):
     //   1. drop the current message (it is appended separately, with the
     //      context note attached),
-    //   2. drop stale unanswered questions so a failed turn cannot
-    //      hijack the next one,
-    //   3. cap the history's token weight, advancing the window in
-    //      quantized steps so the prefix cache survives.
-    let history: Vec<&Message> = recent.iter().filter(|m| m.id != new_message.id).collect();
-    let roles: Vec<&str> = history.iter().map(|m| m.role.as_str()).collect();
+    //   2. drop orphaned questions so a failed turn cannot hijack the
+    //      next one,
+    //   3. cap the history's token weight, anchoring the window to a
+    //      MESSAGE IDENTITY so the prefix cache survives.
+    let total_in_thread = db
+        .count_messages_in_thread(thread_id)
+        .await
+        .unwrap_or(recent.len() as i64) as usize;
+    // Absolute ordinal of recent[i] within the whole thread — the
+    // LIMIT-50 load is a sliding tail, so slice indices alone are not
+    // stable identities.
+    let slice_base = total_in_thread.saturating_sub(recent.len());
+
+    let indexed: Vec<(usize, &Message)> = recent
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.id != new_message.id)
+        .map(|(i, m)| (slice_base + i, m))
+        .collect();
+    let roles: Vec<&str> = indexed.iter().map(|(_, m)| m.role.as_str()).collect();
     let keep = history_keep_mask(&roles);
-    let history: Vec<&Message> = history
+    let indexed: Vec<(usize, &Message)> = indexed
         .into_iter()
         .zip(keep)
-        .filter_map(|(m, k)| k.then_some(m))
+        .filter_map(|(pair, k)| k.then_some(pair))
         .collect();
-    let roles: Vec<&str> = history.iter().map(|m| m.role.as_str()).collect();
-    let costs: Vec<usize> = history
+    let roles: Vec<&str> = indexed.iter().map(|(_, m)| m.role.as_str()).collect();
+    let ordinals: Vec<usize> = indexed.iter().map(|(o, _)| *o).collect();
+    // Cost of what is actually SENT, not of the stored row: message_to_chat
+    // re-attaches extracted attachment text (a 20-token user row carrying a
+    // PDF can serialize to 10k+ tokens), and a cap measured on the stored
+    // content was fictional in exactly those threads.
+    let chat_history: Vec<ChatMessage> = indexed.iter().map(|(_, m)| message_to_chat(m)).collect();
+    let costs: Vec<usize> = chat_history
         .iter()
-        .map(|m| token_guard::count_tokens(&m.content) + 4)
+        .map(|m| token_guard::count_tokens(m.content()) + 4)
         .collect();
     let cap = history_token_cap(prompt_budget(llm.context_window, llm.max_tokens));
-    let start = history_start_index(&costs, &roles, cap);
-    for m in &history[start..] {
-        messages.push(message_to_chat(m));
-    }
+    let start = history_start_index(&costs, &roles, &ordinals, cap);
+    messages.extend(chat_history.into_iter().skip(start));
 
     // Facts, retrieved memories and the precise clock ride WITH the
     // newest user message instead of sitting in system messages before
@@ -190,41 +208,61 @@ pub(crate) fn history_token_cap(prompt_budget: usize) -> usize {
     (prompt_budget / 2).min(6000)
 }
 
-/// Number of oldest history messages to drop so the kept tail fits
-/// `cap`, quantized so the KEPT-START moves rarely.
+/// Where the kept history starts, anchored to a MESSAGE IDENTITY.
 ///
-/// Why quantize: a plain sliding window drops one more message almost
-/// every turn once the cap is reached, which moves the first token of
-/// the prompt every turn — and the llama.cpp prefix cache reuses tokens
-/// only up to the first difference, so a per-turn slide would undo the
-/// 0.2.101 cache work exactly when threads get long. Rounding the drop
-/// count up to a multiple of 8 makes the window advance in steps: one
-/// full re-prefill roughly every fourth turn, cheap cached turns in
-/// between. The start then advances to the next `user` message so the
-/// kept history always begins at a turn boundary (templates dislike
-/// leading assistant messages, and half a turn helps nobody).
-pub(crate) fn history_start_index(costs: &[usize], roles: &[&str], cap: usize) -> usize {
+/// Why not a plain sliding window: llama.cpp reuses its prompt cache
+/// only up to the first differing token, so if the first kept message
+/// changes every turn, the whole history re-prefills every turn — undoing
+/// the 0.2.101 cache work exactly on long threads. And why not quantize
+/// the slice-relative drop count (the first attempt): the audit executed
+/// that version and showed that once the LIMIT-50 load starts sliding,
+/// the relative index stays constant while the message UNDER it changes
+/// every turn — stable number, unstable identity, cache dead.
+///
+/// So the anchor is absolute: `ordinals[i]` is each message's position
+/// in the whole thread since its beginning. The minimal token-fitting
+/// start is rounded UP to a multiple of 8 in absolute position, and the
+/// kept window begins at the first message at-or-after that ordinal.
+/// The chosen boundary is therefore a fixed message until the thread
+/// grows past the next multiple of 8 (one re-prefill roughly every
+/// fourth turn), regardless of how the underlying 50-message load
+/// slides.
+///
+/// Degenerate guard, from the audit's finding 3: when the quantized
+/// ordinal overshoots the whole slice (few but heavy messages), fall
+/// back to the UNQUANTIZED start rather than keeping a single message —
+/// tiny histories are cheap to prefill, so cache stability is the wrong
+/// thing to buy there.
+pub(crate) fn history_start_index(
+    costs: &[usize],
+    roles: &[&str],
+    ordinals: &[usize],
+    cap: usize,
+) -> usize {
     debug_assert_eq!(costs.len(), roles.len());
+    debug_assert_eq!(costs.len(), ordinals.len());
     let total: usize = costs.iter().sum();
     if total <= cap || costs.is_empty() {
         return 0;
     }
-    // Walk from the newest backwards until the cap is spent.
+    // Newest-backwards walk: the minimal start that fits the cap.
     let mut kept = 0usize;
-    let mut start = costs.len();
-    while start > 0 && kept + costs[start - 1] <= cap {
-        kept += costs[start - 1];
-        start -= 1;
+    let mut min_start = costs.len();
+    while min_start > 0 && kept + costs[min_start - 1] <= cap {
+        kept += costs[min_start - 1];
+        min_start -= 1;
     }
-    // Quantize the drop count upward to a multiple of 8.
+    if min_start == 0 {
+        return 0;
+    }
     const QUANTUM: usize = 8;
-    let mut start = start.div_ceil(QUANTUM) * QUANTUM;
+    let anchor_ordinal = ordinals[min_start].div_ceil(QUANTUM) * QUANTUM;
+    let start = ordinals.partition_point(|&o| o < anchor_ordinal);
     if start >= costs.len() {
-        // Cap smaller than even the newest message — keep just that one;
-        // trim_to_fit truncates it if it alone is oversized.
-        return costs.len() - 1;
+        return min_start;
     }
-    // Advance to a turn boundary.
+    // Advance to a turn boundary so kept history begins with the user.
+    let mut start = start;
     while start < costs.len() - 1 && roles[start] != "user" {
         start += 1;
     }
@@ -246,18 +284,37 @@ pub(crate) fn history_start_index(costs: &[usize], roles: &[&str], cap: usize) -
 /// question is not part of this list; the builder appends it
 /// separately, so the newest orphan here is always a stale one.)
 pub(crate) fn history_keep_mask(roles: &[&str]) -> Vec<bool> {
+    // Pair answers to questions by LIFO matching: an assistant reply
+    // resolves the MOST RECENT still-open question. Users left unmatched
+    // at the end are orphans and are dropped.
+    //
+    // Two earlier versions of this rule were wrong, both caught before
+    // shipping. "No assistant before the next user" broke on interleaved
+    // turns — Telegram handles each update in its own task, so two quick
+    // messages persist as [user A, user B, assistant A, assistant B],
+    // and that rule permanently dropped the ANSWERED question A while
+    // keeping its reply as a dangling answer (0.2.102 audit). A pure
+    // suffix-count couldn't tell [u, a, u] (last question orphaned) from
+    // [u, u, a] (first question orphaned) — the position of the answer
+    // matters, which is exactly what the stack captures:
+    //   [u, a, u]        -> a resolves u0; u2 orphaned          (failed turn)
+    //   [uA, uB, aA, aB] -> both resolved                        (interleave)
+    //   [uA, uB, aB]     -> aB resolves uB; uA orphaned          (A's turn failed)
+    // A mid-generation build ([uA, uB, aA]) transiently drops uA for one
+    // turn and self-heals when aB lands.
     let mut keep = vec![true; roles.len()];
-    for i in 0..roles.len() {
-        if roles[i] != "user" {
-            continue;
+    let mut open: Vec<usize> = Vec::new();
+    for (i, r) in roles.iter().enumerate() {
+        match *r {
+            "user" => open.push(i),
+            "assistant" => {
+                open.pop();
+            }
+            _ => {}
         }
-        let answered = roles[i + 1..]
-            .iter()
-            .take_while(|r| **r != "user")
-            .any(|r| *r == "assistant");
-        if !answered {
-            keep[i] = false;
-        }
+    }
+    for i in open {
+        keep[i] = false;
     }
     keep
 }
@@ -415,8 +472,7 @@ mod budget_tests {
             "the unanswered question must be dropped"
         );
         // The hijack case observed live 2026-08-12: history ENDS with an
-        // unanswered question (its turn errored); the next question gets
-        // answered as if it were that one.
+        // unanswered question (its turn errored).
         let roles = ["user", "assistant", "user"];
         assert_eq!(history_keep_mask(&roles), vec![true, true, false]);
         // A stop-pressed turn saves an assistant note, so it survives.
@@ -424,24 +480,80 @@ mod budget_tests {
         assert_eq!(history_keep_mask(&roles), vec![true, true]);
     }
 
+    /// The 0.2.102 audit case: Telegram handles updates concurrently, so
+    /// two quick messages persist interleaved. BOTH are answered; the
+    /// old rule dropped question A forever and kept its reply dangling.
+    #[test]
+    fn interleaved_turns_keep_both_questions() {
+        let roles = ["user", "user", "assistant", "assistant"];
+        assert_eq!(history_keep_mask(&roles), vec![true, true, true, true]);
+        // Sequential failure looks count-identical to a mid-generation
+        // interleave, but the answer POSITION disambiguates: here aB
+        // follows both questions and resolves the newer one.
+        let roles = ["user", "user", "assistant"];
+        assert_eq!(history_keep_mask(&roles), vec![false, true, true]);
+    }
+
     #[test]
     fn history_window_advances_in_quantized_steps() {
-        // 30 alternating turns of 100 tokens each; cap of 1000 keeps 10.
+        // 30 alternating turns of 100 tokens; cap 1000 keeps 10.
         let costs = vec![100usize; 30];
         let roles: Vec<&str> = (0..30)
             .map(|i| if i % 2 == 0 { "user" } else { "assistant" })
             .collect();
-        let start = history_start_index(&costs, &roles, 1000);
-        // Minimal drop is 20; already a multiple of 8? 20 -> quantized 24,
-        // then advanced to the next user boundary (24 is even = user).
+        let ords: Vec<usize> = (0..30).collect();
+        let start = history_start_index(&costs, &roles, &ords, 1000);
         assert_eq!(start, 24);
-        // One more turn appended: minimal drop 22 -> still quantized 24.
-        // The START DOES NOT MOVE — that is the cache-stability property.
+        // Thread grows in place: start unchanged until a quantum crossing.
         let costs = vec![100usize; 32];
         let roles: Vec<&str> = (0..32)
             .map(|i| if i % 2 == 0 { "user" } else { "assistant" })
             .collect();
-        assert_eq!(history_start_index(&costs, &roles, 1000), 24);
+        let ords: Vec<usize> = (0..32).collect();
+        assert_eq!(history_start_index(&costs, &roles, &ords, 1000), 24);
+    }
+
+    /// THE audit finding: once the LIMIT-50 load slides, a relative
+    /// quantized index is a stable NUMBER over a changing MESSAGE — the
+    /// prompt prefix moved every turn anyway. Absolute ordinals anchor
+    /// the boundary to the same message across slides.
+    #[test]
+    fn sliding_window_keeps_the_same_anchor_message() {
+        let mk = |base: usize| {
+            let costs = vec![200usize; 50];
+            let roles: Vec<&'static str> = (0..50)
+                .map(|i| if (base + i) % 2 == 0 { "user" } else { "assistant" })
+                .collect();
+            let ords: Vec<usize> = (base..base + 50).collect();
+            (costs, roles, ords)
+        };
+        // Turn N: thread has 100 messages, slice covers ordinals 50..100.
+        let (c, r, o) = mk(50);
+        let s1 = history_start_index(&c, &r, &o, 6000);
+        let anchor1 = o[s1];
+        // Turn N+1: two more messages, slice covers 52..102.
+        let (c, r, o) = mk(52);
+        let s2 = history_start_index(&c, &r, &o, 6000);
+        let anchor2 = o[s2];
+        assert_eq!(
+            anchor1, anchor2,
+            "the first kept message must be the SAME message across a slide"
+        );
+    }
+
+    /// Audit finding 3: few-but-heavy messages must not collapse to a
+    /// single kept message. 6 x 1500 tokens under a 6000 cap fits 4.
+    #[test]
+    fn heavy_short_histories_keep_what_fits() {
+        let costs = vec![1500usize; 6];
+        let roles = ["user", "assistant", "user", "assistant", "user", "assistant"];
+        let ords: Vec<usize> = (0..6).collect();
+        let start = history_start_index(&costs, &roles, &ords, 6000);
+        assert!(
+            6 - start >= 3,
+            "expected several messages kept, got start={start} (keeps {})",
+            6 - start
+        );
     }
 
     #[test]
@@ -450,7 +562,8 @@ mod budget_tests {
         let roles: Vec<&str> = (0..10)
             .map(|i| if i % 2 == 0 { "user" } else { "assistant" })
             .collect();
-        assert_eq!(history_start_index(&costs, &roles, 6000), 0);
+        let ords: Vec<usize> = (0..10).collect();
+        assert_eq!(history_start_index(&costs, &roles, &ords, 6000), 0);
     }
 
     #[test]
@@ -461,7 +574,8 @@ mod budget_tests {
         let roles: Vec<&str> = (0..31)
             .map(|i| if i % 2 == 1 { "user" } else { "assistant" })
             .collect();
-        let start = history_start_index(&costs, &roles, 1000);
+        let ords: Vec<usize> = (0..31).collect();
+        let start = history_start_index(&costs, &roles, &ords, 1000);
         assert_eq!(roles[start], "user", "kept history must begin at a turn boundary");
     }
 

@@ -412,7 +412,7 @@
    *  config — and every model badge in the app — naming the wrong one.
    *  Found live on 2026-08-17: the fast slot claimed base-static while
    *  the server had the MTP-UD build loaded. */
-  let servedModels = $state<Record<string, string[]>>({});
+  let servedModels = $state<Record<string, { baseUrl: string; models: string[] }>>({});
   async function checkServedModels() {
     const cfg = app.config;
     if (!cfg) return;
@@ -432,7 +432,10 @@
           api_key: llmCfg.api_key,
         });
         if (r.ok && r.models.length > 0) {
-          servedModels = { ...servedModels, [slug]: r.models };
+          // Remember WHICH address was probed: the warning must go quiet
+          // the moment the user edits the Base URL, or it asserts things
+          // about "this address" that were measured against another one.
+          servedModels = { ...servedModels, [slug]: { baseUrl: llmCfg.base_url, models: r.models } };
         }
       } catch {
         // Server unreachable — the liveness UI covers that; no warning here.
@@ -442,11 +445,13 @@
   /** The warning line for a card, or null. Only warns when the server
    *  reported a NON-EMPTY list that does not contain the configured id —
    *  an empty or failed listing proves nothing. */
-  function servedMismatch(slug: string, configured: string): string | null {
-    const served = servedModels[slug];
-    if (!served || served.length === 0 || !configured.trim()) return null;
-    if (served.includes(configured.trim())) return null;
-    return served.join(', ');
+  function servedMismatch(slug: string, configured: string, baseUrl: string): string | null {
+    const probe = servedModels[slug];
+    if (!probe || probe.models.length === 0 || !configured.trim()) return null;
+    // Only meaningful while the card still points at the probed server.
+    if (probe.baseUrl !== baseUrl) return null;
+    if (probe.models.includes(configured.trim())) return null;
+    return probe.models.join(', ');
   }
   let saving = $state(false);
   let refreshing = $state(false);
@@ -1295,10 +1300,10 @@
             {#if slug === 'fast' && refreshMessage}
               <p class="text-xs text-white/50 mt-1">{refreshMessage}</p>
             {/if}
-            {#if servedMismatch(slug, m.model)}
+            {#if servedMismatch(slug, m.model, m.base_url)}
               <p class="text-xs text-amber-400/90 mt-1">
                 ⚠ The server at this address reports
-                <code class="font-mono">{servedMismatch(slug, m.model)}</code>
+                <code class="font-mono">{servedMismatch(slug, m.model, m.base_url)}</code>
                 — not the model configured here. Answers come from whatever
                 the server has loaded, so the name shown under replies is
                 wrong until they match.

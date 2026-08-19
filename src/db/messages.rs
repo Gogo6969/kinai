@@ -235,6 +235,20 @@ pub async fn load(
 ///     without the megabytes.
 /// The UI listing path (`load_messages`) is untouched — thumbnails still
 /// render from full rows.
+/// Total messages ever stored in a thread. The context builder uses it
+/// as an ABSOLUTE ordinal base so the history window can anchor to a
+/// message identity instead of a slice-relative index — the 0.2.102
+/// audit proved a relative anchor stops working the moment the LIMIT-50
+/// load starts sliding (the index stays constant while the messages
+/// under it change every turn, re-prefilling the whole prompt).
+pub async fn count_in_thread(pool: &SqlitePool, thread_id: &str) -> Result<i64> {
+    let row: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM messages WHERE thread_id = ?1")
+        .bind(thread_id)
+        .fetch_one(pool)
+        .await?;
+    Ok(row.0)
+}
+
 pub async fn load_for_context(
     pool: &SqlitePool,
     peer_id: &str,
