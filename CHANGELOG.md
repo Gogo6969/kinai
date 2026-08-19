@@ -5,6 +5,37 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.102] — 2026-08-19
+
+### Changed
+
+- **Long conversations stay fast for everyone.** The speed-up in 0.2.101
+  helped most when the same person kept chatting; the moment another
+  family member spoke, the model had to re-read the first person's whole
+  conversation again. KinAI now sends a bounded slice of recent history
+  (roughly the last 25–40 turns) instead of everything it can fit, and
+  moves that window in occasional steps rather than every turn — so
+  switching between family members costs far less, and follow-ups stay
+  as fast as 0.2.101 made them. Older parts of a conversation still
+  reach the model through its saved notes.
+
+### Fixed
+
+- **A failed answer no longer confuses the next question.** When a turn
+  ended in an error, the unanswered question stayed in the conversation
+  and the model would answer *it* instead of what you asked next. Those
+  orphaned questions are now left out of what the model sees.
+- **Settings warns when the server has a different model loaded.** Swap
+  the model on your server and KinAI kept displaying the old name under
+  every reply. Settings now checks each configured server and shows a
+  warning when the name in your config is not what the server actually
+  has loaded.
+- **Small models remember the conversation again.** On models with an
+  8k context window, KinAI's own instructions could crowd out the entire
+  conversation history — the model answered every message as if it were
+  the first. The space split now scales with the window, so small models
+  keep real history.
+
 ## [0.2.101] — 2026-08-18
 
 ### Changed
