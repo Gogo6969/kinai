@@ -14,9 +14,23 @@
  * would name a model the server never registered.
  */
 export function displayModelName(model: string | undefined | null): string {
+  const s = baseModelName(model);
+  return [...s].length > 40 ? [...s].slice(0, 39).join('') + '…' : s;
+}
+
+/**
+ * Canonical form for "is this the same model?" comparisons: basename,
+ * `.gguf` stripped, case-folded. A llama-server without an alias reports
+ * a full path from its own filesystem (`C:\models\Foo-Q6_K.gguf`) while
+ * the config holds the bare filename — same model, not a mismatch.
+ */
+export function modelIdKey(model: string | undefined | null): string {
+  return baseModelName(model).toLowerCase();
+}
+
+function baseModelName(model: string | undefined | null): string {
   let s = (model ?? '').trim();
   const cut = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'));
   if (cut >= 0) s = s.slice(cut + 1);
-  s = s.replace(/\.gguf$/i, '');
-  return [...s].length > 40 ? [...s].slice(0, 39).join('') + '…' : s;
+  return s.replace(/\.gguf$/i, '');
 }

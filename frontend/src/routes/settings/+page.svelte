@@ -16,7 +16,7 @@
     type VisionSettings,
   } from '$lib/api';
   import { THIS_COMPUTER, MODIFIERS, isMac, byPlatform } from '$lib/platform';
-  import { displayModelName } from '$lib/modelName';
+  import { displayModelName, modelIdKey } from '$lib/modelName';
   import { app } from '$lib/stores/app.svelte';
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
@@ -444,13 +444,16 @@
   }
   /** The warning line for a card, or null. Only warns when the server
    *  reported a NON-EMPTY list that does not contain the configured id —
-   *  an empty or failed listing proves nothing. */
+   *  an empty or failed listing proves nothing. Ids are compared via
+   *  modelIdKey: an alias-less llama-server reports the full model path
+   *  from its own disk, and `C:\models\Foo.gguf` vs a configured `Foo.gguf`
+   *  is the same model, not a mismatch. */
   function servedMismatch(slug: string, configured: string, baseUrl: string): string | null {
     const probe = servedModels[slug];
     if (!probe || probe.models.length === 0 || !configured.trim()) return null;
     // Only meaningful while the card still points at the probed server.
     if (probe.baseUrl !== baseUrl) return null;
-    if (probe.models.includes(configured.trim())) return null;
+    if (probe.models.some((m) => modelIdKey(m) === modelIdKey(configured))) return null;
     return probe.models.join(', ');
   }
   let saving = $state(false);
