@@ -9,6 +9,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- **The model-mismatch warning no longer cries wolf over file paths.** A
+  llama.cpp server started without an alias reports its model as the full
+  path on its own disk (`C:\models\Foo.gguf`); Settings compared that
+  string to the configured `Foo.gguf` and warned about a mismatch that
+  wasn't one. Ids are now compared by filename.
+
 - **Fresh search results now outrank the model's memory.** Asked for live
   data, a model could run the search, get the right answer back, and still
   reply from its stale training data (one slot named Apple as QQQ's top
