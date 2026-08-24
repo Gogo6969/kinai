@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-08-19T22:03:27+00:00",
-  "version": "0.2.102",
+  "generated_at": "2026-08-24T04:05:40+00:00",
+  "version": "0.2.103",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 243,
-    "head": "a7c79a1"
+    "commits": 249,
+    "head": "a9070cc"
   },
   "totals": {
     "rust_files": 60,
-    "rust_lines": 25230,
+    "rust_lines": 25450,
     "frontend_files": 33,
-    "frontend_lines": 11931,
-    "unit_tests": 188,
+    "frontend_lines": 11974,
+    "unit_tests": 190,
     "integration_test_files": 12,
-    "releases": 94,
-    "tags": 89
+    "releases": 95,
+    "tags": 90
   },
   "areas": [
     {
@@ -115,16 +115,16 @@
     {
       "path": "src/commands.rs",
       "area": "entry",
-      "lines": 3259,
+      "lines": 3262,
       "doc": "Tauri command surface — every IPC entrypoint the frontend can call.",
       "tests": 0
     },
     {
       "path": "src/config.rs",
       "area": "entry",
-      "lines": 718,
+      "lines": 754,
       "doc": "Persistent configuration at `~/.kinai/config.toml`.",
-      "tests": 5
+      "tests": 6
     },
     {
       "path": "src/context/builder.rs",
@@ -430,7 +430,7 @@
     {
       "path": "src/tools/loop_pipeline.rs",
       "area": "tools",
-      "lines": 1074,
+      "lines": 1076,
       "doc": "Tool-calling pipeline.",
       "tests": 24
     },
@@ -493,9 +493,9 @@
     {
       "path": "src/vision.rs",
       "area": "routing",
-      "lines": 561,
+      "lines": 740,
       "doc": "Vision routing for image attachments.",
-      "tests": 8
+      "tests": 9
     }
   ],
   "frontend": [
@@ -508,7 +508,7 @@
     {
       "path": "frontend/src/lib/api.ts",
       "kind": "lib",
-      "lines": 671,
+      "lines": 676,
       "doc": "Pause toggle. When `false` this slot is hidden from slash menus and skipped during message routing. Defaults to `true` for the fast slot, `false` for the deep slot (until the user fills it)."
     },
     {
@@ -598,7 +598,7 @@
     {
       "path": "frontend/src/lib/modelName.ts",
       "kind": "lib",
-      "lines": 23,
+      "lines": 37,
       "doc": "The model id, the way a human should read it. llama-server registers whatever `-m` it was launched with unless an alias was set — so a slot's id can be `/home/olares/models/Qwen3.6-35B-A3B-heretic-MTP-Q4_K_M.gguf`, a filesystem path from another machine, and that string was rendering verbatim in the Settings model dropdown and the composer's picker. Mirror of the Rust rules in slash.rs `display_mo"
     },
     {
@@ -682,7 +682,7 @@
     {
       "path": "frontend/src/routes/settings/+page.svelte",
       "kind": "route",
-      "lines": 2329,
+      "lines": 2353,
       "doc": "Fast model — the existing single slot. Reachable as `/fast` once the deep slot is also configured; the default routing target for plain (non-slash) messages."
     },
     {
@@ -1060,6 +1060,32 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.103",
+      "date": "2026-08-23",
+      "sections": {
+        "Added": [
+          {
+            "title": "Models that can see answer image questions themselves.",
+            "detail": "KinAI used to decide \"can this model see?\" from a list of known model names, so a local model with a vision projector loaded (like the fast slot's Qwen3.8) was treated as blind and every image detoured through the Vision endpoint. Now KinAI asks a llama.cpp server directly whether it has a projector loaded, and each model card in Settings gets an \"Image recognition\" choice: Auto (ask the server — the new default), This model handles images itself, or Route images to the Vision endpoint (the old behavior). Cloud models keep using the name list under Auto."
+          }
+        ],
+        "Fixed": [
+          {
+            "title": "The model-mismatch warning no longer cries wolf over file paths.",
+            "detail": "A llama.cpp server started without an alias reports its model as the full path on its own disk (`C:\\models\\Foo.gguf`); Settings compared that string to the configured `Foo.gguf` and warned about a mismatch that wasn't one. Ids are now compared by filename."
+          },
+          {
+            "title": "Fresh search results now outrank the model's memory.",
+            "detail": "Asked for live data, a model could run the search, get the right answer back, and still reply from its stale training data (one slot named Apple as QQQ's top holding straight over a result saying NVIDIA). Search results now carry an explicit instruction that they win over anything the model remembers."
+          },
+          {
+            "title": "Search falls back instead of failing when Exa doesn't respond.",
+            "detail": "A timed-out Exa call used to retry once and then give up, leaving the model to answer a live-data question with no data. Any Exa failure now falls back to your own SearXNG, then to the free public engines (DuckDuckGo, then Wikipedia), and the reply says which engine answered. This widens the existing \"fall back\" switch in Settings — previously it covered only exhausted credits and rejected keys, and only your own SearXNG; turn it off if a failed Exa search should stay failed."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.102",
       "date": "2026-08-19",
@@ -3067,6 +3093,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.103",
+      "date": "2026-08-23"
+    },
     {
       "tag": "v0.2.102",
       "date": "2026-08-19"
