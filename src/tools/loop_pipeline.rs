@@ -443,10 +443,12 @@ Say the lookup failed and offer to try again.",
             let result = if ok && call.function.name == "web_search" && search_found_something(&result) {
                 format!(
                     "(Live web search results, retrieved just now. Your training data is \
-older than these results: where they disagree about the current state of the world — \
-prices, holdings, standings, office-holders, news — the results win. Do not present \
-remembered figures as current when the results answer the question; if they do not \
-answer it, say the search came up short rather than guessing.)\n{result}"
+older than these results: for questions about the current state of the world — prices, \
+holdings, standings, office-holders, news — answer ONLY from these results, never from \
+memory, even when memory feels certain. Where the results disagree with each other, go \
+with what the majority of the most recent ones say — a single stale page does not beat \
+several current ones. If the results do not answer the question, say the search came up \
+short rather than guessing.)\n{result}"
                 )
             } else {
                 result
