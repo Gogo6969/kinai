@@ -55,7 +55,7 @@
     api_key: null,
     temperature: 0.7,
     max_tokens: 1024,
-    system_addendum: '',
+    system_addendum: '', image_recognition: 'auto',
     enabled: true,
   });
   // Secondary "deep" slot — same shape, but starts disabled + empty so
@@ -70,7 +70,7 @@
     api_key: null,
     temperature: 0.7,
     max_tokens: 0,
-    system_addendum: '',
+    system_addendum: '', image_recognition: 'auto',
     enabled: false,
   });
   let pickedBackendDeep = $state<DetectedBackend | null>(null);

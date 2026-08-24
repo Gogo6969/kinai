@@ -7,6 +7,18 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **Models that can see answer image questions themselves.** KinAI used
+  to decide "can this model see?" from a list of known model names, so a
+  local model with a vision projector loaded (like the fast slot's
+  Qwen3.8) was treated as blind and every image detoured through the
+  Vision endpoint. Now KinAI asks a llama.cpp server directly whether it
+  has a projector loaded, and each model card in Settings gets an "Image
+  recognition" choice: Auto (ask the server — the new default), This
+  model handles images itself, or Route images to the Vision endpoint
+  (the old behavior). Cloud models keep using the name list under Auto.
+
 ### Fixed
 
 - **The model-mismatch warning no longer cries wolf over file paths.** A

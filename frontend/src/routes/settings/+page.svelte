@@ -42,7 +42,7 @@
     api_key: null,
     temperature: 0.7,
     max_tokens: 1024,
-    system_addendum: '',
+    system_addendum: '', image_recognition: 'auto',
     enabled: true,
   });
   // Deep model — new secondary slot. Disabled + empty by default so
@@ -56,7 +56,7 @@
     api_key: null,
     temperature: 0.7,
     max_tokens: 0,
-    system_addendum: '',
+    system_addendum: '', image_recognition: 'auto',
     enabled: false,
   });
   let llmDeepSaveState = $state<'idle' | 'saving' | 'ok' | 'fail'>('idle');
@@ -69,7 +69,7 @@
     api_key: null,
     temperature: 0.7,
     max_tokens: 0,
-    system_addendum: '',
+    system_addendum: '', image_recognition: 'auto',
     enabled: false,
   });
   // Online model — a hosted, OpenAI-compatible chat slot (`/online`).
@@ -85,7 +85,7 @@
     api_key: null,
     temperature: 0.7,
     max_tokens: 0,
-    system_addendum: '',
+    system_addendum: '', image_recognition: 'auto',
     // Starts Active so a first-time configure (fill URL + model, Save)
     // yields a working slot; the save still forces `enabled: false`
     // while the base URL is empty.
@@ -101,7 +101,7 @@
     api_key: null,
     temperature: 0.2,
     max_tokens: 0,
-    system_addendum: '',
+    system_addendum: '', image_recognition: 'auto',
     enabled: false,
   });
   let overlay = $state<OverlaySettings>({
@@ -1351,6 +1351,27 @@
             </p>
           </label>
         </div>
+        {#if slug !== 'factcheck'}
+          <label class="block">
+            <span class="text-sm text-white/70">Image recognition</span>
+            <select
+              class="kin-field mt-1"
+              value={m.image_recognition ?? 'auto'}
+              onchange={(e) => set({ ...m, image_recognition: (e.currentTarget as HTMLSelectElement).value })}
+            >
+              <option value="auto">Auto — ask the server (recommended)</option>
+              <option value="native">This model handles images itself</option>
+              <option value="external">Route images to the Vision endpoint</option>
+            </select>
+            <p class="text-xs text-white/40 mt-1">
+              Auto asks a llama.cpp server whether it has a vision projector
+              loaded, and sends images straight to this model when it does —
+              other providers are matched against a list of known vision
+              models. Pick the Vision endpoint option to always use the
+              endpoint configured under “Vision” below for this slot.
+            </p>
+          </label>
+        {/if}
         <label class="block">
           <span class="text-sm text-white/70">API key (optional)</span>
           <input

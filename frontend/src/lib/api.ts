@@ -17,6 +17,11 @@ export interface LlmSettings {
    *  and skipped during message routing. Defaults to `true` for the
    *  fast slot, `false` for the deep slot (until the user fills it). */
   enabled: boolean;
+  /** How this slot handles image attachments: "auto" (probe a llama.cpp
+   *  server for a loaded projector, else the known-vision name list),
+   *  "native" (always this model), or "external" (always the Vision
+   *  endpoint — the pre-0.2.103 behavior). */
+  image_recognition: string;
 }
 
 export interface HostSettings {

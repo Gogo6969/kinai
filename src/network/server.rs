@@ -1014,7 +1014,7 @@ async fn run_chat_turn(
     // model-routing slot's settings (fast vs deep) through both the
     // vision decision and the pipeline so the chosen slot's
     // vision-capability profile and context window apply.
-    let route = crate::vision::decide(&active_llm_settings.model, attachments, &cfg.vision)?;
+    let route = crate::vision::decide(&active_llm_settings, attachments, &cfg.vision).await?;
     // Runtime copy for post-turn image recovery (run_with_route consumes it).
     let recover_runtime = tool_runtime.clone();
     let served = crate::slash::run_turn_with_slot_failover(

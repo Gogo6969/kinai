@@ -46,6 +46,98 @@ pub fn is_vision_capable(model: &str) -> bool {
     VISION_CAPABLE_FRAGMENTS.iter().any(|frag| lc.contains(frag))
 }
 
+/// The per-slot image_recognition setting, resolved to a yes/no. Pure so
+/// the whole decision table is unit-testable; the async probing lives in
+/// `chat_handles_images`.
+///
+/// `probed` is the server's own answer when we have one (llama.cpp
+/// `/props` modalities). It outranks the name list because the name
+/// list can be wrong in BOTH directions for llama.cpp: a "qwen-vl"
+/// GGUF loaded without its mmproj projector cannot see, and a plainly
+/// named model with a projector can.
+fn resolve_native_vision(setting: &str, probed: Option<bool>, model: &str) -> bool {
+    match setting {
+        "native" => true,
+        "external" => false,
+        // "auto" and anything unrecognized.
+        _ => probed.unwrap_or_else(|| is_vision_capable(model)),
+    }
+}
+
+/// Ask a llama.cpp server whether it has a multimodal projector loaded.
+/// `None` when the server doesn't answer or doesn't report modalities
+/// (old builds) — the caller falls back to the name list.
+///
+/// Cached per base_url for a short window: the answer changes only when
+/// the server is relaunched with different flags, but every image turn
+/// and every text follow-up in an image thread asks.
+async fn probe_llamacpp_vision(base_url: &str, api_key: Option<&str>) -> Option<bool> {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static CACHE: Mutex<Option<HashMap<String, (Option<bool>, Instant)>>> = Mutex::new(None);
+    const TTL: Duration = Duration::from_secs(120);
+
+    let key = base_url.trim_end_matches('/').to_string();
+    if let Some((hit, at)) = CACHE
+        .lock()
+        .unwrap()
+        .get_or_insert_with(HashMap::new)
+        .get(&key)
+        .copied()
+    {
+        if at.elapsed() < TTL {
+            return hit;
+        }
+    }
+    let probed = async {
+        let mut req = reqwest::Client::builder()
+            .timeout(Duration::from_secs(3))
+            .build()
+            .ok()?
+            .get(format!("{key}/props"));
+        // llama.cpp started with --api-key guards /props too on recent
+        // builds — an unauthenticated probe would silently disable the
+        // feature on exactly the servers configured most carefully.
+        if let Some(k) = api_key.filter(|k| !k.trim().is_empty()) {
+            req = req.bearer_auth(k.trim());
+        }
+        let resp = req.send().await.ok()?;
+        let body: serde_json::Value = resp.json().await.ok()?;
+        body.get("modalities")?.get("vision")?.as_bool()
+    }
+    .await;
+    CACHE
+        .lock()
+        .unwrap()
+        .get_or_insert_with(HashMap::new)
+        .insert(key, (probed, Instant::now()));
+    probed
+}
+
+/// Can this chat slot answer image turns itself? The single source of
+/// truth for both the routing decision (`decide`) and the strip-images
+/// guard in `run_with_route` — they must agree, or a turn routed to the
+/// chat model would have its images stripped before the model saw them.
+///
+/// The probe runs ONLY under "auto": a slot pinned to "native" or
+/// "external" has already answered the question, and paying a network
+/// round-trip for a value the resolver discards would punish exactly
+/// the user who pinned the setting to avoid probing.
+pub async fn chat_handles_images(settings: &LlmSettings) -> bool {
+    let setting = settings.image_recognition.as_str();
+    let needs_probe = !matches!(setting, "native" | "external");
+    let probed = if needs_probe
+        && settings.provider == "llamacpp"
+        && !settings.base_url.trim().is_empty()
+    {
+        probe_llamacpp_vision(settings.base_url.trim(), settings.api_key.as_deref()).await
+    } else {
+        None
+    };
+    resolve_native_vision(setting, probed, &settings.model)
+}
+
 /// Does this attachment carry an image?
 pub fn is_image(att: &Attachment) -> bool {
     let mime_ok = att
@@ -169,23 +261,42 @@ pub enum Route {
 
 /// Decide the route for a turn.
 ///
-/// * `chat_model` — the host's currently selected chat model id
+/// * `chat` — the settings of the slot serving this turn (its
+///   image_recognition preference and server decide the native path)
 /// * `attachments` — what the user attached this turn
 /// * `vision` — the host's vision settings
-pub fn decide(chat_model: &str, attachments: &[Attachment], vision: &VisionSettings) -> Result<Route> {
+pub async fn decide(
+    chat: &LlmSettings,
+    attachments: &[Attachment],
+    vision: &VisionSettings,
+) -> Result<Route> {
     let has_image = attachments.iter().any(is_image);
     if !has_image {
         return Ok(Route::Chat);
     }
-    if is_vision_capable(chat_model) {
+    if chat_handles_images(chat).await {
+        tracing::info!(model = %chat.model, "image turn: chat model answers natively");
         return Ok(Route::Chat);
     }
+    tracing::info!(model = %chat.model, "image turn: routing to the vision endpoint");
     if !vision.enabled || vision.primary.base_url.is_empty() || vision.primary.model.is_empty() {
-        return Err(anyhow!(
-            "This image needs a vision-capable model. Either pick one as your chat model \
-             (Claude Sonnet/Opus, Gemini Pro/Flash, GPT-4o, llava, qwen-vl…) or configure \
-             a Vision endpoint in Settings → Host."
-        ));
+        // Branch on WHY this slot can't take the image, or the advice
+        // sends people to fixes that can't work (a slot pinned to
+        // "external" ignores the chat model entirely; a probed "no"
+        // outranks a vision-sounding model name).
+        return Err(match chat.image_recognition.as_str() {
+            "external" => anyhow!(
+                "This model's Image recognition setting routes images to the Vision \
+                 endpoint, but no Vision endpoint is configured. Set one up under \
+                 Settings → Vision, or change the model's Image recognition setting."
+            ),
+            _ => anyhow!(
+                "This image needs a model that can see. Give this model's server a \
+                 vision projector (llama.cpp --mmproj) or pick a vision-capable chat \
+                 model (Claude Sonnet/Opus, Gemini, GPT-4o, llava, qwen-vl…) — or \
+                 configure a Vision endpoint under Settings → Vision."
+            ),
+        });
     }
     let failover = if !vision.failover.base_url.is_empty() && !vision.failover.model.is_empty() {
         Some(vision.failover.clone())
@@ -219,6 +330,9 @@ pub fn endpoint_to_llm_settings(ep: &VisionEndpoint, base: &LlmSettings) -> LlmS
         max_tokens: base.max_tokens,
         system_addendum: base.system_addendum.clone(),
         enabled: true,
+        // This client IS the vision model — nothing downstream re-routes
+        // on the field, but "native" is the truthful value.
+        image_recognition: "native".into(),
     }
 }
 
@@ -248,32 +362,76 @@ pub async fn run_with_route(
     use crate::tools::loop_pipeline::run_pipeline;
     match route {
         Route::Chat => {
-            // Strip image parts from the messages when the chat model
-            // can't see images. This is the fix for the "/deep fails in
-            // a thread that earlier had an image" bug: decide() only
-            // inspects the CURRENT message's attachments, so a text
-            // follow-up routes here (Route::Chat) — but build_context
-            // still carries any IMAGE from the thread history, which
-            // serialize_message turns into OpenAI multipart content. A
-            // non-vision backend (notably llama.cpp without an mmproj
-            // projector — exactly the deep slot's Qwen3) then rejects
-            // the WHOLE request with "500: image input is not supported".
-            // The text model couldn't use the image anyway; replace it
-            // with a short text marker so the turn still succeeds and the
-            // conversation still references that an image was there.
-            let messages = if is_vision_capable(&default_client.settings.model) {
-                messages
-            } else {
-                strip_images_from_history(messages)
-            };
+            use crate::context::ChatMessage;
+            let has_any_image = messages.iter().any(|m| {
+                matches!(m, ChatMessage::User { image_data_urls, .. } if !image_data_urls.is_empty())
+            });
+            if !has_any_image {
+                // Pure text turn in an image-free window — there is no
+                // capability question to answer, so no probe either.
+                return run_pipeline(
+                    default_client, messages, tools, max_tokens, tool_runtime, handlers, cancel,
+                )
+                .await
+                .map_err(Into::into);
+            }
+            // Resolved ONCE per attempt and reused for every decision
+            // below — the slot failover re-enters this function with the
+            // failover slot's settings, so each attempt answers for the
+            // model that will actually serve it.
+            let native = chat_handles_images(&default_client.settings).await;
+            if !native {
+                // Strip image parts from the messages when the chat model
+                // can't see images. This is the fix for the "/deep fails in
+                // a thread that earlier had an image" bug: decide() only
+                // inspects the CURRENT message's attachments, so a text
+                // follow-up routes here (Route::Chat) — but build_context
+                // still carries any IMAGE from the thread history, which
+                // serialize_message turns into OpenAI multipart content. A
+                // non-vision backend (notably llama.cpp without an mmproj
+                // projector — exactly the deep slot's Qwen3) then rejects
+                // the WHOLE request with "500: image input is not supported".
+                // The text model couldn't use the image anyway; replace it
+                // with a short text marker so the turn still succeeds and the
+                // conversation still references that an image was there.
+                let messages = strip_images_from_history(messages);
+                return run_pipeline(
+                    default_client, messages, tools, max_tokens, tool_runtime, handlers, cancel,
+                )
+                .await
+                .map_err(Into::into);
+            }
+            let current_turn_has_image = matches!(
+                messages.iter().rev().find(|m| matches!(m, ChatMessage::User { .. })),
+                Some(ChatMessage::User { image_data_urls, .. }) if !image_data_urls.is_empty()
+            );
+            if current_turn_has_image {
+                // The model can see and the user just attached an image.
+                // Mirror the Vision route's contract exactly — current
+                // image only, no tools — so going native changes WHO
+                // answers, never how an image turn behaves: tool loops
+                // misfire on multipart content (see the Vision arm), and
+                // a forced web_search round would fire on question-shaped
+                // photo captions ("how much is this worth today?").
+                let messages = keep_only_current_turn_images(messages);
+                let no_tools: Vec<crate::tools::registry::ToolDef> = vec![];
+                return run_pipeline(
+                    default_client,
+                    messages,
+                    no_tools,
+                    max_tokens,
+                    crate::tools::registry::ToolRuntime::default(),
+                    handlers,
+                    cancel,
+                )
+                .await
+                .map_err(Into::into);
+            }
+            // Text follow-up in a thread whose window still holds an
+            // image, on a model that can see it: a normal tool-enabled
+            // turn, history image intact.
             run_pipeline(
-                default_client,
-                messages,
-                tools,
-                max_tokens,
-                tool_runtime,
-                handlers,
-                cancel,
+                default_client, messages, tools, max_tokens, tool_runtime, handlers, cancel,
             )
             .await
             .map_err(Into::into)
@@ -446,6 +604,27 @@ mod image_strip_tests {
 #[cfg(test)]
 mod vision_capable_tests {
     use super::is_vision_capable;
+
+    #[test]
+    fn per_slot_setting_resolves_the_whole_decision_table() {
+        use super::resolve_native_vision as resolve;
+        // Explicit overrides win over everything.
+        assert!(resolve("native", Some(false), "qwen3-32b"));
+        assert!(resolve("native", None, "qwen3-32b"));
+        assert!(!resolve("external", Some(true), "Qwen2.5-VL-32B"));
+        // Auto: the server's own answer outranks the name list — a plainly
+        // named model with an mmproj CAN see (Qwen3.8-27B), and a VL-named
+        // GGUF loaded without its projector CANNOT.
+        assert!(resolve("auto", Some(true), "Qwen3.8-27B-Q4_K_M"));
+        assert!(!resolve("auto", Some(false), "Qwen2.5-VL-32B-Instruct"));
+        // Auto with no probe answer (cloud provider, old llama.cpp build,
+        // server down): the name list decides, exactly as before 0.2.103.
+        assert!(resolve("auto", None, "gpt-4o"));
+        assert!(!resolve("auto", None, "qwen3-32b"));
+        // Unknown values behave like auto, not like a crash.
+        assert!(resolve("", Some(true), "qwen3-32b"));
+        assert!(!resolve("typo", None, "qwen3-32b"));
+    }
 
     #[test]
     fn recognises_qwen_vl_generations_as_chat_vision() {

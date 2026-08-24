@@ -41,6 +41,7 @@ fn deep_settings() -> LlmSettings {
         max_tokens: 0,
         system_addendum: String::new(),
         enabled: true,
+        image_recognition: "auto".into(),
     }
 }
 

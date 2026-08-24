@@ -265,6 +265,7 @@ pub async fn test_vision_endpoint(args: TestVisionArgs) -> Result<TestVisionResu
         max_tokens: 64,
         system_addendum: String::new(),
         enabled: true,
+        image_recognition: "native".into(),
     };
     let client = crate::llm::LlmClient::new(settings);
     let messages = vec![ChatMessage::User {
@@ -1202,6 +1203,7 @@ pub async fn test_llm_endpoint(args: TestLlmArgs) -> Result<TestLlmResult> {
         max_tokens: 64,
         system_addendum: String::new(),
         enabled: true,
+        image_recognition: "auto".into(),
     };
     let client = crate::llm::LlmClient::new(settings);
     let messages = vec![ChatMessage::User {
@@ -2170,7 +2172,8 @@ async fn run_assistant_turn(
         }),
     };
 
-    let route = crate::vision::decide(&active_llm_settings.model, &user_msg.attachments, &cfg.vision)
+    let route = crate::vision::decide(&active_llm_settings, &user_msg.attachments, &cfg.vision)
+        .await
         .map_err(err)?;
     // Keep a runtime copy for post-turn image recovery (run_with_route
     // consumes tool_runtime).

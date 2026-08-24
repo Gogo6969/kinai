@@ -47,6 +47,21 @@ pub struct LlmSettings {
     /// in their TOML) keep behaving the same after the upgrade.
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// How this slot handles image attachments:
+    /// * `"auto"` (default) — ask a llama.cpp server whether it has a
+    ///   multimodal projector loaded (`/props` modalities); any other
+    ///   provider falls back to the known vision-model name list. The
+    ///   model answers image turns itself when it can see, and the
+    ///   external Vision endpoint covers it otherwise.
+    /// * `"native"` — always send images to this model.
+    /// * `"external"` — always route images to the Vision endpoint,
+    ///   the pre-0.2.103 behavior.
+    #[serde(default = "default_image_recognition")]
+    pub image_recognition: String,
+}
+
+fn default_image_recognition() -> String {
+    "auto".into()
 }
 
 impl LlmSettings {
@@ -64,6 +79,7 @@ impl LlmSettings {
             max_tokens: 0,
             system_addendum: String::new(),
             enabled: true,
+            image_recognition: default_image_recognition(),
         }
     }
 
@@ -713,5 +729,25 @@ system_addendum = ""
         let text = toml::to_string_pretty(&cfg).unwrap();
         let back: AppConfig = toml::from_str(&text).unwrap();
         assert!(back.setup_completed);
+    }
+
+    #[test]
+    fn pre_0_2_103_slot_toml_defaults_to_auto_image_recognition() {
+        // Every family config written before the field existed must keep
+        // parsing, and "auto" preserves their behavior (probe/name-list).
+        let slot: LlmSettings = toml::from_str(
+            r#"
+            provider = "llamacpp"
+            base_url = "http://192.168.1.25:8081"
+            model = "Qwen3.8-27B-Q4_K_M"
+            context_window = 65536
+            temperature = 0.3
+            max_tokens = 0
+            system_addendum = ""
+            "#,
+        )
+        .unwrap();
+        assert_eq!(slot.image_recognition, "auto");
+        assert!(slot.enabled);
     }
 }
