@@ -369,9 +369,36 @@
   }
   function onDrop(e: DragEvent) {
     e.preventDefault();
+    // The window-level catcher below must not ingest this drop a second
+    // time — the composer owns it.
+    e.stopPropagation();
     dragging = false;
     const files = e.dataTransfer?.files;
     if (files && files.length > 0) void ingestFiles(files);
+  }
+
+  // A file dropped ANYWHERE in the chat — the message list included —
+  // attaches, exactly like a drop on the composer. Before this, only the
+  // composer intercepted drops; everywhere else fell through to the
+  // webview default, which navigates the whole app to the dropped file
+  // (the root layout now swallows that default, this handler adds the
+  // attach). Composer drops stop propagating above, so no double-ingest.
+  function onWindowDrop(e: DragEvent) {
+    e.preventDefault();
+    dragging = false;
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) void ingestFiles(files);
+  }
+  function onWindowDragOver(e: DragEvent) {
+    if (!e.dataTransfer?.types?.includes('Files')) return;
+    e.preventDefault();
+    // Light the composer's drop ring wherever the drag is — it tells the
+    // user where the file will land.
+    dragging = true;
+  }
+  function onWindowDragLeave(e: DragEvent) {
+    // relatedTarget is null when the drag leaves the window entirely.
+    if (!e.relatedTarget) dragging = false;
   }
 
   function autoGrowTextarea(el?: HTMLTextAreaElement) {
@@ -512,6 +539,8 @@
     app.enqueue(text, atts);
   }
 </script>
+
+<svelte:window ondragover={onWindowDragOver} ondrop={onWindowDrop} ondragleave={onWindowDragLeave} />
 
 <section class="flex flex-col h-full">
   <div bind:this={scrollEl} class="flex-1 overflow-y-auto px-6 py-6 space-y-4">

@@ -145,6 +145,17 @@
   });
 </script>
 
+<!-- With Tauri's dragDropEnabled off (the composer needs HTML5 drag events),
+     the webview's DEFAULT drop behavior applies wherever the app doesn't
+     intercept — and that default is "navigate to the dropped file/URL",
+     which replaced the whole UI with the dropped page. Swallow drag/drop
+     at the window level on every route; drop zones that WANT the drop
+     (the chat composer) run first and take it. -->
+<svelte:window
+  ondragover={(e) => e.preventDefault()}
+  ondrop={(e) => e.preventDefault()}
+/>
+
 {@render children?.()}
 
 <!--

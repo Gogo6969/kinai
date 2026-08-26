@@ -5,6 +5,19 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Dropping a file outside the composer no longer hijacks the app.** A
+  drag-and-drop that missed the message box — landing on the chat history
+  instead — fell through to the webview's default behavior, which
+  *navigates* to whatever was dropped: the whole KinAI window turned into
+  the dropped file or web page, and only a restart brought the app back.
+  Drops are now swallowed everywhere, and a file dropped anywhere in the
+  chat — message list included — simply attaches, exactly as if it had
+  been dropped on the composer.
+
 ## [0.2.103] — 2026-08-23
 
 ### Added
