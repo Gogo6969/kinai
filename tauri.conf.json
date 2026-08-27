@@ -51,7 +51,7 @@
     "trayIcon": {
       "id": "main-tray",
       "iconPath": "public/icons/tray.png",
-      "iconAsTemplate": false,
+      "iconAsTemplate": true,
       "tooltip": "KinAI"
     }
   },
