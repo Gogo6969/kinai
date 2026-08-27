@@ -1,0 +1,10 @@
+{
+  "app": {
+    "trayIcon": {
+      "id": "main-tray",
+      "iconPath": "public/icons/tray-color.png",
+      "iconAsTemplate": false,
+      "tooltip": "KinAI"
+    }
+  }
+}

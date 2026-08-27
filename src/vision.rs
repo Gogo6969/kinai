@@ -160,6 +160,13 @@ pub fn image_data_urls(attachments: &[Attachment]) -> Vec<String> {
 }
 
 /// Remove image parts from a message list, replacing each stripped image
+/// Replaces a stripped image in a user message. Shared with
+/// `should_force_search`, which must treat a marker-bearing caption like an
+/// image-bearing one — the caption is still about a picture even after a
+/// failover to a non-vision slot emptied `image_data_urls`.
+pub(crate) const IMAGE_STRIP_MARKER: &str =
+    "[an image was attached here; the current model can't view images]";
+
 /// with a short text marker. Used before sending a turn to a non-vision
 /// text model so a historical image in the thread doesn't get serialized
 /// into multipart content that the backend rejects (llama.cpp without an
@@ -176,12 +183,10 @@ fn strip_images_from_history(
                 name,
                 image_data_urls,
             } if !image_data_urls.is_empty() => {
-                const NOTE: &str =
-                    "[an image was attached here; the current model can't view images]";
                 let new_content = if content.trim().is_empty() {
-                    NOTE.to_string()
+                    IMAGE_STRIP_MARKER.to_string()
                 } else {
-                    format!("{content}\n\n{NOTE}")
+                    format!("{content}\n\n{IMAGE_STRIP_MARKER}")
                 };
                 ChatMessage::User {
                     content: new_content,
@@ -463,9 +468,9 @@ pub async fn run_with_route(
             const NO_TOOLS_NOTE: &str = "You are answering a single question about the \
 attached image, and no tools are available on this turn. Answer from the image itself. \
 If the question also needs live information (verifying claims, current prices, news), \
-describe what you see and say that asking again as a plain text message will let you \
-search the web — KinAI does have web search on normal turns, so never claim you lack \
-web access, and never write tool-call syntax into your reply.";
+describe what you see and suggest asking again as a plain text message, where KinAI's \
+normal tools apply. Never write tool-call syntax into your reply, and make no claims \
+about what KinAI can or cannot access — this turn's limits are not KinAI's limits.";
             match messages.first_mut() {
                 Some(crate::context::ChatMessage::System { content }) => {
                     content.push_str("\n\n");

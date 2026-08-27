@@ -80,7 +80,15 @@ pub async fn run_pipeline(
     // latches the model into repeating that refusal — measured 0/8 on the
     // balanced slot with an otherwise identical prompt. Injecting a
     // correction restored 8/8. Cheap, and only present when the poison is.
-    if let Some(note) = correction_for_history(&messages) {
+    //
+    // Only when web_search is actually IN this request's toolset: the
+    // correction asserts "you have a working `web_search` tool ... right
+    // now", which on a tool-free turn (the external Vision route) or a
+    // host with search disabled is false — and instructing a model to use
+    // a tool it doesn't have is precisely how tool-call syntax ends up
+    // pasted into a visible reply.
+    let has_web_search = tools.iter().any(|t| t.name == "web_search");
+    if let Some(note) = has_web_search.then(|| correction_for_history(&messages)).flatten() {
         // Merge into the LEADING system message rather than appending a
         // second one at the end. Strict chat templates reject a system
         // message anywhere but position 0 —
@@ -727,7 +735,9 @@ pub(crate) fn should_force_search(messages: &[ChatMessage]) -> bool {
     // toolset since 0.2.104 — forcing is what stays off.
     if matches!(
         messages.iter().rev().find(|m| matches!(m, ChatMessage::User { .. })),
-        Some(ChatMessage::User { image_data_urls, .. }) if !image_data_urls.is_empty()
+        Some(ChatMessage::User { content, image_data_urls, .. })
+            if !image_data_urls.is_empty()
+                || content.contains(crate::vision::IMAGE_STRIP_MARKER)
     ) {
         return false;
     }
@@ -849,6 +859,13 @@ mod force_tests {
             image_data_urls: vec!["data:image/png;base64,AAAA".into()],
         };
         assert!(!should_force_search(&[with_image]));
+        // A failover to a non-vision slot strips the image and leaves the
+        // marker — the caption is still about a picture.
+        let stripped = user(&format!(
+            "how much is this worth today?\n\n{}",
+            crate::vision::IMAGE_STRIP_MARKER
+        ));
+        assert!(!should_force_search(&[stripped]));
         // The same phrasing without an image still forces.
         assert!(should_force_search(&[user("how much is bitcoin worth today?")]));
     }

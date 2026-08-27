@@ -20,9 +20,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   endpoint stays tool-free but is now told so, with instructions to
   point the user at a text follow-up instead of inventing tool syntax.
 - **The menu-bar icon matches the system.** The tray icon rendered in
-  KinAI teal while every neighbor was a white template glyph. It is now
-  a proper macOS template image — monochrome, tinted by the system to
-  match light/dark menu bars like every other icon.
+  KinAI teal while every neighbor was a white template glyph. On macOS
+  it is now a proper template image — monochrome, tinted by the system
+  to match light/dark menu bars like every other icon. Windows and
+  Linux keep the colored icon: template tinting is a macOS concept, and
+  a black glyph on a dark taskbar would be invisible.
 - **Dropping a file outside the composer no longer hijacks the app.** A
   drag-and-drop that missed the message box — landing on the chat history
   instead — fell through to the webview's default behavior, which

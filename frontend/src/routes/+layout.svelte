@@ -143,6 +143,18 @@
     // Apply to the entire UI as well — KinAI's "font size" affects all text.
     document.documentElement.style.fontSize = `${px}px`;
   });
+
+  /** A text/URL drag over an input, textarea, or contenteditable keeps its
+   *  native default (insert the text). File drags never qualify — a file's
+   *  default is navigation, the thing the window guard exists to stop. */
+  function nativeTextDropAllowed(e: DragEvent): boolean {
+    if (e.dataTransfer?.types?.includes('Files')) return false;
+    const t = e.target;
+    return (
+      t instanceof HTMLElement &&
+      (t.isContentEditable || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')
+    );
+  }
 </script>
 
 <!-- With Tauri's dragDropEnabled off (the composer needs HTML5 drag events),
@@ -150,10 +162,19 @@
      intercept — and that default is "navigate to the dropped file/URL",
      which replaced the whole UI with the dropped page. Swallow drag/drop
      at the window level on every route; drop zones that WANT the drop
-     (the chat composer) run first and take it. -->
+     (the chat composer) run first and take it. One exception: a TEXT drag
+     onto an editable field keeps its native default (inserting the text) —
+     only editable targets, and never file drags, get that pass, so
+     navigation stays impossible. -->
 <svelte:window
-  ondragover={(e) => e.preventDefault()}
-  ondrop={(e) => e.preventDefault()}
+  ondragover={(e) => {
+    if (nativeTextDropAllowed(e)) return;
+    e.preventDefault();
+  }}
+  ondrop={(e) => {
+    if (nativeTextDropAllowed(e)) return;
+    e.preventDefault();
+  }}
 />
 
 {@render children?.()}

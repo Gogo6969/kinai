@@ -384,10 +384,14 @@
   // (the root layout now swallows that default, this handler adds the
   // attach). Composer drops stop propagating above, so no double-ingest.
   function onWindowDrop(e: DragEvent) {
-    e.preventDefault();
     dragging = false;
     const files = e.dataTransfer?.files;
-    if (files && files.length > 0) void ingestFiles(files);
+    if (files && files.length > 0) {
+      e.preventDefault();
+      void ingestFiles(files);
+    }
+    // Text/URL drops fall through to the root layout guard, which blocks
+    // navigation everywhere except native text-insertion into editables.
   }
   function onWindowDragOver(e: DragEvent) {
     if (!e.dataTransfer?.types?.includes('Files')) return;
