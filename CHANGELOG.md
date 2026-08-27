@@ -9,6 +9,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- **Image questions can search the web again.** 0.2.103's native image
+  path removed all tools from image turns, so "here's a screenshot — is
+  this real?" left the model wanting to search with nothing to search
+  with: it wrote tool-call syntax into its visible reply and then claimed
+  KinAI had no web access. The model handles tools on image turns
+  cleanly (verified), so image turns keep the full toolset now — only
+  *forced* search stays off, so a question-shaped photo caption can't
+  drag the turn into a mandatory search round. The external Vision
+  endpoint stays tool-free but is now told so, with instructions to
+  point the user at a text follow-up instead of inventing tool syntax.
 - **Dropping a file outside the composer no longer hijacks the app.** A
   drag-and-drop that missed the message box — landing on the chat history
   instead — fell through to the webview's default behavior, which

@@ -720,6 +720,17 @@ pub(crate) fn should_force_search(messages: &[ChatMessage]) -> bool {
     if messages.iter().any(|m| matches!(m, ChatMessage::Tool { .. })) {
         return false;
     }
+    // Never force a search on a turn whose message carries an image: the
+    // caption is about the picture ("how much is this worth today?"), and
+    // a mandatory search round would answer the caption instead of the
+    // image. The model can still CHOOSE to search — image turns keep the
+    // toolset since 0.2.104 — forcing is what stays off.
+    if matches!(
+        messages.iter().rev().find(|m| matches!(m, ChatMessage::User { .. })),
+        Some(ChatMessage::User { image_data_urls, .. }) if !image_data_urls.is_empty()
+    ) {
+        return false;
+    }
     // Classify only what the user TYPED. `format_user` concatenates the
     // typed prose with the full text extracted from any attached PDF, so
     // classifying the raw field let a private document decide to send a
@@ -826,6 +837,21 @@ mod force_tests {
     }
     const REFUSAL: &str =
         "I don't have live access to current events, and my training data only goes up to 2024.";
+
+    #[test]
+    fn never_forces_on_an_image_bearing_turn() {
+        // The caption is about the PICTURE — a mandatory search round
+        // would answer the caption instead of looking at the image. The
+        // model keeps its tools and can still choose to search.
+        let with_image = ChatMessage::User {
+            content: "how much is this worth today?".into(),
+            name: None,
+            image_data_urls: vec!["data:image/png;base64,AAAA".into()],
+        };
+        assert!(!should_force_search(&[with_image]));
+        // The same phrasing without an image still forces.
+        assert!(should_force_search(&[user("how much is bitcoin worth today?")]));
+    }
 
     #[test]
     fn forces_on_a_live_question_and_not_otherwise() {

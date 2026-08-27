@@ -407,20 +407,24 @@ pub async fn run_with_route(
             );
             if current_turn_has_image {
                 // The model can see and the user just attached an image.
-                // Mirror the Vision route's contract exactly — current
-                // image only, no tools — so going native changes WHO
-                // answers, never how an image turn behaves: tool loops
-                // misfire on multipart content (see the Vision arm), and
-                // a forced web_search round would fire on question-shaped
-                // photo captions ("how much is this worth today?").
+                // Older images become text markers (multi-image prefill
+                // stalls local servers), but the toolset STAYS: this model
+                // makes clean structured tool calls on multipart turns
+                // (verified against the fast slot), and a family image turn
+                // is often "here's a screenshot — is this real?", which
+                // needs a search. Without tools, the model wrote tool-call
+                // syntax into its visible reply and then told the user it
+                // had no web access. Only FORCED search stays off on image
+                // turns — see should_force_search — so a question-shaped
+                // caption can't hijack the turn into a mandatory search
+                // round before the model has looked at the picture.
                 let messages = keep_only_current_turn_images(messages);
-                let no_tools: Vec<crate::tools::registry::ToolDef> = vec![];
                 return run_pipeline(
                     default_client,
                     messages,
-                    no_tools,
+                    tools,
                     max_tokens,
-                    crate::tools::registry::ToolRuntime::default(),
+                    tool_runtime,
                     handlers,
                     cancel,
                 )
@@ -448,7 +452,29 @@ pub async fn run_with_route(
             // Send only the image just attached, not every image ever sent in
             // this thread — otherwise the accumulated history 413s hosted
             // providers and stalls local models in multi-image prefill.
-            let messages = keep_only_current_turn_images(messages);
+            let mut messages = keep_only_current_turn_images(messages);
+            // This route runs tool-free (arbitrary endpoint models handle
+            // multimodal function calling inconsistently) — SAY so, or a
+            // tool-trained model asked "is this real?" writes tool-call
+            // syntax into its visible reply and then claims it has no web
+            // access at all. Folded into the existing leading system
+            // message when there is one: strict templates reject a second
+            // system message anywhere after position 0.
+            const NO_TOOLS_NOTE: &str = "You are answering a single question about the \
+attached image, and no tools are available on this turn. Answer from the image itself. \
+If the question also needs live information (verifying claims, current prices, news), \
+describe what you see and say that asking again as a plain text message will let you \
+search the web — KinAI does have web search on normal turns, so never claim you lack \
+web access, and never write tool-call syntax into your reply.";
+            match messages.first_mut() {
+                Some(crate::context::ChatMessage::System { content }) => {
+                    content.push_str("\n\n");
+                    content.push_str(NO_TOOLS_NOTE);
+                }
+                _ => messages.insert(0, crate::context::ChatMessage::System {
+                    content: NO_TOOLS_NOTE.into(),
+                }),
+            }
             let primary_client =
                 crate::llm::LlmClient::new(endpoint_to_llm_settings(&primary, chat_cfg));
             // Vision turns skip tools — see function doc comment for why.
