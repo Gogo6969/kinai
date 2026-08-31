@@ -170,6 +170,10 @@
   ondragover={(e) => {
     if (nativeTextDropAllowed(e)) return;
     e.preventDefault();
+    // "none" keeps the cursor honest on routes where a drop is a no-op
+    // (Settings, setup). The chat window's own dragover handler runs
+    // after this one and flips it back to "copy" for file drags there.
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'none';
   }}
   ondrop={(e) => {
     if (nativeTextDropAllowed(e)) return;

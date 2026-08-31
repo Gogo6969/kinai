@@ -393,16 +393,23 @@
     // Text/URL drops fall through to the root layout guard, which blocks
     // navigation everywhere except native text-insertion into editables.
   }
+  // The drop-ring is driven by a refreshing timeout instead of dragleave:
+  // WKWebView populates dragleave's relatedTarget unreliably, which made
+  // the ring flicker during in-page transitions and stick after the drag
+  // left the window. dragover fires continuously while a drag is over the
+  // window, so "no dragover for 150ms" IS "the drag left".
+  let dragRingTimer: ReturnType<typeof setTimeout> | undefined;
   function onWindowDragOver(e: DragEvent) {
     if (!e.dataTransfer?.types?.includes('Files')) return;
     e.preventDefault();
+    // Files dropped anywhere in the chat attach — say so with the cursor
+    // (the root layout marks everything else "none").
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
     // Light the composer's drop ring wherever the drag is — it tells the
     // user where the file will land.
     dragging = true;
-  }
-  function onWindowDragLeave(e: DragEvent) {
-    // relatedTarget is null when the drag leaves the window entirely.
-    if (!e.relatedTarget) dragging = false;
+    clearTimeout(dragRingTimer);
+    dragRingTimer = setTimeout(() => (dragging = false), 150);
   }
 
   function autoGrowTextarea(el?: HTMLTextAreaElement) {
@@ -544,7 +551,7 @@
   }
 </script>
 
-<svelte:window ondragover={onWindowDragOver} ondrop={onWindowDrop} ondragleave={onWindowDragLeave} />
+<svelte:window ondragover={onWindowDragOver} ondrop={onWindowDrop} />
 
 <section class="flex flex-col h-full">
   <div bind:this={scrollEl} class="flex-1 overflow-y-auto px-6 py-6 space-y-4">
