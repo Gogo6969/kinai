@@ -232,6 +232,13 @@ async fn duckduckgo_with_fallback(query: &str, max_results: usize) -> Result<Str
 /// hits from one address — which would silently degrade every one of them
 /// to the Wikipedia backstop. Exa and SearXNG are real APIs and stay
 /// parallel; only the scrape path serializes.
+///
+/// Process-wide is DELIBERATE, not an oversight: bot detection keys on
+/// the household's one IP, so two family members' simultaneous scrapes
+/// are just as detectable as one member's burst. The cost — one member's
+/// slow scrape chain (worst ~30s) briefly queues another's — only exists
+/// on the fallback path, and beats both of them silently getting
+/// Wikipedia instead of DuckDuckGo.
 static SCRAPE_GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
 /// Same as `duckduckgo_with_fallback`, but says which engine answered —
@@ -385,8 +392,13 @@ async fn exa_search(query: &str, max_results: usize, api_key: &str) -> Result<St
         Err(e) if is_transient(&e) => {
             // Jittered: concurrent calls that get 429ed TOGETHER must not
             // retry together, or the second wave 429s identically. The
-            // spread comes from the query bytes — no clock or RNG needed.
-            let jitter = (query.bytes().map(u64::from).sum::<u64>() % 1500) as u64;
+            // spread comes from a process-wide counter — unlike hashing
+            // the query, it differs even for identical concurrent queries,
+            // and needs no clock or RNG.
+            static RETRY_SEQ: std::sync::atomic::AtomicU64 =
+                std::sync::atomic::AtomicU64::new(0);
+            let seq = RETRY_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let jitter = (seq % 4) * 400;
             let pause = if is_rate_limited(&e) { 2000 + jitter } else { 400 + jitter / 4 };
             tracing::warn!("exa search failed ({e:#}); retrying once in {pause}ms");
             tokio::time::sleep(Duration::from_millis(pause)).await;

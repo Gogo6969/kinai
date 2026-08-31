@@ -384,6 +384,7 @@
   // (the root layout now swallows that default, this handler adds the
   // attach). Composer drops stop propagating above, so no double-ingest.
   function onWindowDrop(e: DragEvent) {
+    clearTimeout(dragRingTimer);
     dragging = false;
     const files = e.dataTransfer?.files;
     if (files && files.length > 0) {
@@ -396,8 +397,13 @@
   // The drop-ring is driven by a refreshing timeout instead of dragleave:
   // WKWebView populates dragleave's relatedTarget unreliably, which made
   // the ring flicker during in-page transitions and stick after the drag
-  // left the window. dragover fires continuously while a drag is over the
-  // window, so "no dragover for 150ms" IS "the drag left".
+  // left the window. dragover keeps firing while a drag is over the
+  // window — but for a STATIONARY drag the spec only promises a pulse
+  // every 350ms (±200ms), and some engines (Linux WebKitGTK, Windows
+  // WebView2) pulse only on pointer movement. 700ms sits above the
+  // spec's worst gap, so a held-still file doesn't strobe the ring; the
+  // ring still fades well under a second after the drag truly leaves.
+  const DRAG_RING_LINGER_MS = 700;
   let dragRingTimer: ReturnType<typeof setTimeout> | undefined;
   function onWindowDragOver(e: DragEvent) {
     if (!e.dataTransfer?.types?.includes('Files')) return;
@@ -409,7 +415,7 @@
     // user where the file will land.
     dragging = true;
     clearTimeout(dragRingTimer);
-    dragRingTimer = setTimeout(() => (dragging = false), 150);
+    dragRingTimer = setTimeout(() => (dragging = false), DRAG_RING_LINGER_MS);
   }
 
   function autoGrowTextarea(el?: HTMLTextAreaElement) {
