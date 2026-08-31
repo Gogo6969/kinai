@@ -507,6 +507,20 @@ Say the lookup failed and offer to try again.",
             if !ok {
                 total_tool_failures += 1;
             }
+            // Calls that were already in flight when a peer's PERMANENT
+            // failure landed couldn't be shielded by the dead set — they
+            // ran, failed identically, and their notes say "offer to try
+            // again", which is exactly wrong for a dead tool. By
+            // accounting time the set is settled, so upgrade those notes.
+            let result = if !ok && dead_tools.lock().unwrap().contains(&call.function.name) {
+                format!(
+                    "{result}\nUPDATE: this tool has failed PERMANENTLY for this turn \
+(billing, authentication or configuration). Do NOT call it again in this turn, and do \
+not offer to retry it."
+                )
+            } else {
+                result
+            };
             // Search results reach the model through this preamble because
             // a model whose training data confidently "knows" the answer
             // will override fresh results with its prior: asked for QQQ's
