@@ -226,9 +226,18 @@ async fn duckduckgo_with_fallback(query: &str, max_results: usize) -> Result<Str
     Ok(duckduckgo_or_wikipedia(query, max_results).await?.0)
 }
 
+/// Scrapes go one at a time, process-wide. Tool calls within a round run
+/// concurrently since 0.2.105, and DuckDuckGo's HTML endpoint is exactly
+/// the kind of service whose bot detection triggers on four simultaneous
+/// hits from one address — which would silently degrade every one of them
+/// to the Wikipedia backstop. Exa and SearXNG are real APIs and stay
+/// parallel; only the scrape path serializes.
+static SCRAPE_GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
 /// Same as `duckduckgo_with_fallback`, but says which engine answered —
 /// the Exa fallback note must not credit DuckDuckGo for Wikipedia's work.
 async fn duckduckgo_or_wikipedia(query: &str, max_results: usize) -> Result<(String, &'static str)> {
+    let _permit = SCRAPE_GATE.acquire().await;
     if let Ok(text) = duckduckgo(query, max_results).await {
         if !text.trim().is_empty() && !text.contains("No results found") {
             return Ok((text, "DuckDuckGo"));
@@ -374,7 +383,11 @@ async fn exa_search(query: &str, max_results: usize, api_key: &str) -> Result<St
     match exa_search_once(query, max_results, api_key).await {
         Ok(r) => Ok(r),
         Err(e) if is_transient(&e) => {
-            let pause = if is_rate_limited(&e) { 2000 } else { 400 };
+            // Jittered: concurrent calls that get 429ed TOGETHER must not
+            // retry together, or the second wave 429s identically. The
+            // spread comes from the query bytes — no clock or RNG needed.
+            let jitter = (query.bytes().map(u64::from).sum::<u64>() % 1500) as u64;
+            let pause = if is_rate_limited(&e) { 2000 + jitter } else { 400 + jitter / 4 };
             tracing::warn!("exa search failed ({e:#}); retrying once in {pause}ms");
             tokio::time::sleep(Duration::from_millis(pause)).await;
             exa_search_once(query, max_results, api_key).await

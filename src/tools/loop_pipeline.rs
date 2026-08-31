@@ -74,7 +74,17 @@ pub async fn run_pipeline(
     let mut total_tool_invocations: usize = 0;
     let mut total_tool_failures: usize = 0;
     // Tools that failed permanently this turn (billing/auth/config).
-    let mut dead_tools: Vec<String> = Vec::new();
+    // Shared with the concurrent execution futures so a permanent failure
+    // shields every LATER-STARTING call — including same-round calls still
+    // queued behind the concurrency cap. Plain std Mutex: never held
+    // across an await.
+    let dead_tools: Arc<std::sync::Mutex<std::collections::HashSet<String>>> =
+        Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+    // remember/forget mutate the family DB; two writes racing would make
+    // the surviving value a coin flip. They serialize through this gate —
+    // FIFO, and `buffered` starts futures in call order, so mutators also
+    // KEEP the model's call order relative to each other.
+    let mutation_gate = Arc::new(tokio::sync::Semaphore::new(1));
 
     // An earlier reply in this conversation that denied having web access
     // latches the model into repeating that refusal — measured 0/8 on the
@@ -340,29 +350,56 @@ pub async fn run_pipeline(
         // budget, dead-tool bookkeeping — happens identically to the old
         // sequential loop, just without the serialized waiting.
         //
-        // One deliberate semantic change: a tool that fails PERMANENTLY no
-        // longer shields later same-tool calls in the SAME round (they are
-        // already in flight together). Prior rounds' dead tools are still
-        // skipped without running. A real result from a doomed-anyway call
-        // is strictly more information, so nothing is lost.
+        // A permanent failure shields every call that has not yet STARTED
+        // — across rounds and within one, via the shared dead set. Calls
+        // already in flight beside the failing one complete normally; a
+        // real result from a doomed-anyway call is strictly more
+        // information, so nothing is lost.
         const TOOL_CONCURRENCY: usize = 4;
         enum Outcome {
-            SkippedDead,
-            Done { result: Result<String, String> },
+            /// Tool was already dead when this call would have started.
+            Skipped { note: String },
+            /// Ran; `text` is what the model will read (result or failure
+            /// note), already emitted to the UI as a Finished event.
+            Done { text: String, ok: bool },
         }
-        let prior_dead: std::collections::HashSet<String> =
-            dead_tools.iter().cloned().collect();
         let executed: Vec<(ToolCall, Outcome)> = {
             use futures_util::stream::{self, StreamExt};
             let runtime_ref = &runtime;
-            let on_tool = handlers.on_tool.clone();
             stream::iter(assistant_calls.into_iter().map(|call| {
-                let on_tool = on_tool.clone();
-                let dead = prior_dead.contains(&call.function.name);
+                let on_tool = handlers.on_tool.clone();
+                let dead_tools = dead_tools.clone();
+                let mutation_gate = mutation_gate.clone();
                 async move {
-                    if dead {
-                        return (call, Outcome::SkippedDead);
+                    // Checked at START time, not round-planning time: a
+                    // permanent failure in an already-finished call of this
+                    // same round shields calls still queued behind the cap.
+                    if dead_tools.lock().unwrap().contains(&call.function.name) {
+                        let note = format!(
+                            "TOOL UNAVAILABLE ({}): an earlier call this turn failed permanently \
+(billing, authentication or configuration) and will not succeed by retrying. Do NOT call \
+it again in this turn. Tell the user once what is unavailable and answer as best you can \
+without it.",
+                            call.function.name
+                        );
+                        tracing::info!(tool = %call.function.name, "skipping tool: already failed permanently this turn");
+                        (on_tool)(ToolEvent::Started {
+                            name: call.function.name.clone(),
+                            args: call.function.arguments.clone(),
+                        });
+                        (on_tool)(ToolEvent::Finished {
+                            name: call.function.name.clone(),
+                            ok: false,
+                            result: note.clone(),
+                        });
+                        return (call, Outcome::Skipped { note });
                     }
+                    // Writers wait their turn; read-only tools run freely.
+                    let _permit = if matches!(call.function.name.as_str(), "remember" | "forget") {
+                        Some(mutation_gate.acquire().await)
+                    } else {
+                        None
+                    };
                     (on_tool)(ToolEvent::Started {
                         name: call.function.name.clone(),
                         args: call.function.arguments.clone(),
@@ -374,7 +411,7 @@ pub async fn run_pipeline(
                     // error and duration so the next occurrence is
                     // answerable from the host log alone.
                     let started = std::time::Instant::now();
-                    let outcome = match registry::execute(
+                    let (text, ok) = match registry::execute(
                         &call.function.name,
                         &call.function.arguments,
                         runtime_ref,
@@ -389,20 +426,64 @@ pub async fn run_pipeline(
                                 result_chars = r.len(),
                                 "tool call ok"
                             );
-                            Ok(r)
+                            (r, true)
                         }
                         Err(e) => {
+                            let chain = format!("{e:#}");
                             tracing::warn!(
                                 tool = %call.function.name,
                                 args = %truncate_for_log(&call.function.arguments),
                                 ms = started.elapsed().as_millis() as u64,
-                                error = %format!("{e:#}"),
+                                error = %chain,
                                 "TOOL CALL FAILED"
                             );
-                            Err(format!("{e:#}"))
+                            if is_permanent_tool_failure(&chain) {
+                                dead_tools.lock().unwrap().insert(call.function.name.clone());
+                            }
+                            (
+                                // The model reads this as the tool's output — make the
+                                // failure impossible to gloss over. Without this, a turn
+                                // whose every search errored still got told to "answer
+                                // from the results", and it fabricated (the 2026 World
+                                // Cup incident: all Exa calls failed, the model recited
+                                // the 2022 final as current news).
+                                //
+                                // The capability clause is the 0.2.89 addition. Told only
+                                // that a tool "failed", models rationalise the failure as
+                                // a limitation of themselves — a field report came back
+                                // with "I can't provide a link, as my knowledge doesn't
+                                // include live web browsing", which is false (the tool
+                                // exists and works) and sends the user off to do the
+                                // lookup by hand.
+                                //
+                                // Display formatting ({e}), not the {e:#} cause chain —
+                                // the model-visible text stays as terse as the
+                                // sequential loop's.
+                                format!(
+                                    "TOOL FAILED ({}): {e}. This tool returned NO information. Do not \
+invent or recall-from-memory what it was meant to provide — if the user's question \
+depends on it, say plainly that the lookup failed and suggest trying again.\n\
+IMPORTANT: this was a temporary failure of ONE call, not a limitation of yours. You \
+DO have working web access through your tools. Never tell the user you cannot browse \
+the web, lack live search, or only have training data — that is false and unhelpful. \
+Say the lookup failed and offer to try again.",
+                                    call.function.name
+                                ),
+                                false,
+                            )
                         }
                     };
-                    (call, Outcome::Done { result: outcome })
+                    // Emitted here, as each call completes, so the UI shows
+                    // per-call progress instead of a burst at round end —
+                    // and every Finished immediately follows its own
+                    // Started. The event carries the UNTRIMMED text; only
+                    // what the model has to carry is shortened later.
+                    (on_tool)(ToolEvent::Finished {
+                        name: call.function.name.clone(),
+                        ok,
+                        result: text.clone(),
+                    });
+                    (call, Outcome::Done { text, ok })
                 }
             }))
             .buffered(TOOL_CONCURRENCY)
@@ -413,23 +494,7 @@ pub async fn run_pipeline(
         for (call, outcome) in executed {
             total_tool_invocations += 1;
             let (result, ok) = match outcome {
-                Outcome::SkippedDead => {
-                    // A tool that failed permanently in an EARLIER round is
-                    // not called again — the answer would be the same error
-                    // and one more apology in the reply.
-                    let note = format!(
-                        "TOOL UNAVAILABLE ({}): an earlier call this turn failed permanently \
-(billing, authentication or configuration) and will not succeed by retrying. Do NOT call \
-it again in this turn. Tell the user once what is unavailable and answer as best you can \
-without it.",
-                        call.function.name
-                    );
-                    tracing::info!(tool = %call.function.name, "skipping tool: already failed permanently this turn");
-                    (handlers.on_tool)(ToolEvent::Finished {
-                        name: call.function.name.clone(),
-                        ok: false,
-                        result: note.clone(),
-                    });
+                Outcome::Skipped { note } => {
                     total_tool_failures += 1;
                     messages.push(ChatMessage::Tool {
                         content: note,
@@ -437,51 +502,11 @@ without it.",
                     });
                     continue;
                 }
-                Outcome::Done { result: Ok(r) } => (r, true),
-                Outcome::Done { result: Err(e) } => {
-                    if is_permanent_tool_failure(&e) {
-                        dead_tools.push(call.function.name.clone());
-                    }
-                    (
-                        // The model reads this as the tool's output — make the
-                        // failure impossible to gloss over. Without this, a turn
-                        // whose every search errored still got told to "answer
-                        // from the results", and it fabricated (the 2026 World
-                        // Cup incident: all Exa calls failed, the model recited
-                        // the 2022 final as current news).
-                        //
-                        // The capability clause is the 0.2.89 addition. Told only
-                        // that a tool "failed", models rationalise the failure as
-                        // a limitation of themselves — a field report came back
-                        // with "I can't provide a link, as my knowledge doesn't
-                        // include live web browsing", which is false (the tool
-                        // exists and works) and sends the user off to do the
-                        // lookup by hand.
-                        format!(
-                            "TOOL FAILED ({}): {e}. This tool returned NO information. Do not \
-invent or recall-from-memory what it was meant to provide — if the user's question \
-depends on it, say plainly that the lookup failed and suggest trying again.\n\
-IMPORTANT: this was a temporary failure of ONE call, not a limitation of yours. You \
-DO have working web access through your tools. Never tell the user you cannot browse \
-the web, lack live search, or only have training data — that is false and unhelpful. \
-Say the lookup failed and offer to try again.",
-                            call.function.name
-                        ),
-                        false,
-                    )
-                }
+                Outcome::Done { text, ok } => (text, ok),
             };
             if !ok {
                 total_tool_failures += 1;
             }
-            // Charge this result against the turn's context budget BEFORE
-            // it joins the conversation. The UI event keeps the untrimmed
-            // text — only what the model has to carry is shortened.
-            (handlers.on_tool)(ToolEvent::Finished {
-                name: call.function.name.clone(),
-                ok,
-                result: result.clone(),
-            });
             // Search results reach the model through this preamble because
             // a model whose training data confidently "knows" the answer
             // will override fresh results with its prior: asked for QQQ's

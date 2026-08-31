@@ -187,9 +187,15 @@
           if (client_msg_id !== currentClientId) return;
           if (event.kind === 'Started') tools = [...tools, { name: event.name }];
           if (event.kind === 'Finished') {
-            tools = tools.map((t) =>
-              t.name === event.name && t.ok === undefined ? { ...t, ok: event.ok } : t
+            // Flip ONE pill, not every unfinished one of that name — tool
+            // calls run concurrently since 0.2.105, so several same-name
+            // pills can be outstanding when the first Finished arrives.
+            const idx = tools.findLastIndex(
+              (t) => t.name === event.name && t.ok === undefined
             );
+            if (idx !== -1) {
+              tools = tools.map((t, i) => (i === idx ? { ...t, ok: event.ok } : t));
+            }
           }
         })
       );
