@@ -5,6 +5,27 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Research questions got dramatically faster.** A question that needs
+  several web searches used to run them one after another — 3–8
+  searches at 4–15 seconds each meant one family member waited nearly
+  five minutes for a first word. Searches in the same round now run in
+  parallel (capped, with rate-limit jitter and one-at-a-time scraping
+  so free search engines aren't spooked), so the wait is roughly the
+  slowest single search instead of the sum of all of them. Memory
+  writes still happen strictly in order, and the tool activity display
+  now shows each call finishing as it actually finishes.
+
+### Fixed
+
+- **The file-drop highlight no longer flickers or sticks.** The
+  composer's drop ring now follows the drag directly and fades the
+  moment the drag leaves the window. Outside the chat, the cursor no
+  longer advertises a drop that would do nothing.
+
 ## [0.2.104] — 2026-08-27
 
 ### Fixed
