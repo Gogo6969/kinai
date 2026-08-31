@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-08-27T14:07:38+00:00",
-  "version": "0.2.104",
+  "generated_at": "2026-08-31T19:58:07+00:00",
+  "version": "0.2.105",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 256,
-    "head": "98f4996"
+    "commits": 264,
+    "head": "071b609"
   },
   "totals": {
     "rust_files": 60,
-    "rust_lines": 25524,
+    "rust_lines": 25633,
     "frontend_files": 33,
-    "frontend_lines": 12039,
+    "frontend_lines": 12062,
     "unit_tests": 191,
     "integration_test_files": 12,
-    "releases": 96,
-    "tags": 91
+    "releases": 97,
+    "tags": 92
   },
   "areas": [
     {
@@ -430,7 +430,7 @@
     {
       "path": "src/tools/loop_pipeline.rs",
       "area": "tools",
-      "lines": 1119,
+      "lines": 1203,
       "doc": "Tool-calling pipeline.",
       "tests": 25
     },
@@ -451,7 +451,7 @@
     {
       "path": "src/tools/web_search.rs",
       "area": "tools",
-      "lines": 596,
+      "lines": 621,
       "doc": "Web search dispatcher.",
       "tests": 4
     },
@@ -520,7 +520,7 @@
     {
       "path": "frontend/src/lib/components/ChatWindow.svelte",
       "kind": "component",
-      "lines": 965,
+      "lines": 978,
       "doc": "The overlay hotkey as the user's keyboard prints it, derived from the hotkey actually registered (config), never guessed from the platform alone."
     },
     {
@@ -544,7 +544,7 @@
     {
       "path": "frontend/src/lib/components/Overlay.svelte",
       "kind": "component",
-      "lines": 604,
+      "lines": 610,
       "doc": "Image / PDF attachments staged for the next overlay send. Mirrors the main ChatWindow's `pendingAttachments` semantics so a user can paste a screenshot into the quick-chat (Cmd+Space) overlay and have it ride along with the prompt, same as in the main window."
     },
     {
@@ -622,7 +622,7 @@
     {
       "path": "frontend/src/routes/+layout.svelte",
       "kind": "route",
-      "lines": 202,
+      "lines": 206,
       "doc": "DEV-only: installs an in-memory Tauri IPC mock when running in a plain browser (no-op inside the real app; eliminated from production builds)."
     },
     {
@@ -1060,6 +1060,24 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.105",
+      "date": "2026-08-31",
+      "sections": {
+        "Changed": [
+          {
+            "title": "Research questions got dramatically faster.",
+            "detail": "A question that needs several web searches used to run them one after another — 3–8 searches at 4–15 seconds each meant one family member waited nearly five minutes for a first word. Searches in the same round now run in parallel (capped, with rate-limit jitter and one-at-a-time scraping so free search engines aren't spooked), so the wait is roughly the slowest single search instead of the sum of all of them. Memory writes still happen strictly in order, and the tool activity display now shows each call finishing as it actually finishes."
+          }
+        ],
+        "Fixed": [
+          {
+            "title": "The file-drop highlight no longer flickers or sticks.",
+            "detail": "The composer's drop ring now follows the drag directly and fades the moment the drag leaves the window. Outside the chat, the cursor no longer advertises a drop that would do nothing."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.104",
       "date": "2026-08-27",
@@ -3113,6 +3131,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.105",
+      "date": "2026-08-31"
+    },
     {
       "tag": "v0.2.104",
       "date": "2026-08-27"
