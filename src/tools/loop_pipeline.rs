@@ -331,72 +331,117 @@ pub async fn run_pipeline(
             tool_calls: assistant_calls.clone(),
         });
 
-        for call in assistant_calls {
+        // The round's calls run CONCURRENTLY (capped), then their results
+        // are accounted for strictly in the model's call order. A research
+        // question fires 3–8 web searches per round, each a 4–15s network
+        // wait; running them back to back cost one family member a
+        // 284-second first token. `buffered` preserves output order, so
+        // everything order-sensitive — tool_call_id pairing, the token
+        // budget, dead-tool bookkeeping — happens identically to the old
+        // sequential loop, just without the serialized waiting.
+        //
+        // One deliberate semantic change: a tool that fails PERMANENTLY no
+        // longer shields later same-tool calls in the SAME round (they are
+        // already in flight together). Prior rounds' dead tools are still
+        // skipped without running. A real result from a doomed-anyway call
+        // is strictly more information, so nothing is lost.
+        const TOOL_CONCURRENCY: usize = 4;
+        enum Outcome {
+            SkippedDead,
+            Done { result: Result<String, String> },
+        }
+        let prior_dead: std::collections::HashSet<String> =
+            dead_tools.iter().cloned().collect();
+        let executed: Vec<(ToolCall, Outcome)> = {
+            use futures_util::stream::{self, StreamExt};
+            let runtime_ref = &runtime;
+            let on_tool = handlers.on_tool.clone();
+            stream::iter(assistant_calls.into_iter().map(|call| {
+                let on_tool = on_tool.clone();
+                let dead = prior_dead.contains(&call.function.name);
+                async move {
+                    if dead {
+                        return (call, Outcome::SkippedDead);
+                    }
+                    (on_tool)(ToolEvent::Started {
+                        name: call.function.name.clone(),
+                        args: call.function.arguments.clone(),
+                    });
+                    // Tool calls are logged on BOTH paths. Until 0.2.89 a
+                    // failed tool left no trace anywhere: a field report of
+                    // "the model says it can't browse the web" could not be
+                    // diagnosed after the fact. Log the tool, arguments,
+                    // error and duration so the next occurrence is
+                    // answerable from the host log alone.
+                    let started = std::time::Instant::now();
+                    let outcome = match registry::execute(
+                        &call.function.name,
+                        &call.function.arguments,
+                        runtime_ref,
+                    )
+                    .await
+                    {
+                        Ok(r) => {
+                            tracing::info!(
+                                tool = %call.function.name,
+                                args = %truncate_for_log(&call.function.arguments),
+                                ms = started.elapsed().as_millis() as u64,
+                                result_chars = r.len(),
+                                "tool call ok"
+                            );
+                            Ok(r)
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                tool = %call.function.name,
+                                args = %truncate_for_log(&call.function.arguments),
+                                ms = started.elapsed().as_millis() as u64,
+                                error = %format!("{e:#}"),
+                                "TOOL CALL FAILED"
+                            );
+                            Err(format!("{e:#}"))
+                        }
+                    };
+                    (call, Outcome::Done { result: outcome })
+                }
+            }))
+            .buffered(TOOL_CONCURRENCY)
+            .collect()
+            .await
+        };
+
+        for (call, outcome) in executed {
             total_tool_invocations += 1;
-            (handlers.on_tool)(ToolEvent::Started {
-                name: call.function.name.clone(),
-                args: call.function.arguments.clone(),
-            });
-            // Tool calls are logged on BOTH paths. Until 0.2.89 a failed
-            // tool left no trace anywhere: a field report of "the model
-            // says it can't browse the web" could not be diagnosed after
-            // the fact, because the only record of the failed search was
-            // the model's own (invented) explanation of it. Log the tool,
-            // the arguments, the error and the duration so the next
-            // occurrence is answerable from the host log alone.
-            // A tool that already failed permanently this turn is not
-            // called again — the answer would be the same error and one
-            // more apology in the reply.
-            if dead_tools.iter().any(|t| t == &call.function.name) {
-                let note = format!(
-                    "TOOL UNAVAILABLE ({}): an earlier call this turn failed permanently \
+            let (result, ok) = match outcome {
+                Outcome::SkippedDead => {
+                    // A tool that failed permanently in an EARLIER round is
+                    // not called again — the answer would be the same error
+                    // and one more apology in the reply.
+                    let note = format!(
+                        "TOOL UNAVAILABLE ({}): an earlier call this turn failed permanently \
 (billing, authentication or configuration) and will not succeed by retrying. Do NOT call \
 it again in this turn. Tell the user once what is unavailable and answer as best you can \
 without it.",
-                    call.function.name
-                );
-                tracing::info!(tool = %call.function.name, "skipping tool: already failed permanently this turn");
-                (handlers.on_tool)(ToolEvent::Finished {
-                    name: call.function.name.clone(),
-                    ok: false,
-                    result: note.clone(),
-                });
-                total_tool_failures += 1;
-                messages.push(ChatMessage::Tool {
-                    content: note,
-                    tool_call_id: call.id,
-                });
-                continue;
-            }
-            let started = std::time::Instant::now();
-            let (result, ok) = match registry::execute(
-                &call.function.name,
-                &call.function.arguments,
-                &runtime,
-            )
-            .await
-            {
-                Ok(r) => {
-                    tracing::info!(
-                        tool = %call.function.name,
-                        args = %truncate_for_log(&call.function.arguments),
-                        ms = started.elapsed().as_millis() as u64,
-                        result_chars = r.len(),
-                        "tool call ok"
+                        call.function.name
                     );
-                    (r, true)
+                    tracing::info!(tool = %call.function.name, "skipping tool: already failed permanently this turn");
+                    (handlers.on_tool)(ToolEvent::Finished {
+                        name: call.function.name.clone(),
+                        ok: false,
+                        result: note.clone(),
+                    });
+                    total_tool_failures += 1;
+                    messages.push(ChatMessage::Tool {
+                        content: note,
+                        tool_call_id: call.id,
+                    });
+                    continue;
                 }
-                Err(e) => {
-                    if is_permanent_tool_failure(&format!("{e:#}")) {
+                Outcome::Done { result: Ok(r) } => (r, true),
+                Outcome::Done { result: Err(e) } => {
+                    if is_permanent_tool_failure(&e) {
                         dead_tools.push(call.function.name.clone());
                     }
-                    tracing::warn!(
-                        tool = %call.function.name,
-                        args = %truncate_for_log(&call.function.arguments),
-                        ms = started.elapsed().as_millis() as u64,
-                        error = %format!("{e:#}"),
-                        "TOOL CALL FAILED"
-                    );
                     (
                         // The model reads this as the tool's output — make the
                         // failure impossible to gloss over. Without this, a turn
