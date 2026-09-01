@@ -39,7 +39,11 @@ pub async fn build_context(
     let mut messages: Vec<ChatMessage> =
         Vec::with_capacity(3 + memories.len() + recent.len() + 1);
 
-    messages.push(system_prompt(&cfg.host.family_name, &llm.system_addendum));
+    messages.push(system_prompt(
+        &cfg.host.family_name,
+        &llm.system_addendum,
+        &super::models_overview(cfg, llm),
+    ));
 
     // History, three passes (rationale on the helpers below):
     //   1. drop the current message (it is appended separately, with the

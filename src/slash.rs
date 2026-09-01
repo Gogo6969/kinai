@@ -189,6 +189,10 @@ answering with **{next}** (`{next_model}`) instead._\n\n"
         // into an 8k-window failover slot would overflow its context and
         // drive computed max_tokens to zero.
         let mut attempt_msgs = messages.clone();
+        // The prompt was built naming the ROUTED slot; if failover moved
+        // the turn, the model must name the slot that actually answers,
+        // not the one the user asked for.
+        crate::context::retarget_active_model(&mut attempt_msgs, cfg, &label);
         crate::context::token_guard::trim_to_fit(
             &mut attempt_msgs,
             crate::context::builder::prompt_budget(settings.context_window, settings.max_tokens),

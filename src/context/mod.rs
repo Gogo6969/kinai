@@ -100,7 +100,7 @@ impl ChatMessage {
     }
 }
 
-pub fn system_prompt(family_name: &str, addendum: &str) -> ChatMessage {
+pub fn system_prompt(family_name: &str, addendum: &str, models: &str) -> ChatMessage {
     // The block under "Tool-use discipline" is what stops gpt-oss (and similar
     // small-to-medium open models) from looping on `web_search` calls. Without
     // explicit "one focused call, refine once, then commit" guidance, the model
@@ -299,11 +299,149 @@ If a system message at the top of this conversation lists \"Persistent facts you
 those facts are AUTHORITATIVE — treat them as ground truth and don't second-guess. Use them \
 naturally when relevant, but don't recite the whole list at the start of every reply."
     );
+    if !models.trim().is_empty() {
+        content.push_str("\n\n");
+        content.push_str(models.trim());
+    }
     if !addendum.trim().is_empty() {
         content.push_str("\n\n# Host-specific instructions\n\n");
         content.push_str(addendum.trim());
     }
     ChatMessage::System { content }
+}
+
+/// Marks the line naming the slot serving the current turn, so slot
+/// failover can rewrite it without rebuilding the whole prompt.
+pub const ACTIVE_MODEL_PREFIX: &str = "- **Serving this turn:**";
+
+/// Strip a model id down to something a person recognises: llama.cpp
+/// slots are often configured with a full path, and the family should
+/// read "Qwen3.8-27B-Q4_K_M", not "C:\\models\\...\\x.gguf".
+pub fn display_model_name(model: &str) -> String {
+    let base = model
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(model)
+        .trim();
+    base.strip_suffix(".gguf").unwrap_or(base).to_string()
+}
+
+/// Which configured slot these settings belong to, matched on the pair
+/// that actually identifies a server.
+pub fn slot_label_for(cfg: &crate::config::AppConfig, s: &crate::config::LlmSettings) -> Option<&'static str> {
+    [
+        ("fast", &cfg.llm),
+        ("balanced", &cfg.llm_balanced),
+        ("deep", &cfg.llm_deep),
+        ("online", &cfg.llm_online),
+    ]
+    .into_iter()
+    .find(|(_, c)| c.base_url == s.base_url && c.model == s.model)
+    .map(|(label, _)| label)
+}
+
+/// The live model roster, rebuilt from config on every turn.
+///
+/// KinAI had no idea what it was running: asked which models it uses, it
+/// guessed from training data and — worse — on 2026-09-01 it wrote its
+/// guess to permanent memory ("Balanced: Laguna-XS-2", which was never a
+/// model this house has run), so the wrong answer was then fed back to
+/// it every turn. Config is the single source of truth and costs one
+/// string per prompt; because it only changes when the host actually
+/// changes a model, it does not disturb the cached prefix.
+pub fn models_overview(cfg: &crate::config::AppConfig, active: &crate::config::LlmSettings) -> String {
+    let describe = |s: &crate::config::LlmSettings| {
+        let name = display_model_name(&s.model);
+        // Local vs off-premises is the part the family actually needs:
+        // `online` leaves the house, everything else does not.
+        let where_ = if s.base_url.contains("://192.168.")
+            || s.base_url.contains("://127.0.0.1")
+            || s.base_url.contains("://localhost")
+            || s.base_url.contains("://10.")
+        {
+            "on the family's own hardware".to_string()
+        } else {
+            let host = s
+                .base_url
+                .split("://")
+                .nth(1)
+                .and_then(|h| h.split('/').next())
+                .unwrap_or(&s.base_url);
+            format!("a paid cloud endpoint at {host} — data leaves the house")
+        };
+        format!("{name} ({where_})")
+    };
+
+    let active_label = slot_label_for(cfg, active).unwrap_or("fast");
+    let mut out = String::from(
+        "# WHICH MODELS YOU ARE RUNNING\n\nThis list is rebuilt from the host's configuration on every single turn, so it is \
+ALWAYS current. When the user asks which model you are, which models KinAI uses, or \
+whether a model changed, answer from this list and nothing else. Do NOT answer from \
+your training data, and do NOT trust a model name you remember from an earlier \
+conversation or from a saved fact — the host swaps models often and any remembered \
+name is probably stale. Never call `remember` to store model names; this section \
+replaces that. If a saved fact contradicts this list, this list is right.\n\n",
+    );
+    out.push_str(&format!(
+        "{ACTIVE_MODEL_PREFIX} the \"{active_label}\" slot — {}\n",
+        describe(active)
+    ));
+    let all: Vec<String> = [
+        ("fast", &cfg.llm),
+        ("balanced", &cfg.llm_balanced),
+        ("deep", &cfg.llm_deep),
+        ("online", &cfg.llm_online),
+    ]
+    .into_iter()
+    .filter(|(_, s)| s.enabled)
+    .map(|(label, s)| format!("  - \"{label}\" — {}", describe(s)))
+    .collect();
+    if !all.is_empty() {
+        // Every slot is listed, the active one included: failover
+        // rewrites only the line above, so this roster must stand on its
+        // own rather than being defined as "the others".
+        out.push_str("- All models configured on this host (the family switches with /fast, /balanced, /deep, /online):\n");
+        out.push_str(&all.join("\n"));
+        out.push('\n');
+    }
+    if cfg.vision.enabled && !cfg.vision.primary.base_url.is_empty() {
+        out.push_str(&format!(
+            "- Pictures are read by: {}\n",
+            describe(&crate::config::LlmSettings {
+                model: cfg.vision.primary.model.clone(),
+                base_url: cfg.vision.primary.base_url.clone(),
+                ..Default::default()
+            })
+        ));
+    }
+    out
+}
+
+/// Rewrite the "serving this turn" line after slot failover moved the
+/// turn to a different model. The prompt is built once, before the
+/// failover is known, so without this the model would name the slot the
+/// user asked for rather than the one that answered.
+pub fn retarget_active_model(
+    messages: &mut [ChatMessage],
+    cfg: &crate::config::AppConfig,
+    label: &str,
+) {
+    let Some(ChatMessage::System { content }) = messages.first_mut() else {
+        return;
+    };
+    let settings = crate::slash::slot_settings(cfg, label);
+    let replacement = models_overview(cfg, settings);
+    let Some(new_line) = replacement
+        .lines()
+        .find(|l| l.starts_with(ACTIVE_MODEL_PREFIX))
+    else {
+        return;
+    };
+    *content = content
+        .lines()
+        .map(|l| if l.starts_with(ACTIVE_MODEL_PREFIX) { new_line } else { l })
+        .collect::<Vec<_>>()
+        .join("\n");
 }
 
 #[cfg(test)]
@@ -312,8 +450,93 @@ mod system_prompt_tests {
     use chrono::{Datelike, Local};
 
     #[test]
+    fn models_roster_names_every_configured_slot() {
+        use crate::config::AppConfig;
+        let mut cfg = AppConfig::default();
+        cfg.llm.base_url = "http://192.168.1.25:8081".into();
+        cfg.llm.model = "Qwen3.8-27B-Q4_K_M".into();
+        cfg.llm_balanced.base_url = "http://192.168.1.91:8084".into();
+        cfg.llm_balanced.model = "Ornith-1.5-35B-A3B".into();
+        cfg.llm_balanced.enabled = true;
+        cfg.llm_deep.base_url = "http://192.168.1.91:8086".into();
+        cfg.llm_deep.model = "Huihui-Qwen3.6-35B-A3B-abliterated-MTP".into();
+        cfg.llm_deep.enabled = true;
+        cfg.llm_online.base_url = "https://api.deepseek.com".into();
+        cfg.llm_online.model = "deepseek-v4-flash".into();
+        cfg.llm_online.enabled = true;
+
+        let out = models_overview(&cfg, &cfg.llm_deep);
+        // The slot serving this turn is named as such...
+        assert!(
+            out.lines().any(|l| l.starts_with(ACTIVE_MODEL_PREFIX)
+                && l.contains("deep")
+                && l.contains("Huihui-Qwen3.6-35B-A3B-abliterated-MTP")),
+            "active line wrong:\n{out}"
+        );
+        // ...and every other configured model is listed, so "which
+        // models does KinAI use" is answerable without guessing.
+        assert!(out.contains("Qwen3.8-27B-Q4_K_M"), "{out}");
+        assert!(out.contains("Ornith-1.5-35B-A3B"), "{out}");
+        assert!(out.contains("deepseek-v4-flash"), "{out}");
+        // Cloud vs local must be distinguishable — it is the one part
+        // with a privacy consequence.
+        assert!(out.contains("data leaves the house"), "{out}");
+        assert!(out.contains("api.deepseek.com"), "{out}");
+        // And the model is told not to persist any of it.
+        assert!(out.contains("Never call `remember` to store model names"), "{out}");
+    }
+
+    #[test]
+    fn a_swapped_model_shows_up_immediately() {
+        use crate::config::AppConfig;
+        let mut cfg = AppConfig::default();
+        cfg.llm.model = "old-model-v1".into();
+        cfg.llm.base_url = "http://192.168.1.25:8081".into();
+        let before = models_overview(&cfg, &cfg.llm);
+        assert!(before.contains("old-model-v1"));
+        // Exactly what Wolf does when he swaps a GGUF: edit config.
+        cfg.llm.model = "brand-new-model-v2".into();
+        let after = models_overview(&cfg, &cfg.llm);
+        assert!(after.contains("brand-new-model-v2"), "{after}");
+        assert!(!after.contains("old-model-v1"), "stale name survived:\n{after}");
+    }
+
+    #[test]
+    fn full_paths_are_shown_as_readable_names() {
+        // llama.cpp slots are often configured with the gguf path; the
+        // family should not be told they are running "C:\\models\\x.gguf".
+        assert_eq!(display_model_name("C:\\models\\huihui\\Huihui-Q6_K.gguf"), "Huihui-Q6_K");
+        assert_eq!(display_model_name("/home/olares/models/Qwen3.8-27B.gguf"), "Qwen3.8-27B");
+        assert_eq!(display_model_name("deepseek-v4-flash"), "deepseek-v4-flash");
+    }
+
+    #[test]
+    fn failover_retargets_the_active_slot_line() {
+        use crate::config::AppConfig;
+        let mut cfg = AppConfig::default();
+        cfg.llm.base_url = "http://192.168.1.25:8081".into();
+        cfg.llm.model = "fast-model".into();
+        cfg.llm_deep.base_url = "http://192.168.1.91:8086".into();
+        cfg.llm_deep.model = "deep-model".into();
+        cfg.llm_deep.enabled = true;
+
+        // Prompt built for deep, then the turn fails over to fast.
+        let mut msgs = vec![system_prompt("Test", "", &models_overview(&cfg, &cfg.llm_deep))];
+        retarget_active_model(&mut msgs, &cfg, "fast");
+        let ChatMessage::System { content } = &msgs[0] else { panic!() };
+        let active = content
+            .lines()
+            .find(|l| l.starts_with(ACTIVE_MODEL_PREFIX))
+            .expect("active line");
+        assert!(active.contains("fast-model"), "not retargeted: {active}");
+        assert!(!active.contains("deep-model"), "still names deep: {active}");
+        // Only that one line changes; the roster still lists the rest.
+        assert!(content.contains("deep-model"), "roster lost the other slots");
+    }
+
+    #[test]
     fn system_prompt_injects_current_date() {
-        let ChatMessage::System { content } = system_prompt("Test", "") else {
+        let ChatMessage::System { content } = system_prompt("Test", "", "") else {
             panic!("system_prompt must return a System message");
         };
         // The prompt must anchor the model in real time: the current

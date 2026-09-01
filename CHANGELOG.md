@@ -7,6 +7,22 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **KinAI now knows which models it is running.** Asked which model it
+  was, it had nothing to go on and guessed from training data — and on
+  1 September it saved its guess to permanent memory ("Balanced:
+  Laguna-XS-2", a model this house has never run), so the wrong answer
+  was then fed back to it every turn as a stored fact. The system prompt
+  now carries a roster built from the host's configuration on every
+  turn: which slot is answering, every configured slot and its model,
+  and which of them are local versus the paid cloud endpoint. Swap a
+  model in Settings and the next message already knows — nothing to
+  refresh, nothing to remember. The model is explicitly told never to
+  save model names, and that this list outranks any stored fact. When
+  slot failover moves a turn to a different model, the roster is
+  retargeted so KinAI names the model that actually answered.
+
 ### Fixed
 
 - **KinAI no longer claims "the search backend is down" long after it
