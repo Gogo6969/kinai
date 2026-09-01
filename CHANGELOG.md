@@ -15,6 +15,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   caught the deep slot doing exactly that. The syntax is now stripped
   from every final answer; when nothing substantive remains, an honest
   note explains it was a model quirk and a retry usually works.
+- **Search keeps falling back when your own SearXNG comes up empty.**
+  With Exa out of credits and SearXNG blocked by its upstream engines,
+  a zero-result answer was treated as a rescue and the chain stopped —
+  the family saw "no results" while DuckDuckGo and Wikipedia still
+  worked. An empty SearXNG answer now continues down the chain.
 - **Answers can no longer trail off mid-search.** A model that spent
   every tool round narrating ("let me look deeper…") without concluding
   used to just stop there. The turn now ends with a forced conclusion
