@@ -5,6 +5,55 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **KinAI no longer claims "the search backend is down" long after it
+  came back.** During the Exa-credits outage KinAI correctly told the
+  family its search had come up empty — but that sentence then lived in
+  the thread, and the model kept repeating it as a standing fact. On
+  1 September it answered a bare "Test" with "I'm still not able to pull
+  live web data since the search backend is down", hours after credits
+  were restored, without attempting a single search. The existing
+  poisoned-history guard only recognised claims about lacking *internet
+  access*, never claims that the *search backend* had failed, so no
+  correction was ever injected. Those phrasings are now recognised and
+  answered with a correction that says the outage may have been real but
+  is not a standing fact — never report search as down unless a call in
+  the current turn actually failed.
+- **Live-list pages (trending topics, rankings, leaderboards) can now be
+  answered.** These are JavaScript dashboards, so neither search snippets
+  nor a plain page fetch contain the actual entries — "look up the latest
+  Google trends" came back empty-handed. `fetch_page` reads XML/RSS, and
+  the model is now told to reach for a site's feed when the page itself
+  is a dashboard.
+
+### Added
+
+- **KinAI can now read links — including PDFs.** A new `fetch_page`
+  tool downloads a URL the user gives (or one found in search results)
+  and returns its readable text: web pages are stripped to prose, and
+  online PDF papers/reports get full text extraction through the same
+  parser that chat attachments use. Until now a linked 50-page paper
+  reached the model as three search-snippet sentences — it honestly
+  answered "I can't open PDF files". Enabled with the Web search
+  toggle (same privacy surface).
+
+  Safety, after an adversarial review of the first draft found real
+  holes in it: only public http/https URLs are fetched; private and
+  internal addresses are refused before any request, including the IPv6
+  forms that merely wrap an IPv4 address (`::ffff:192.168.1.25` reached
+  the family's own model servers in the first draft); every redirect hop
+  is re-checked and the vetted DNS answer is pinned against rebinding;
+  a fetched page is handed to the model fenced and labelled as untrusted
+  data, so a page cannot instruct it to leak the conversation; and PDF
+  parsing runs one-at-a-time under a timeout, since a crafted PDF can
+  otherwise allocate gigabytes. The same review caught the feature
+  under-delivering: the pipeline's per-result ceiling was cutting fetched
+  documents to their first two pages, so a "full text" fetch reached the
+  model as roughly 4% of the paper.
+
 ## [0.2.106] — 2026-08-31
 
 ### Fixed

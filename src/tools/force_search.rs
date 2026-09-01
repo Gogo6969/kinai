@@ -479,9 +479,37 @@ const DENIAL_VERBS: &[&str] = &[
     "can t", "cant", "cannot", "can not",
     "don t", "dont", "do not", "doesn t", "doesnt", "does not",
     "didn t", "won t", "couldn t", "isn t",
-    "unable", "no access", "lack", "lacks", "lacking",
+    "unable", "not able", "no access", "lack", "lacks", "lacking",
     "habe keinen", "habe kein", "keinen zugriff", "nicht in der lage",
 ];
+
+/// Phrases where the model reports the SEARCH INFRASTRUCTURE as broken.
+///
+/// Deliberately separate from a capability denial: these claims are often
+/// TRUE when written — during the 2026-08-31 Exa-credits outage KinAI
+/// correctly told the family its search had come up empty. The problem is
+/// that the sentence then LIVES in the thread: on 2026-09-01 at 09:03,
+/// hours after credits were restored and with no tool call attempted that
+/// turn, KinAI answered a bare "Test" with "I'm still not able to pull
+/// live web data since the search backend is down". Neither the original
+/// nor the echo matched DENIAL_MARKERS, so no correction was ever
+/// injected and the claim propagated turn after turn.
+///
+/// Matched alone (no verb pairing): unlike "real time" or "internet
+/// access", these strings have no innocent reading in an assistant reply.
+const OUTAGE_CLAIMS: &[&str] = &[
+    "search backend", "search engine is down", "search engine was down",
+    "search engine isn t returning", "search engine returned nothing",
+    "search is down", "search was down", "searches are failing",
+    "search came up short", "search came back empty", "search returned nothing",
+    "no search results", "searxng", "suche ist ausgefallen",
+    "suchmaschine ist", "keine suchergebnisse",
+];
+
+/// True when `text` reports the search backend itself as broken.
+pub fn is_tool_outage_claim(text: &str) -> bool {
+    any(&normalize(text), OUTAGE_CLAIMS)
+}
 
 /// True when `text` looks like the model denying it has web access.
 ///
@@ -500,9 +528,50 @@ claimed to lack live web access, real-time data, or the ability to browse. That 
 you have a working `web_search` tool and it is available right now. Disregard that reply as \
 precedent: do not copy its refusal. When the question needs current information, search.";
 
+/// Injected when an earlier reply reported the search backend as broken.
+///
+/// Worded differently from CORRECTION_NOTE on purpose: that note calls
+/// the earlier claim false, which would be wrong here — the outage was
+/// usually real. What must be corrected is treating it as STANDING.
+pub const OUTAGE_CORRECTION_NOTE: &str = "CORRECTION: an assistant reply earlier in this \
+conversation said the search backend was down, unavailable, or returned nothing. That may have \
+been true when it was written, but it is NOT a standing fact about your tools and must never be \
+repeated as one. Your `web_search` tool is available right now. Do not tell the user that search \
+is down or that you cannot fetch live data unless a tool call in THIS turn actually failed — if \
+the question needs current information, run the search first and report what actually happens.";
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn real_outage_replies_are_recognised_as_poison() {
+        // Verbatim from the family's own thread. Neither of these tripped
+        // the detector before, which is why KinAI kept telling Kris and
+        // Wolf that search was down long after it came back.
+        let poisoner = "I tried to look that up, but my search engine isn't returning any \
+results right now (it's running on your local SearXNG, which came back empty), so I can't \
+give you a live reading for Flushing Meadows.";
+        let echo = "Test received! Everything's working on my end. 🟢 (And just so you know — \
+I'm still not able to pull live web data since the search backend is down, but basic chat, \
+math, and general knowledge all work fine.)";
+        assert!(is_tool_outage_claim(poisoner), "poisoner must be flagged");
+        assert!(is_tool_outage_claim(echo), "echo must be flagged");
+        // The echo also denies the capability outright.
+        assert!(is_capability_denial(echo), "'not able to pull live web data' is a denial");
+    }
+
+    #[test]
+    fn talking_about_search_normally_is_not_an_outage_claim() {
+        for ok in [
+            "I searched for the current price and found $431.20 on three sources.",
+            "The search results disagree, so here is what the majority say.",
+            "Bitcoin is down 3% today.",
+            "I can look that up for you — want me to search?",
+        ] {
+            assert!(!is_tool_outage_claim(ok), "false positive: {ok:?}");
+        }
+    }
 
     #[test]
     fn live_questions_are_caught() {

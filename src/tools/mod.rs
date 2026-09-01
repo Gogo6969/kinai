@@ -7,6 +7,7 @@
 
 pub mod calculator;
 pub mod datetime;
+pub mod fetch_page;
 pub mod image_recover;
 pub mod force_search;
 pub mod image_search;

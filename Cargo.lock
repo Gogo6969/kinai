@@ -2772,6 +2772,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "dirs 5.0.1",
+ "encoding_rs",
  "eventsource-stream",
  "futures-util",
  "hex",
@@ -2817,6 +2818,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "url",
  "uuid",
  "whisper-rs",
 ]

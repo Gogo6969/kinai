@@ -60,6 +60,10 @@ futures-util = "0.3"
 
 # --- HTTP / streaming ---
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "multipart"] }
+# Already in the tree via reqwest; direct deps only for fetch_page — url::Host
+# in the SSRF guard, encoding_rs to honour a page's declared charset.
+url = "2"
+encoding_rs = "0.8"
 eventsource-stream = "0.2"
 
 # --- Serialization ---

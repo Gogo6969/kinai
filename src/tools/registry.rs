@@ -78,6 +78,9 @@ pub fn enabled(settings: &ToolSettings) -> Vec<ToolDef> {
     let mut out = Vec::new();
     if settings.web_search {
         out.push(web_search_def());
+        // Same toggle, same privacy surface: fetching a page the user
+        // linked is no more of a network disclosure than searching for it.
+        out.push(fetch_page_def());
     }
     if settings.x_search {
         out.push(x_search_def());
@@ -124,6 +127,13 @@ pub async fn execute(name: &str, args_json: &str, runtime: &ToolRuntime) -> Resu
                 runtime.search_fallback_searxng,
             )
             .await
+        }
+        "fetch_page" => {
+            let url = args
+                .get("url")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("missing url"))?;
+            super::fetch_page::fetch(url).await
         }
         "x_search" => {
             let query = args
@@ -240,6 +250,30 @@ the query, not the years you remember as recent."
                         "query": { "type": "string", "description": "The search query." }
                     },
                     "required": ["query"]
+                }
+            }
+        }),
+    }
+}
+
+fn fetch_page_def() -> ToolDef {
+    ToolDef {
+        name: "fetch_page".into(),
+        description: "Fetch a specific URL and return its full text — works for web pages, online PDFs (papers, reports), and plain-text files.".into(),
+        schema: json!({
+            "type": "function",
+            "function": {
+                "name": "fetch_page",
+                "description": "Download a specific URL and return its readable text. Handles web pages (HTML stripped to prose), online PDF documents (papers, reports, manuals — full text extracted), XML/RSS feeds, and plain-text files. Use this whenever the user gives you a link and wants you to read, summarize, or answer questions about what's behind it, or when web_search snippets aren't enough and you need a result page's actual content. IMPORTANT: many 'live list' pages — trending topics, rankings, leaderboards, live scores — are JavaScript dashboards whose numbers are NOT in the page source, so both search snippets and a plain fetch of the page return only navigation text. When a site publishes an RSS, XML or JSON feed of the same data, fetch that instead: it is static and contains the actual entries (for example Google Trends' trending list is at https://trends.google.com/trending/rss?geo=US, with geo= set to the country you need). Very long documents are truncated with a note. Only public http/https URLs work — local or private-network addresses are refused.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": "The full http(s) URL to fetch, exactly as given or as found in search results."
+                        }
+                    },
+                    "required": ["url"]
                 }
             }
         }),

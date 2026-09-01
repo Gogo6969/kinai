@@ -578,10 +578,9 @@ fn strip_tags(s: &str) -> String {
             _ => {}
         }
     }
-    out.replace("&quot;", "\"")
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
+    // Shared with fetch_page so the "&amp; must decode last" rule can
+    // never drift back apart in one of the two strippers.
+    super::fetch_page::decode_entities(&out)
 }
 
 #[cfg(test)]
