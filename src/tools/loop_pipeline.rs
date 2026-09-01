@@ -145,6 +145,10 @@ pub async fn run_pipeline(
         0
     };
 
+    // True when the loop burned every round still calling tools — the
+    // model was mid-work when the budget ran out, so the accumulated
+    // content is narration, not a conclusion.
+    let mut rounds_exhausted = true;
     for _round in 0..MAX_ROUNDS {
         let forcing = force_rounds_left > 0;
         let (round_tools, force_flag) = if forcing {
@@ -289,6 +293,7 @@ pub async fn run_pipeline(
                 // here, so the banner only appeared when the round limit
                 // happened to be exhausted first. Caught by
                 // tests/search_failure_live.rs after the fact.
+                rounds_exhausted = false;
                 break;
             }
             tracing::warn!(
@@ -296,6 +301,7 @@ pub async fn run_pipeline(
                 tool_invocations = total_tool_invocations,
                 "model closed a round with no content and no tool calls"
             );
+            rounds_exhausted = false;
             break;
         }
 
@@ -568,12 +574,25 @@ short rather than guessing.)\n{result}"
     // accumulated tool results are still in `messages`, so it has all the
     // material it needs to write an answer. This rescues the common
     // "small model can't decide when to stop searching" failure mode.
-    if accumulated.lock().await.trim().is_empty() && total_tool_invocations > 0 {
+    let narration_only = rounds_exhausted && !accumulated.lock().await.trim().is_empty();
+    if total_tool_invocations > 0
+        && (accumulated.lock().await.trim().is_empty() || narration_only)
+    {
         tracing::info!(
-            "tool loop exhausted ({} invocations, no final); forcing a no-tools synthesis round",
+            narration_only,
+            "tool loop exhausted ({} invocations); forcing a no-tools synthesis round",
             total_tool_invocations
         );
-        let synthesis_note = if total_tool_failures >= total_tool_invocations {
+        let synthesis_note = if narration_only {
+            // The model spent every round narrating its search ("let me
+            // look deeper…") without ever concluding — the family saw a
+            // stream of intentions that just stopped. Make it land the
+            // answer.
+            "You have used every available tool round and your reply so far is narration \
+without a conclusion. Finish NOW: using only the results above, state your final answer \
+in plain prose. If the results did not settle the question, say exactly that instead of \
+promising more searching. Do not write tool-call syntax."
+        } else if total_tool_failures >= total_tool_invocations {
             // EVERY tool call failed — there are no results to cite. The old
             // text claimed the model had "gathered enough information", which
             // invited fabrication dressed up as fresh results.
@@ -621,8 +640,28 @@ contained no information — do not fabricate what they were meant to provide."
     // we at least saw reasoning / tool calls (so the user knows the model
     // was *doing* something but never produced an answer).
     let mut final_content = accumulated.lock().await.clone();
+    // A model under round pressure sometimes writes raw tool-call syntax
+    // into its visible answer instead of calling a tool (the deep slot did
+    // this in the synthesis round: the whole reply was `<tool_call>...`).
+    // The family must never see that. Strip the syntax; if nothing
+    // substantive remains, an honest note replaces it.
+    let mut syntax_only = false;
+    if contains_tool_syntax(&final_content) {
+        tracing::warn!("final content contained raw tool-call syntax; sanitizing");
+        final_content = match strip_tool_syntax(&final_content) {
+            Some(clean) => clean,
+            None => {
+                syntax_only = true;
+                String::new()
+            }
+        };
+    }
     if final_content.trim().is_empty() {
-        let note = empty_turn_note(any_reasoning, total_tool_invocations);
+        let note = if syntax_only {
+            TOOL_SYNTAX_NOTE
+        } else {
+            empty_turn_note(any_reasoning, total_tool_invocations)
+        };
         (handlers.on_token)(note.to_string());
         final_content.push_str(note);
     } else if every_lookup_failed(total_tool_invocations, total_tool_failures) {
@@ -638,6 +677,13 @@ contained no information — do not fabricate what they were meant to provide."
 /// the field report that prompted this had the model claim outright that it
 /// had no web access. State the truth deterministically, so the warning is
 /// there no matter how the model chose to narrate the failure.
+/// Shown when the model's entire visible reply was raw tool-call syntax
+/// (stripped above). Honest about whose fault it is — retrying usually
+/// works, and nothing is wrong with the server or KinAI's tools.
+pub const TOOL_SYNTAX_NOTE: &str = "⚠️ The model tried to keep using its tools \
+instead of writing an answer — a model quirk, not a KinAI or server problem. \
+Please ask again; a retry usually completes normally.";
+
 pub(crate) const ALL_LOOKUPS_FAILED_BANNER: &str =
     "\n\n_⚠️ Every web lookup for this answer failed, so nothing above comes from a live \
 search — it is the model's own recollection and may be wrong or out of date. KinAI's \
@@ -696,6 +742,53 @@ fn search_found_something(result: &str) -> bool {
         .rev()
         .find(|l| !l.trim().is_empty())
         .is_some_and(|l| !l.trim().starts_with("No results"))
+}
+
+/// Markers of raw tool-call syntax leaking into visible content. Covers
+/// the formats seen in the field: llama-style `<function=...>`, Qwen/GLM
+/// `<tool_call>` blocks, and the invented `<toolcall>` variant.
+const TOOL_SYNTAX_MARKERS: &[&str] = &["<tool_call", "</tool_call", "<function=", "<toolcall"];
+
+pub(crate) fn contains_tool_syntax(content: &str) -> bool {
+    let lc = content.to_ascii_lowercase();
+    TOOL_SYNTAX_MARKERS.iter().any(|m| lc.contains(m))
+}
+
+/// Remove tool-syntax blocks from visible content. Returns the surviving
+/// prose, or `None` when nothing substantive remains (the whole reply was
+/// syntax). Blocks are cut from each opening marker to its matching close
+/// (or end of string when unclosed — the common streamed-halfway case).
+pub(crate) fn strip_tool_syntax(content: &str) -> Option<String> {
+    let mut out = String::with_capacity(content.len());
+    let mut rest = content;
+    'outer: loop {
+        let lc = rest.to_ascii_lowercase();
+        let Some(start) = TOOL_SYNTAX_MARKERS
+            .iter()
+            .filter_map(|m| lc.find(*m))
+            .min()
+        else {
+            out.push_str(rest);
+            break 'outer;
+        };
+        out.push_str(&rest[..start]);
+        let after = &rest[start..];
+        let after_lc = after.to_ascii_lowercase();
+        // End of this block: after the last close tag we can attribute to
+        // it, or end of string when it never closed.
+        let close = ["</tool_call>", "</toolcall>", "</function>"]
+            .iter()
+            .filter_map(|c| after_lc.find(*c).map(|i| i + c.len()))
+            .min();
+        match close {
+            Some(end) => rest = &after[end..],
+            None => break 'outer,
+        }
+    }
+    let cleaned = out.trim().to_string();
+    // Under ~40 chars of survivors is connective tissue ("Let me check:"),
+    // not an answer.
+    (cleaned.chars().count() >= 40).then_some(cleaned)
 }
 
 fn is_permanent_tool_failure(err: &str) -> bool {
@@ -996,6 +1089,28 @@ come from your own SearXNG instead.)\n1. A result\n   https://example.com",
         ] {
             assert!(search_found_something(real), "for: {real:?}");
         }
+    }
+
+    #[test]
+    fn tool_syntax_is_stripped_from_visible_replies() {
+        use super::{contains_tool_syntax, strip_tool_syntax};
+        // The exact failure from the 2026-08-31 hallucination test: deep's
+        // whole reply was one raw block.
+        let pure = "<tool_call>\n<function=web_search>\n<parameter=query>\n\"Kepler-Vogt instability\" definition\n</parameter>\n</function>\n</tool_call>";
+        assert!(contains_tool_syntax(pure));
+        assert_eq!(strip_tool_syntax(pure), None);
+        // Mixed: prose survives, syntax goes.
+        let mixed = "Here is what I found about the treaty, based on the two sources that mention it in passing.\n<tool_call>{\"name\":\"web_search\"}</tool_call>\nNothing verifiable exists.";
+        let cleaned = strip_tool_syntax(mixed).unwrap();
+        assert!(cleaned.contains("what I found"));
+        assert!(cleaned.contains("Nothing verifiable"));
+        assert!(!contains_tool_syntax(&cleaned));
+        // Unclosed (stream cut mid-syntax): everything from the marker on is dropped.
+        let unclosed = "The answer needs one more lookup, which I will run right away for you now:\n<function=web_search>...";
+        let cleaned = strip_tool_syntax(unclosed).unwrap();
+        assert!(!cleaned.contains("<function"));
+        // Clean prose passes through untouched.
+        assert!(!contains_tool_syntax("A perfectly normal answer about < 5 things."));
     }
 
     #[test]

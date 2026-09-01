@@ -5,6 +5,22 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Raw tool-call syntax can no longer appear as an answer.** Under
+  round pressure a model sometimes writes its tool-call markup into the
+  visible reply instead of calling the tool — a hallucination audit
+  caught the deep slot doing exactly that. The syntax is now stripped
+  from every final answer; when nothing substantive remains, an honest
+  note explains it was a model quirk and a retry usually works.
+- **Answers can no longer trail off mid-search.** A model that spent
+  every tool round narrating ("let me look deeper…") without concluding
+  used to just stop there. The turn now ends with a forced conclusion
+  round: state the answer from the results found, or say plainly that
+  they didn't settle the question.
+
 ## [0.2.105] — 2026-08-31
 
 ### Changed
