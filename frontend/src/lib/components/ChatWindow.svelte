@@ -5,6 +5,17 @@
   import ThinkingPanel from './ThinkingPanel.svelte';
   import ToolPill from './ToolPill.svelte';
   import { app } from '$lib/stores/app.svelte';
+
+  /** Status line of the most recent tool for a streaming message, if any. */
+  function lastToolNote(id: string): string | undefined {
+    const acts = app.toolActivity[id];
+    if (!acts?.length) return undefined;
+    const last = acts[acts.length - 1];
+    // ThinkingDots appends its own ellipsis; the Rust phrase carries one
+    // because Telegram shows it raw. Strip it here or it renders "……".
+    const raw = last.note ?? last.name.replace('_', ' ');
+    return raw.replace(/[….]+$/, '');
+  }
   import { renderMarkdown as renderStreamMarkdown } from '$lib/markdown';
   import { api, type Attachment } from '$lib/api';
   import { fileToDataUrl } from '$lib/image';
@@ -634,7 +645,11 @@
               {@html renderStreamMarkdown(app.streaming[id])}
               <span class="inline-block w-1.5 h-4 bg-current align-middle ml-0.5 animate-pulse-soft"></span>
             {:else}
-              <ThinkingDots size="md" />
+              <!-- Before the first token, say what is actually happening.
+                   The last tool's status line ("Reading the document…")
+                   beats a bare "Thinking…" during a 30s research turn;
+                   falls back to the default when no tool has run. -->
+              <ThinkingDots size="md" label={lastToolNote(id)} />
             {/if}
           </div>
           <div class="flex gap-2 text-xs text-white/40 px-1.5">

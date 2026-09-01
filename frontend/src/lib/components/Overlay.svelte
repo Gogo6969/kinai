@@ -516,6 +516,7 @@
           <ThinkingDots
             label={tools.length > 0
               ? (tools[tools.length - 1].note ?? tools[tools.length - 1].name.replace('_', ' '))
+                  .replace(/[….]+$/, '')
               : 'Thinking'}
           />
           {#if queued.length > 0}

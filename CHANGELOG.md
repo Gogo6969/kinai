@@ -5,6 +5,19 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.109] — 2026-09-01
+
+### Fixed
+
+- **The "what I'm doing" status line now appears in the main chat window
+  too.** 0.2.108 wired it into Telegram and the Quick Chat overlay but
+  missed the main desktop window — the surface most people actually use —
+  which kept showing a bare "Thinking…" through a 30-second research
+  turn. Found by driving the real app rather than the test harness: the
+  tool pill was visible while the label still said "Thinking…". The same
+  pass fixed a double ellipsis, since the dots component appends its own
+  and the phrases already carry one for Telegram.
+
 ## [0.2.108] — 2026-09-01
 
 ### Added

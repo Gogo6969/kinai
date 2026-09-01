@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-09-01T22:55:09+00:00",
-  "version": "0.2.108",
+  "generated_at": "2026-09-01T23:21:38+00:00",
+  "version": "0.2.109",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 276,
-    "head": "d92599d"
+    "commits": 277,
+    "head": "55f2cec"
   },
   "totals": {
     "rust_files": 62,
     "rust_lines": 27077,
     "frontend_files": 33,
-    "frontend_lines": 12069,
+    "frontend_lines": 12085,
     "unit_tests": 215,
     "integration_test_files": 12,
-    "releases": 100,
-    "tags": 94
+    "releases": 101,
+    "tags": 95
   },
   "areas": [
     {
@@ -534,8 +534,8 @@
     {
       "path": "frontend/src/lib/components/ChatWindow.svelte",
       "kind": "component",
-      "lines": 978,
-      "doc": "The overlay hotkey as the user's keyboard prints it, derived from the hotkey actually registered (config), never guessed from the platform alone."
+      "lines": 993,
+      "doc": "Status line of the most recent tool for a streaming message, if any."
     },
     {
       "path": "frontend/src/lib/components/Logo.svelte",
@@ -558,7 +558,7 @@
     {
       "path": "frontend/src/lib/components/Overlay.svelte",
       "kind": "component",
-      "lines": 613,
+      "lines": 614,
       "doc": "Image / PDF attachments staged for the next overlay send. Mirrors the main ChatWindow's `pendingAttachments` semantics so a user can paste a screenshot into the quick-chat (Cmd+Space) overlay and have it ride along with the prompt, same as in the main window."
     },
     {
@@ -1074,6 +1074,18 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.109",
+      "date": "2026-09-01",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "The \"what I'm doing\" status line now appears in the main chat window too.",
+            "detail": "0.2.108 wired it into Telegram and the Quick Chat overlay but missed the main desktop window — the surface most people actually use — which kept showing a bare \"Thinking…\" through a 30-second research turn. Found by driving the real app rather than the test harness: the tool pill was visible while the label still said \"Thinking…\". The same pass fixed a double ellipsis, since the dots component appends its own and the phrases already carry one for Telegram."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.108",
       "date": "2026-09-01",
@@ -3207,6 +3219,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.108",
+      "date": "2026-09-01"
+    },
     {
       "tag": "v0.2.107",
       "date": "2026-09-01"
