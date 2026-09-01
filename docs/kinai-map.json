@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-08-31T19:58:07+00:00",
-  "version": "0.2.105",
+  "generated_at": "2026-09-01T03:33:54+00:00",
+  "version": "0.2.106",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 264,
-    "head": "071b609"
+    "commits": 270,
+    "head": "7259f6e"
   },
   "totals": {
     "rust_files": 60,
-    "rust_lines": 25633,
+    "rust_lines": 25844,
     "frontend_files": 33,
     "frontend_lines": 12062,
-    "unit_tests": 191,
+    "unit_tests": 193,
     "integration_test_files": 12,
-    "releases": 97,
-    "tags": 92
+    "releases": 98,
+    "tags": 93
   },
   "areas": [
     {
@@ -430,9 +430,9 @@
     {
       "path": "src/tools/loop_pipeline.rs",
       "area": "tools",
-      "lines": 1203,
+      "lines": 1376,
       "doc": "Tool-calling pipeline.",
-      "tests": 25
+      "tests": 27
     },
     {
       "path": "src/tools/mod.rs",
@@ -451,7 +451,7 @@
     {
       "path": "src/tools/web_search.rs",
       "area": "tools",
-      "lines": 621,
+      "lines": 659,
       "doc": "Web search dispatcher.",
       "tests": 4
     },
@@ -1060,6 +1060,26 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.106",
+      "date": "2026-08-31",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "Raw tool-call syntax can no longer appear as an answer.",
+            "detail": "Under round pressure a model sometimes writes its tool-call markup into the visible reply instead of calling the tool — a hallucination audit caught the deep slot doing exactly that. The syntax is now stripped from every final answer; when nothing substantive remains, an honest note explains it was a model quirk and a retry usually works."
+          },
+          {
+            "title": "Search keeps falling back when your own SearXNG comes up empty.",
+            "detail": "With Exa out of credits and SearXNG blocked by its upstream engines, a zero-result answer was treated as a rescue and the chain stopped — the family saw \"no results\" while DuckDuckGo and Wikipedia still worked. An empty SearXNG answer now continues down the chain."
+          },
+          {
+            "title": "Answers can no longer trail off mid-search.",
+            "detail": "A model that spent every tool round narrating (\"let me look deeper…\") without concluding used to just stop there. The turn now ends with a forced conclusion round: state the answer from the results found, or say plainly that they didn't settle the question."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.105",
       "date": "2026-08-31",
@@ -3131,6 +3151,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.106",
+      "date": "2026-08-31"
+    },
     {
       "tag": "v0.2.105",
       "date": "2026-08-31"
