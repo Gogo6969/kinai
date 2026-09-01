@@ -561,15 +561,7 @@ not offer to retry it."
             // not appended, so `fit_tool_result` trims results — never the
             // instruction.
             let result = if ok && call.function.name == "web_search" && search_found_something(&result) {
-                format!(
-                    "(Live web search results, retrieved just now. Your training data is \
-older than these results: for questions about the current state of the world — prices, \
-holdings, standings, office-holders, news — answer ONLY from these results, never from \
-memory, even when memory feels certain. Where the results disagree with each other, go \
-with what the majority of the most recent ones say — a single stale page does not beat \
-several current ones. If the results do not answer the question, say the search came up \
-short rather than guessing.)\n{result}"
-                )
+                format!("{SEARCH_RESULT_PREAMBLE}\n{result}")
             } else {
                 result
             };
@@ -884,6 +876,32 @@ fn is_permanent_tool_failure(err: &str) -> bool {
         .iter()
         .any(|m| e.contains(m))
 }
+
+/// Prepended to non-empty `web_search` results.
+///
+/// Two failure modes, both measured. (1) A model whose training data
+/// "knows" the answer overrides fresh results with its prior — asked for
+/// QQQ's top holding, one slot cited Apple straight over a result saying
+/// NVIDIA. (2) The 2026-09-01 audit: the deep slot searched, found
+/// nothing corroborating a made-up novel / treaty / study / letter, and
+/// described all four anyway, inventing a verbatim Tesla quote with a
+/// fake archive attribution. Telling it to "say the search came up
+/// short" did not cover the case where results arrive but confirm
+/// nothing, so the existence check names that case explicitly.
+pub(crate) const SEARCH_RESULT_PREAMBLE: &str = "(Live web search results, retrieved just now. Your training data is \
+older than these results: for questions about the current state of the world — prices, \
+holdings, standings, office-holders, news — answer ONLY from these results, never from \
+memory, even when memory feels certain. Where the results disagree with each other, go \
+with what the majority of the most recent ones say — a single stale page does not beat \
+several current ones. If the results do not answer the question, say the search came up \
+short rather than guessing.\n\
+EXISTENCE CHECK — the question may name something that is not real. If it names a \
+specific work, study, treaty, event, product, person or quotation and these results do \
+NOT corroborate that it exists, say plainly that you can find no evidence of it and \
+report what you did find instead. Never describe, date, summarise or quote something \
+these results have not confirmed is real — inventing convincing detail for a thing that \
+does not exist is far worse than saying the search came up empty. Never present words as \
+a verbatim quote unless those words appear in these results.)";
 
 /// No single tool result may exceed this many characters, whatever the
 /// context window. One `web_search` returns 4–5k chars, and a single
@@ -1307,6 +1325,36 @@ mod force_regression_tests {
     fn the_typed_question_still_decides() {
         let live = user("what's the bitcoin price today?\n\n[attached image: chart.png]");
         assert!(should_force_search(&[live]));
+    }
+}
+
+#[cfg(test)]
+mod grounding_preamble_tests {
+    use super::*;
+
+    /// The 2026-09-01 audit found the deep slot fabricating a Kepler-Vogt
+    /// instability, a Treaty of Brindisi, a Copenhagen coffee study and a
+    /// verbatim Tesla quote — every one of them AFTER a search that did
+    /// not corroborate the thing existed. "Say the search came up short"
+    /// did not cover results that arrive but confirm nothing, so the
+    /// preamble has to name that failure mode.
+    #[test]
+    fn search_preamble_warns_against_describing_uncorroborated_things() {
+        let p = SEARCH_RESULT_PREAMBLE;
+        assert!(p.contains("EXISTENCE CHECK"), "existence guard missing");
+        assert!(p.contains("no evidence"), "must say how to report the miss");
+        assert!(p.contains("verbatim quote"), "must forbid invented quotations");
+        // The original grounding rule must survive alongside it.
+        assert!(p.contains("answer ONLY from these results"));
+    }
+
+    /// The preamble is charged against the turn's tool-token budget on
+    /// every search, so it must stay small enough that a multi-search
+    /// turn does not lose result text to instructions.
+    #[test]
+    fn search_preamble_stays_affordable() {
+        let tokens = crate::context::token_guard::count_tokens(SEARCH_RESULT_PREAMBLE);
+        assert!(tokens < 350, "preamble grew to {tokens} tokens");
     }
 }
 
