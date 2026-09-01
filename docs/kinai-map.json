@@ -1,21 +1,21 @@
 {
-  "generated_at": "2026-09-01T03:33:54+00:00",
-  "version": "0.2.106",
+  "generated_at": "2026-09-01T19:46:56+00:00",
+  "version": "0.2.107",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 270,
-    "head": "7259f6e"
+    "commits": 274,
+    "head": "167d4a5"
   },
   "totals": {
-    "rust_files": 60,
-    "rust_lines": 25844,
+    "rust_files": 61,
+    "rust_lines": 26868,
     "frontend_files": 33,
     "frontend_lines": 12062,
-    "unit_tests": 193,
+    "unit_tests": 211,
     "integration_test_files": 12,
-    "releases": 98,
+    "releases": 99,
     "tags": 93
   },
   "areas": [
@@ -129,7 +129,7 @@
     {
       "path": "src/context/builder.rs",
       "area": "context",
-      "lines": 753,
+      "lines": 757,
       "doc": "Build the per-request message list from system prompt + memory + history.",
       "tests": 17
     },
@@ -150,9 +150,9 @@
     {
       "path": "src/context/mod.rs",
       "area": "context",
-      "lines": 337,
+      "lines": 560,
       "doc": "The never-lose-context system.",
-      "tests": 1
+      "tests": 5
     },
     {
       "path": "src/context/summarizer.rs",
@@ -339,7 +339,7 @@
     {
       "path": "src/slash.rs",
       "area": "routing",
-      "lines": 1063,
+      "lines": 1067,
       "doc": "Slash commands — intercepted BEFORE the LLM pipeline so messages starting with /pic, /picHQ, /help, ? skip the chat model entirely and route to native handlers (ComfyUI for image gen, a static command list for help).",
       "tests": 18
     },
@@ -407,11 +407,18 @@
       "tests": 0
     },
     {
+      "path": "src/tools/fetch_page.rs",
+      "area": "tools",
+      "lines": 579,
+      "doc": "Fetch a URL the user gave and return its text.",
+      "tests": 10
+    },
+    {
       "path": "src/tools/force_search.rs",
       "area": "tools",
-      "lines": 741,
+      "lines": 810,
       "doc": "Taking the \"should I search?\" decision away from the model.",
-      "tests": 8
+      "tests": 10
     },
     {
       "path": "src/tools/image_recover.rs",
@@ -430,28 +437,28 @@
     {
       "path": "src/tools/loop_pipeline.rs",
       "area": "tools",
-      "lines": 1376,
+      "lines": 1487,
       "doc": "Tool-calling pipeline.",
-      "tests": 27
+      "tests": 29
     },
     {
       "path": "src/tools/mod.rs",
       "area": "tools",
-      "lines": 17,
+      "lines": 18,
       "doc": "Built-in tools invoked via OpenAI-style function calling.",
       "tests": 0
     },
     {
       "path": "src/tools/registry.rs",
       "area": "tools",
-      "lines": 385,
+      "lines": 419,
       "doc": "Tool catalogue — generated dynamically from `ToolSettings` so users can disable tools their model shouldn't be allowed to call.",
       "tests": 0
     },
     {
       "path": "src/tools/web_search.rs",
       "area": "tools",
-      "lines": 659,
+      "lines": 658,
       "doc": "Web search dispatcher.",
       "tests": 4
     },
@@ -1060,6 +1067,36 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.107",
+      "date": "2026-09-01",
+      "sections": {
+        "Added": [
+          {
+            "title": "KinAI now knows which models it is running.",
+            "detail": "Asked which model it was, it had nothing to go on and guessed from training data — and on 1 September it saved its guess to permanent memory (\"Balanced: Laguna-XS-2\", a model this house has never run), so the wrong answer was then fed back to it every turn as a stored fact. The system prompt now carries a roster built from the host's configuration on every turn: which slot is answering, every configured slot and its model, and which of them are local versus the paid cloud endpoint. Swap a model in Settings and the next message already knows — nothing to refresh, nothing to remember. The model is explicitly told never to save model names, and that this list outranks any stored fact. When slot failover moves a turn to a different model, the roster is retargeted so KinAI names the model that actually answered."
+          },
+          {
+            "title": "KinAI can now read links — including PDFs.",
+            "detail": "A new `fetch_page` tool downloads a URL the user gives (or one found in search results) and returns its readable text: web pages are stripped to prose, and online PDF papers/reports get full text extraction through the same parser that chat attachments use. Until now a linked 50-page paper reached the model as three search-snippet sentences — it honestly answered \"I can't open PDF files\". Enabled with the Web search toggle (same privacy surface). Safety, after an adversarial review of the first draft found real holes in it: only public http/https URLs are fetched; private and internal addresses are refused before any request, including the IPv6 forms that merely wrap an IPv4 address (`::ffff:192.168.1.25` reached the family's own model servers in the first draft); every redirect hop is re-checked and the vetted DNS answer is pinned against rebinding; a fetched page is handed to the model fenced and labelled as untrusted data, so a page cannot instruct it to leak the conversation; and PDF parsing runs one-at-a-time under a timeout, since a crafted PDF can otherwise allocate gigabytes. The same review caught the feature under-delivering: the pipeline's per-result ceiling was cutting fetched documents to their first two pages, so a \"full text\" fetch reached the model as roughly 4% of the paper."
+          }
+        ],
+        "Fixed": [
+          {
+            "title": "KinAI no longer claims \"the search backend is down\" long after it came back.",
+            "detail": "During the Exa-credits outage KinAI correctly told the family its search had come up empty — but that sentence then lived in the thread, and the model kept repeating it as a standing fact. On 1 September it answered a bare \"Test\" with \"I'm still not able to pull live web data since the search backend is down\", hours after credits were restored, without attempting a single search. The existing poisoned-history guard only recognised claims about lacking *internet access*, never claims that the *search backend* had failed, so no correction was ever injected. Those phrasings are now recognised and answered with a correction that says the outage may have been real but is not a standing fact — never report search as down unless a call in the current turn actually failed."
+          },
+          {
+            "title": "The model no longer describes things the search did not confirm.",
+            "detail": "A 12-question audit run through the real pipeline found every fabrication happening *after* a search: asked about an invented novel, treaty, study and letter, the deep model searched, got results corroborating none of them, and described all four anyway — inventing a verbatim Tesla quotation complete with a translator and museum archive that do not exist. The grounding note already said \"if the results do not answer the question, say the search came up short\", which does not cover results that arrive and simply confirm nothing. It now names that case explicitly and forbids presenting words as a quotation unless they appear in the results. Measured on the deep model: 9/12 correct before, 11/12 after."
+          },
+          {
+            "title": "Live-list pages (trending topics, rankings, leaderboards) can now be answered.",
+            "detail": "These are JavaScript dashboards, so neither search snippets nor a plain page fetch contain the actual entries — \"look up the latest Google trends\" came back empty-handed. `fetch_page` reads XML/RSS, and the model is now told to reach for a site's feed when the page itself is a dashboard."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.106",
       "date": "2026-08-31",

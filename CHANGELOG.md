@@ -5,7 +5,7 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.107] — 2026-09-01
 
 ### Added
 
@@ -38,6 +38,18 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   answered with a correction that says the outage may have been real but
   is not a standing fact — never report search as down unless a call in
   the current turn actually failed.
+- **The model no longer describes things the search did not confirm.** A
+  12-question audit run through the real pipeline found every fabrication
+  happening *after* a search: asked about an invented novel, treaty,
+  study and letter, the deep model searched, got results corroborating
+  none of them, and described all four anyway — inventing a verbatim
+  Tesla quotation complete with a translator and museum archive that do
+  not exist. The grounding note already said "if the results do not
+  answer the question, say the search came up short", which does not
+  cover results that arrive and simply confirm nothing. It now names
+  that case explicitly and forbids presenting words as a quotation
+  unless they appear in the results. Measured on the deep model: 9/12
+  correct before, 11/12 after.
 - **Live-list pages (trending topics, rankings, leaderboards) can now be
   answered.** These are JavaScript dashboards, so neither search snippets
   nor a plain page fetch contain the actual entries — "look up the latest
