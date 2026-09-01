@@ -620,10 +620,17 @@ back, unless you switch model yourself.",
     // edit budget). The final, authoritative text is still written once by
     // send_assistant_reply (which also persists + fans out).
     let buf = Arc::new(std::sync::Mutex::new(String::new()));
+    // Latest human status line ("Looking into it…") from the tool loop.
+    // A research turn can spend 30s before its first token; without this
+    // the phone shows only the typing dots and reads as a hung app.
+    let status = Arc::new(std::sync::Mutex::new(String::new()));
     let (buf_tx, buf_rx) = tokio::sync::watch::channel::<()>(());
     let handlers = {
         let buf = buf.clone();
         let buf_tx = buf_tx.clone();
+        // Cloned before the struct literal: `on_token` takes ownership of
+        // `buf_tx`, so `on_tool` needs its own handle up front.
+        let tool_tx = buf_tx.clone();
         PipelineHandlers {
             on_token: Arc::new(move |t: String| {
                 if let Ok(mut g) = buf.lock() {
@@ -632,7 +639,18 @@ back, unless you switch model yourself.",
                 let _ = buf_tx.send(());
             }),
             on_reasoning: Arc::new(|_| {}),
-            on_tool: Arc::new(|_| {}),
+            on_tool: {
+                let status = status.clone();
+                let tx = tool_tx;
+                Arc::new(move |e: crate::tools::loop_pipeline::ToolEvent| {
+                    if let crate::tools::loop_pipeline::ToolEvent::Started { note, .. } = e {
+                        if let Ok(mut g) = status.lock() {
+                            *g = note;
+                        }
+                        let _ = tx.send(());
+                    }
+                })
+            },
         }
     };
 
@@ -646,6 +664,7 @@ back, unless you switch model yourself.",
     let editor = {
         let api = api.clone();
         let buf = buf.clone();
+        let status = status.clone();
         let mut buf_rx = buf_rx;
         let cancel = edit_cancel.clone();
         let typing_cancel = typing_cancel.clone();
@@ -657,6 +676,9 @@ back, unless you switch model yourself.",
                 .checked_sub(EDIT_INTERVAL)
                 .unwrap_or_else(std::time::Instant::now);
             let mut last_sent = String::new();
+            // True while the bubble holds a status line rather than answer
+            // text; the first real content overwrites it.
+            let mut showing_status = false;
             loop {
                 tokio::select! {
                     _ = cancel.cancelled() => break,
@@ -665,6 +687,45 @@ back, unless you switch model yourself.",
                     }
                 }
                 let snapshot = buf.lock().map(|g| g.clone()).unwrap_or_default();
+                let status_line = status.lock().map(|g| g.clone()).unwrap_or_default();
+                // Before any real content: put the tool's status line in
+                // the bubble. The SAME bubble is then edited into the
+                // answer, so the user never sees a stray status message
+                // left behind next to the reply.
+                if snapshot.chars().count() < MIN_FIRST_CHARS && !status_line.is_empty() {
+                    if status_line == last_sent {
+                        continue;
+                    }
+                    let now = std::time::Instant::now();
+                    match placeholder_id {
+                        None => match api.send_message(chat_id, &status_line).await {
+                            Ok(id) => {
+                                placeholder_id = Some(id);
+                                last_sent = status_line;
+                                last_edit = now;
+                                showing_status = true;
+                                // Typing dots stay on: the bubble is not
+                                // streaming yet, and dots + status together
+                                // read as "working", not "finished".
+                            }
+                            Err(e) => tracing::warn!("tg status: first send failed: {e:?}"),
+                        },
+                        Some(id) if showing_status => {
+                            if now.duration_since(last_edit) < EDIT_INTERVAL {
+                                continue;
+                            }
+                            match api.edit_message_text(chat_id, id, &status_line).await {
+                                Ok(()) => {
+                                    last_sent = status_line;
+                                    last_edit = now;
+                                }
+                                Err(e) => tracing::debug!("tg status edit: {e:?}"),
+                            }
+                        }
+                        Some(_) => {}
+                    }
+                    continue;
+                }
                 if placeholder_id.is_none() {
                     if snapshot.chars().count() < MIN_FIRST_CHARS {
                         continue;
@@ -682,6 +743,12 @@ back, unless you switch model yourself.",
                 }
                 if snapshot == last_sent {
                     continue;
+                }
+                if showing_status {
+                    // Real content has arrived; the bubble stops being a
+                    // status line and the dots hand over to streaming.
+                    showing_status = false;
+                    typing_cancel.cancel();
                 }
                 let since = last_edit.elapsed();
                 if since < EDIT_INTERVAL {

@@ -51,7 +51,10 @@ pub struct PipelineHandlers {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind")]
 pub enum ToolEvent {
-    Started { name: String, args: String },
+    /// `note` is the human status line ("Looking into it…") shown by
+    /// the desktop overlay and the Telegram bubble. Clients older than
+    /// 0.2.108 simply ignore the field and keep showing the tool id.
+    Started { name: String, args: String, note: String },
     Finished { name: String, ok: bool, result: String },
 }
 
@@ -399,6 +402,8 @@ without it.",
                         (on_tool)(ToolEvent::Started {
                             name: call.function.name.clone(),
                             args: call.function.arguments.clone(),
+                            note: crate::tools::status_phrases::phrase_for(&call.function.name)
+                                .to_string(),
                         });
                         (on_tool)(ToolEvent::Finished {
                             name: call.function.name.clone(),
@@ -416,6 +421,8 @@ without it.",
                     (on_tool)(ToolEvent::Started {
                         name: call.function.name.clone(),
                         args: call.function.arguments.clone(),
+                        note: crate::tools::status_phrases::phrase_for(&call.function.name)
+                            .to_string(),
                     });
                     // Tool calls are logged on BOTH paths. Until 0.2.89 a
                     // failed tool left no trace anywhere: a field report of

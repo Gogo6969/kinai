@@ -17,7 +17,7 @@
   let activeThreadId = $state<string | null>(null);
   let streamingContent = $state('');
   let reasoningContent = $state('');
-  let tools = $state<{ name: string; ok?: boolean }[]>([]);
+  let tools = $state<{ name: string; note?: string; ok?: boolean }[]>([]);
   let inputEl: HTMLTextAreaElement | undefined = $state();
   let containerEl: HTMLDivElement | undefined = $state();
   let currentClientId = $state<string | null>(null);
@@ -185,7 +185,8 @@
       cleanups.push(
         await events.onTool(({ client_msg_id, event }) => {
           if (client_msg_id !== currentClientId) return;
-          if (event.kind === 'Started') tools = [...tools, { name: event.name }];
+          if (event.kind === 'Started')
+            tools = [...tools, { name: event.name, note: event.note }];
           if (event.kind === 'Finished') {
             // Flip ONE pill, not every unfinished one of that name — tool
             // calls run concurrently since 0.2.105, so several same-name
@@ -513,7 +514,9 @@
       {#if busy}
         <div class="flex items-center justify-between gap-3">
           <ThinkingDots
-            label={tools.length > 0 ? tools[tools.length - 1].name.replace('_', ' ') : 'Thinking'}
+            label={tools.length > 0
+              ? (tools[tools.length - 1].note ?? tools[tools.length - 1].name.replace('_', ' '))
+              : 'Thinking'}
           />
           {#if queued.length > 0}
             <span

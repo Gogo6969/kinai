@@ -23,7 +23,7 @@ class AppStore {
   messages = $state<Record<string, Message[]>>({});
   streaming = $state<Record<string, string>>({}); // client_msg_id -> partial content
   reasoning = $state<Record<string, string>>({}); // client_msg_id -> reasoning trace
-  toolActivity = $state<Record<string, { name: string; ok?: boolean }[]>>({});
+  toolActivity = $state<Record<string, { name: string; note?: string; ok?: boolean }[]>>({});
   /** Which thread each in-flight turn belongs to, keyed by client_msg_id.
    *
    *  The three maps above are keyed by turn alone, which left the UI no
@@ -840,7 +840,9 @@ class AppStore {
         const prev = this.toolActivity[client_msg_id] ?? [];
         let arr;
         if (event.kind === 'Started') {
-          arr = [...prev, { name: event.name }];
+          // `note` is the human status line; older hosts don't send it and
+          // consumers fall back to the tool id.
+          arr = [...prev, { name: event.name, note: event.note }];
         } else if (event.kind === 'Finished') {
           // Flip the LAST not-yet-finished tool of this name (same as the
           // prior reverse().find), but immutably.

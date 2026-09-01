@@ -5,6 +5,22 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **KinAI now says what it is doing while you wait.** A research turn can
+  spend half a minute on searches before its first word, and until now
+  that looked identical to a hung app — the phone showed only "typing…"
+  and the desktop showed a raw tool id ("web search"). Both surfaces now
+  show a varied, human status line: "Looking into it…", "Checking a few
+  sources…", "Reading the document…". On Telegram the line appears in a
+  bubble that is then edited into the answer, so nothing is left behind
+  next to the reply. The wording always matches the tool that is really
+  running — a search never claims to be reading a document — and a shared
+  rotation means the parallel batch of searches one turn fires reads as
+  three different lines instead of the same one three times.
+
 ## [0.2.107] — 2026-09-01
 
 ### Added

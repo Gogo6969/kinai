@@ -353,7 +353,9 @@ export interface TokenDelta {
 export interface ToolDeltaEvent {
   client_msg_id: string;
   event:
-    | { kind: 'Started'; name: string; args: string }
+    // `note` is the human status line ("Looking into it…"); optional so a
+    // client talking to a pre-0.2.108 host still type-checks.
+    | { kind: 'Started'; name: string; args: string; note?: string }
     | { kind: 'Finished'; name: string; ok: boolean; result: string };
 }
 
