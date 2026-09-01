@@ -189,7 +189,7 @@ pub async fn run_pipeline(
                 // deliberately stopped. A forced round widened that window,
                 // because no token is visible until the search has run, so
                 // say plainly that it was stopped.
-                let partial = accumulated.lock().await.clone();
+                let partial = sanitize_partial(&accumulated.lock().await);
                 return Ok(PipelineResult {
                     final_content: if partial.trim().is_empty() {
                         STOPPED_NOTE.to_string()
@@ -245,6 +245,7 @@ pub async fn run_pipeline(
                         "stream error after {} chars of partial answer: {e}",
                         partial.len()
                     );
+                    let partial = sanitize_partial(&partial);
                     return Ok(PipelineResult {
                         final_content: format!(
                             "{partial}\n\n_(⚠️ reply cut off — the model stopped responding mid-answer)_"
@@ -293,7 +294,13 @@ pub async fn run_pipeline(
                 // here, so the banner only appeared when the round limit
                 // happened to be exhausted first. Caught by
                 // tests/search_failure_live.rs after the fact.
-                rounds_exhausted = false;
+                //
+                // Natural end only when THIS round contributed content: a
+                // closing round that adds nothing on top of earlier
+                // narration ("let me dig deeper…" then a bare stop) is a
+                // dangling turn and takes the finish-NOW rescue below.
+                rounds_exhausted =
+                    content_buf.trim().is_empty() && total_tool_invocations > 0;
                 break;
             }
             tracing::warn!(
@@ -586,12 +593,14 @@ short rather than guessing.)\n{result}"
         let synthesis_note = if narration_only {
             // The model spent every round narrating its search ("let me
             // look deeper…") without ever concluding — the family saw a
-            // stream of intentions that just stopped. Make it land the
-            // answer.
-            "You have used every available tool round and your reply so far is narration \
-without a conclusion. Finish NOW: using only the results above, state your final answer \
-in plain prose. If the results did not settle the question, say exactly that instead of \
-promising more searching. Do not write tool-call syntax."
+            // stream of intentions that just stopped. CONTINUATION
+            // semantics, not a restart: a round-5 reply that already
+            // contained the full answer must not be answered twice.
+            "You have used every available tool round. CONTINUE your reply above to its \
+conclusion using only the results already gathered — do not restart it and do not repeat \
+anything already written. If it already states the final answer, add at most one short \
+closing sentence. If the results did not settle the question, say exactly that instead \
+of promising more searching. Do not write tool-call syntax."
         } else if total_tool_failures >= total_tool_invocations {
             // EVERY tool call failed — there are no results to cite. The old
             // text claimed the model had "gathered enough information", which
@@ -747,48 +756,83 @@ fn search_found_something(result: &str) -> bool {
 /// Markers of raw tool-call syntax leaking into visible content. Covers
 /// the formats seen in the field: llama-style `<function=...>`, Qwen/GLM
 /// `<tool_call>` blocks, and the invented `<toolcall>` variant.
-const TOOL_SYNTAX_MARKERS: &[&str] = &["<tool_call", "</tool_call", "<function=", "<toolcall"];
+const TOOL_SYNTAX_MARKERS: &[&str] = &["<tool_call", "<function=", "<toolcall"];
 
-pub(crate) fn contains_tool_syntax(content: &str) -> bool {
-    let lc = content.to_ascii_lowercase();
-    TOOL_SYNTAX_MARKERS.iter().any(|m| lc.contains(m))
+fn line_starts_syntax(line: &str) -> bool {
+    let t = line.trim_start().to_ascii_lowercase();
+    TOOL_SYNTAX_MARKERS.iter().any(|m| t.starts_with(m))
+        // A bare close tag on its own line is syntax too — nested blocks
+        // (<tool_call> wrapping <function=…>) end the inner skip at the
+        // inner closer and would otherwise leave the outer closer behind.
+        || ["</tool_call", "</toolcall", "</function"].iter().any(|m| t.starts_with(m))
 }
 
-/// Remove tool-syntax blocks from visible content. Returns the surviving
-/// prose, or `None` when nothing substantive remains (the whole reply was
-/// syntax). Blocks are cut from each opening marker to its matching close
-/// (or end of string when unclosed — the common streamed-halfway case).
-pub(crate) fn strip_tool_syntax(content: &str) -> Option<String> {
-    let mut out = String::with_capacity(content.len());
-    let mut rest = content;
-    'outer: loop {
-        let lc = rest.to_ascii_lowercase();
-        let Some(start) = TOOL_SYNTAX_MARKERS
-            .iter()
-            .filter_map(|m| lc.find(*m))
-            .min()
-        else {
-            out.push_str(rest);
-            break 'outer;
-        };
-        out.push_str(&rest[..start]);
-        let after = &rest[start..];
-        let after_lc = after.to_ascii_lowercase();
-        // End of this block: after the last close tag we can attribute to
-        // it, or end of string when it never closed.
-        let close = ["</tool_call>", "</toolcall>", "</function>"]
-            .iter()
-            .filter_map(|c| after_lc.find(*c).map(|i| i + c.len()))
-            .min();
-        match close {
-            Some(end) => rest = &after[end..],
-            None => break 'outer,
+/// Only LINE-STARTING markers outside code fences count: the field leaks
+/// are block-shaped, while a legitimate answer that MENTIONS the syntax
+/// ("use `<tool_call>` tags") keeps it inline or fenced and must survive
+/// untouched.
+pub(crate) fn contains_tool_syntax(content: &str) -> bool {
+    let mut in_fence = false;
+    for line in content.lines() {
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if !in_fence && line_starts_syntax(line) {
+            return true;
         }
     }
-    let cleaned = out.trim().to_string();
-    // Under ~40 chars of survivors is connective tissue ("Let me check:"),
-    // not an answer.
-    (cleaned.chars().count() >= 40).then_some(cleaned)
+    false
+}
+
+/// Remove block-shaped tool-syntax from visible content, line-wise:
+/// from a line that starts with a marker through the line containing its
+/// close tag (or end of message when unclosed — the streamed-halfway
+/// case). Fenced code and inline mentions pass through. Returns the
+/// surviving prose, or `None` only when nothing at all survives.
+pub(crate) fn strip_tool_syntax(content: &str) -> Option<String> {
+    let mut out: Vec<&str> = Vec::new();
+    let mut in_fence = false;
+    let mut skipping = false;
+    for line in content.lines() {
+        if line.trim_start().starts_with("```") && !skipping {
+            in_fence = !in_fence;
+            out.push(line);
+            continue;
+        }
+        if skipping {
+            let lc = line.to_ascii_lowercase();
+            if ["</tool_call>", "</toolcall>", "</function>"].iter().any(|c| lc.contains(c)) {
+                skipping = false;
+            }
+            continue;
+        }
+        if !in_fence && line_starts_syntax(line) {
+            skipping = true;
+            // A one-line block closes on its own line.
+            let lc = line.to_ascii_lowercase();
+            if ["</tool_call>", "</toolcall>", "</function>"].iter().any(|c| lc.contains(c)) {
+                skipping = false;
+            }
+            continue;
+        }
+        out.push(line);
+    }
+    let cleaned = out.join("\n").trim().to_string();
+    (!cleaned.is_empty()).then_some(cleaned)
+}
+
+/// Early-return variant of the final-content sanitizing: a stream that
+/// dies or is stopped mid-generation is PRECISELY when half-streamed tool
+/// syntax sits in the buffer. Empty result means "nothing usable" — the
+/// callers substitute their own notes.
+fn sanitize_partial(content: &str) -> String {
+    if contains_tool_syntax(content) {
+        tracing::warn!("partial content contained raw tool-call syntax; sanitizing");
+        strip_tool_syntax(content).unwrap_or_default()
+    } else {
+        content.to_string()
+    }
 }
 
 fn is_permanent_tool_failure(err: &str) -> bool {
@@ -1089,6 +1133,20 @@ come from your own SearXNG instead.)\n1. A result\n   https://example.com",
         ] {
             assert!(search_found_something(real), "for: {real:?}");
         }
+    }
+
+    #[test]
+    fn legitimate_mentions_of_tool_syntax_survive_sanitizing() {
+        use super::{contains_tool_syntax, strip_tool_syntax};
+        // Inline mention in prose — a dev-family answer about the syntax.
+        let inline = "Yes — wrap the call in `<tool_call>` tags and the server parses it.";
+        assert!(!contains_tool_syntax(inline));
+        // Fenced example blocks are teaching material, not leaks.
+        let fenced = "The format looks like this:\n```\n<tool_call>\n<function=web_search>\n</function>\n</tool_call>\n```\nThat is the whole shape.";
+        assert!(!contains_tool_syntax(fenced));
+        // A short real answer followed by a leaked block keeps the answer.
+        let short = "It's about $110k right now.\n<tool_call>{\"name\":\"web_search\"}</tool_call>";
+        assert_eq!(strip_tool_syntax(short).as_deref(), Some("It's about $110k right now."));
     }
 
     #[test]

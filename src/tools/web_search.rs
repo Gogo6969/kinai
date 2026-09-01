@@ -250,13 +250,42 @@ async fn duckduckgo_with_fallback(query: &str, max_results: usize) -> Result<Str
 /// Wikipedia instead of DuckDuckGo.
 static SCRAPE_GATE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
 
+/// After a DuckDuckGo scrape comes back blocked/empty, skip DDG entirely
+/// for a cooldown window: during an outage (Exa dead, SearXNG starved)
+/// EVERY search walks this chain, and serializing doomed scrape attempts
+/// through the gate re-created the multi-minute research turns that
+/// 0.2.105 eliminated. Seconds since UNIX epoch; 0 = no cooldown.
+static DDG_BLOCKED_UNTIL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+const DDG_COOLDOWN_SECS: u64 = 120;
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
 /// Same as `duckduckgo_with_fallback`, but says which engine answered —
 /// the Exa fallback note must not credit DuckDuckGo for Wikipedia's work.
+/// Only the SCRAPE is gated: Wikipedia is a real API and runs in
+/// parallel, so a busy scrape never queues Wikipedia rescues behind it.
 async fn duckduckgo_or_wikipedia(query: &str, max_results: usize) -> Result<(String, &'static str)> {
-    let _permit = SCRAPE_GATE.acquire().await;
-    if let Ok(text) = duckduckgo(query, max_results).await {
-        if !text.trim().is_empty() && !text.contains("No results found") {
-            return Ok((text, "DuckDuckGo"));
+    use std::sync::atomic::Ordering;
+    if now_secs() >= DDG_BLOCKED_UNTIL.load(Ordering::Relaxed) {
+        let ddg = {
+            let _permit = SCRAPE_GATE.acquire().await;
+            duckduckgo(query, max_results).await
+        };
+        match ddg {
+            Ok(text) if !text.trim().is_empty() && !text.contains("No results found") => {
+                return Ok((text, "DuckDuckGo"));
+            }
+            _ => {
+                DDG_BLOCKED_UNTIL.store(now_secs() + DDG_COOLDOWN_SECS, Ordering::Relaxed);
+                tracing::warn!(
+                    "DuckDuckGo scrape blocked or empty; skipping it for {DDG_COOLDOWN_SECS}s"
+                );
+            }
         }
     }
     wikipedia(query, max_results).await.map(|t| (t, "Wikipedia"))
