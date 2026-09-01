@@ -83,6 +83,15 @@ async fn exa_fallback_chain(
             searxng_url.trim()
         );
         match searxng_search(query, max_results, searxng_url).await {
+            // An EMPTY result set is not a rescue — when every upstream
+            // engine has cut SearXNG off (rate limits, CAPTCHAs), it
+            // answers 200-with-nothing, and stopping here handed the
+            // family "zero results" while DuckDuckGo/Wikipedia still
+            // worked. Keep walking the chain.
+            Ok(out) if out.trim() == "No results." => {
+                tracing::warn!("SearXNG returned no results; continuing the fallback chain");
+                failures.push_str("; SearXNG returned no results");
+            }
             Ok(out) => {
                 return Ok(format!(
                     "(Exa is unavailable — {}. These results come from your own \
