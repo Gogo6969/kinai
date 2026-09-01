@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-09-01T19:46:56+00:00",
-  "version": "0.2.107",
+  "generated_at": "2026-09-01T22:55:09+00:00",
+  "version": "0.2.108",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 274,
-    "head": "167d4a5"
+    "commits": 276,
+    "head": "d92599d"
   },
   "totals": {
-    "rust_files": 61,
-    "rust_lines": 26868,
+    "rust_files": 62,
+    "rust_lines": 27077,
     "frontend_files": 33,
-    "frontend_lines": 12062,
-    "unit_tests": 211,
+    "frontend_lines": 12069,
+    "unit_tests": 215,
     "integration_test_files": 12,
-    "releases": 99,
-    "tags": 93
+    "releases": 100,
+    "tags": 94
   },
   "areas": [
     {
@@ -388,7 +388,7 @@
     {
       "path": "src/telegram/router.rs",
       "area": "telegram",
-      "lines": 1534,
+      "lines": 1601,
       "doc": "Route incoming Telegram updates into KinAI's chat pipeline.",
       "tests": 10
     },
@@ -437,14 +437,14 @@
     {
       "path": "src/tools/loop_pipeline.rs",
       "area": "tools",
-      "lines": 1487,
+      "lines": 1494,
       "doc": "Tool-calling pipeline.",
       "tests": 29
     },
     {
       "path": "src/tools/mod.rs",
       "area": "tools",
-      "lines": 18,
+      "lines": 19,
       "doc": "Built-in tools invoked via OpenAI-style function calling.",
       "tests": 0
     },
@@ -454,6 +454,13 @@
       "lines": 419,
       "doc": "Tool catalogue — generated dynamically from `ToolSettings` so users can disable tools their model shouldn't be allowed to call.",
       "tests": 0
+    },
+    {
+      "path": "src/tools/status_phrases.rs",
+      "area": "tools",
+      "lines": 134,
+      "doc": "Human-sounding status lines shown while a tool runs.",
+      "tests": 4
     },
     {
       "path": "src/tools/web_search.rs",
@@ -515,7 +522,7 @@
     {
       "path": "frontend/src/lib/api.ts",
       "kind": "lib",
-      "lines": 676,
+      "lines": 678,
       "doc": "Pause toggle. When `false` this slot is hidden from slash menus and skipped during message routing. Defaults to `true` for the fast slot, `false` for the deep slot (until the user fills it)."
     },
     {
@@ -551,7 +558,7 @@
     {
       "path": "frontend/src/lib/components/Overlay.svelte",
       "kind": "component",
-      "lines": 610,
+      "lines": 613,
       "doc": "Image / PDF attachments staged for the next overlay send. Mirrors the main ChatWindow's `pendingAttachments` semantics so a user can paste a screenshot into the quick-chat (Cmd+Space) overlay and have it ride along with the prompt, same as in the main window."
     },
     {
@@ -617,7 +624,7 @@
     {
       "path": "frontend/src/lib/stores/app.svelte.ts",
       "kind": "lib",
-      "lines": 1040,
+      "lines": 1042,
       "doc": "This machine can synthesize speech (macOS). Mac CLIENTS speak locally with their own voices; hosts are always Macs today."
     },
     {
@@ -1067,6 +1074,18 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.108",
+      "date": "2026-09-01",
+      "sections": {
+        "Added": [
+          {
+            "title": "KinAI now says what it is doing while you wait.",
+            "detail": "A research turn can spend half a minute on searches before its first word, and until now that looked identical to a hung app — the phone showed only \"typing…\" and the desktop showed a raw tool id (\"web search\"). Both surfaces now show a varied, human status line: \"Looking into it…\", \"Checking a few sources…\", \"Reading the document…\". On Telegram the line appears in a bubble that is then edited into the answer, so nothing is left behind next to the reply. The wording always matches the tool that is really running — a search never claims to be reading a document — and a shared rotation means the parallel batch of searches one turn fires reads as three different lines instead of the same one three times."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.107",
       "date": "2026-09-01",
@@ -3188,6 +3207,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.107",
+      "date": "2026-09-01"
+    },
     {
       "tag": "v0.2.106",
       "date": "2026-08-31"
