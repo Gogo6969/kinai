@@ -1,12 +1,12 @@
 {
-  "generated_at": "2026-09-01T23:21:38+00:00",
-  "version": "0.2.109",
+  "generated_at": "2026-09-02T15:53:28+00:00",
+  "version": "0.2.110",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 277,
-    "head": "55f2cec"
+    "commits": 279,
+    "head": "efd481f"
   },
   "totals": {
     "rust_files": 62,
@@ -15,8 +15,8 @@
     "frontend_lines": 12085,
     "unit_tests": 215,
     "integration_test_files": 12,
-    "releases": 101,
-    "tags": 95
+    "releases": 102,
+    "tags": 96
   },
   "areas": [
     {
@@ -1074,6 +1074,18 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.110",
+      "date": "2026-09-02",
+      "sections": {
+        "Security": [
+          {
+            "title": "Dependency patch pass — every open Dependabot alert and `pnpm audit` finding cleared, all patch-level.",
+            "detail": "The one that mattered is DOMPurify 3.4.12 → 3.4.14: it is the sanitiser for everything KinAI renders as HTML, which since 0.2.107 includes text the model quotes from fetched web pages. The specific advisory (IN_PLACE hook removal) was not on a code path KinAI uses, but one patch behind is the wrong place for that library to be. The rest were unreachable in the shipped app and fixed to keep the alert count honest: quinn-proto (in Cargo.lock only, never compiled), SvelteKit's Accept-header ReDoS (the app is prerendered with `ssr = false`, so that server code never runs), and nanoid / browserslist / cookie / postcss-selector-parser (build tooling). Transitive ones are pinned via `pnpm.overrides`; tailwind was deliberately left on 3.x."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.109",
       "date": "2026-09-01",
@@ -3219,6 +3231,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.109",
+      "date": "2026-09-01"
+    },
     {
       "tag": "v0.2.108",
       "date": "2026-09-01"
