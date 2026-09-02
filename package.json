@@ -2,7 +2,7 @@
   "name": "kinai-workspace",
   "private": true,
   "version": "0.1.0",
-  "description": "KinAI monorepo — Rust backend + SvelteKit frontend",
+  "description": "KinAI monorepo \u2014 Rust backend + SvelteKit frontend",
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
@@ -19,7 +19,10 @@
   "packageManager": "pnpm@9.15.0",
   "pnpm": {
     "overrides": {
-      "esbuild": "^0.28.1"
+      "esbuild": "^0.28.1",
+      "nanoid@<3.3.18": ">=3.3.18",
+      "cookie@<0.7.0": ">=0.7.0",
+      "postcss-selector-parser@<6.1.3": ">=6.1.3"
     }
   }
 }

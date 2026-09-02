@@ -5,6 +5,24 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security
+
+- **Dependency patch pass — every open Dependabot alert and `pnpm audit`
+  finding cleared, all patch-level.** The one that mattered is
+  DOMPurify 3.4.12 → 3.4.14: it is the sanitiser for everything KinAI
+  renders as HTML, which since 0.2.107 includes text the model quotes
+  from fetched web pages. The specific advisory (IN_PLACE hook removal)
+  was not on a code path KinAI uses, but one patch behind is the wrong
+  place for that library to be. The rest were unreachable in the shipped
+  app and fixed to keep the alert count honest: quinn-proto (in
+  Cargo.lock only, never compiled), SvelteKit's Accept-header ReDoS (the
+  app is prerendered with `ssr = false`, so that server code never runs),
+  and nanoid / browserslist / cookie / postcss-selector-parser (build
+  tooling). Transitive ones are pinned via `pnpm.overrides`; tailwind was
+  deliberately left on 3.x.
+
 ## [0.2.109] — 2026-09-01
 
 ### Fixed
