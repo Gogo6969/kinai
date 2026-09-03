@@ -104,8 +104,11 @@ pub async fn create_thread(
 /// silently no-ops on a missing row. The row is then created here, and
 /// because `upsert_thread` is INSERT OR IGNORE the first title sticks
 /// forever. Titling it after the sender gave every family device a
-/// sidebar full of "MacM2" — 1 of 122 client threads ever got a real
-/// title, against 32 of 47 on the host.
+/// sidebar full of "MacM2": of the 61 non-Telegram client threads in the
+/// family DB exactly 1 ever got a real auto-title (57 carry the device
+/// name, 3 were renamed by hand days later), while on the host — where
+/// `create_thread` has already written the row the rename lands on — 26
+/// of 26 eligible threads are titled from their first message.
 ///
 /// Rules (kept in lockstep with the TS):
 ///   - collapse whitespace
@@ -123,7 +126,12 @@ pub fn derive_thread_title(text: &str) -> Option<String> {
     // only when it actually ends the sentence (whitespace or end of text).
     let mut title: Option<String> = None;
     for (i, c) in chars.iter().enumerate() {
-        if i + 1 < 10 || i + 1 > 60 {
+        // `i` is the count of chars BEFORE the punctuation, matching the
+        // `.{10,60}?` in the TS regex. Comparing `i + 1` here shifted both
+        // bounds by one and made the two surfaces disagree: "Pool open?
+        // We want to ..." became "Pool open" on the host but the 47-char
+        // cut on the client, so the sidebar title changed on restart.
+        if i < 10 || i > 60 {
             continue;
         }
         if matches!(c, '.' | '!' | '?') {
@@ -888,6 +896,29 @@ mod thread_title_tests {
         assert!(t.ends_with('…'), "long input must be elided: {t:?}");
     }
 
+    /// Ground truth produced by running the client's own regex in node
+    /// over these exact strings. The first two are the cases where the
+    /// original port diverged: punctuation sitting at char index 9 is
+    /// NOT a sentence break, because `.{10,60}?` requires ten characters
+    /// BEFORE it. Getting this wrong made the host store "Pool open"
+    /// while the client stored the full elided sentence, so the sidebar
+    /// title changed under the user on the next restart.
+    #[test]
+    fn matches_client_ground_truth_on_the_sentence_window_edges() {
+        assert_eq!(
+            derive_thread_title("Pool open? We want to bring the kids on Saturday afternoon and stay late.").unwrap(),
+            "Pool open? We want to bring the kids on Saturda…"
+        );
+        assert_eq!(
+            derive_thread_title("Christmas. We should plan the family dinner for the holidays this year properly.").unwrap(),
+            "Christmas. We should plan the family dinner for…"
+        );
+        assert_eq!(
+            derive_thread_title("Is the pool open yet? I wanted to take the kids on Saturday afternoon.").unwrap(),
+            "Is the pool open yet"
+        );
+    }
+
     #[test]
     fn short_messages_are_kept_whole_and_depunctuated() {
         assert_eq!(derive_thread_title("test").unwrap(), "test");
@@ -903,6 +934,30 @@ mod thread_title_tests {
         )
         .unwrap();
         assert_eq!(t, "Is the pool open yet");
+    }
+
+    /// The sentence window is 10..=60 chars BEFORE the punctuation, exactly
+    /// like the TS `.{10,60}?`. Comparing one-based lengths instead shifted
+    /// both edges and made host and client disagree on these two inputs.
+    #[test]
+    fn the_sentence_window_matches_the_client_regex_at_both_edges() {
+        // 9 chars before the "?" — too short, so the length cut wins.
+        assert_eq!(
+            derive_thread_title(
+                "Pool open? We want to bring the kids on Saturday afternoon if it is warm."
+            )
+            .unwrap(),
+            "Pool open? We want to bring the kids on Saturda…"
+        );
+        // 59 chars before the "." — inside the window, so the sentence wins
+        // even though the whole message is longer than the 50-char cut.
+        assert_eq!(
+            derive_thread_title(
+                "This sentence is exactly fiftynine characters before the dot. tail text follows here"
+            )
+            .unwrap(),
+            "This sentence is exactly fiftynine characters before the dot"
+        );
     }
 
     #[test]

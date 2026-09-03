@@ -821,10 +821,11 @@ async fn run_chat_turn(
     // has already no-opped against a row that did not exist yet. Since
     // `upsert_thread` is INSERT OR IGNORE, whatever we write now is
     // permanent: using `sender` gave every family device a sidebar full of
-    // "MacM2" (1 of 122 client threads ever got a real title, vs 32 of 47
-    // on the host). `sender` remains the fallback for an empty message, so
-    // an admin reading the host DB can still tell threads apart — and the
-    // row carries peer_id regardless.
+    // "MacM2" (1 of 61 non-Telegram client threads ever got a real title,
+    // vs 26 of 26 eligible on the host, where the row already exists when
+    // the rename lands). `sender` remains the fallback for empty content
+    // (an attachment-only turn), so an admin reading the host DB can still
+    // tell those threads apart — and every row carries peer_id regardless.
     let seed_title = crate::db::messages::derive_thread_title(content)
         .unwrap_or_else(|| sender.to_string());
     let _ = s.app.db.upsert_thread(context_peer, thread_id, &seed_title).await;
