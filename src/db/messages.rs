@@ -92,6 +92,63 @@ pub async fn create_thread(
     })
 }
 
+/// Derive a short, human-readable thread title from the first user
+/// message, mirroring the client's `deriveThreadTitle` in
+/// `frontend/src/lib/stores/app.svelte.ts` so both surfaces agree.
+///
+/// Why the host needs its own copy: a CLIENT's thread row does not exist
+/// on the host until its first message arrives (`create_thread` writes
+/// only to the client's local DB — unlike list/rename/delete it has no
+/// `Mode::Client` branch). The client's auto-rename therefore fires
+/// against a thread the host has never heard of, and `rename_thread`
+/// silently no-ops on a missing row. The row is then created here, and
+/// because `upsert_thread` is INSERT OR IGNORE the first title sticks
+/// forever. Titling it after the sender gave every family device a
+/// sidebar full of "MacM2" — 1 of 122 client threads ever got a real
+/// title, against 32 of 47 on the host.
+///
+/// Rules (kept in lockstep with the TS):
+///   - collapse whitespace
+///   - prefer the first sentence ending 10..=60 chars in
+///   - else cap at 47 chars + ellipsis
+///   - strip trailing punctuation
+///   - empty input yields None so the caller can fall back
+pub fn derive_thread_title(text: &str) -> Option<String> {
+    let flat = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if flat.is_empty() {
+        return None;
+    }
+    let chars: Vec<char> = flat.chars().collect();
+    // First sentence-ending punctuation between 10 and 60 chars in, and
+    // only when it actually ends the sentence (whitespace or end of text).
+    let mut title: Option<String> = None;
+    for (i, c) in chars.iter().enumerate() {
+        if i + 1 < 10 || i + 1 > 60 {
+            continue;
+        }
+        if matches!(c, '.' | '!' | '?') {
+            let ends = chars.get(i + 1).map_or(true, |n| n.is_whitespace());
+            if ends {
+                title = Some(chars[..=i].iter().collect());
+                break;
+            }
+        }
+    }
+    let mut title = title.unwrap_or_else(|| {
+        if chars.len() > 50 {
+            let head: String = chars[..47].iter().collect();
+            format!("{}…", head.trim_end())
+        } else {
+            flat.clone()
+        }
+    });
+    title = title
+        .trim_end_matches(['.', '!', '?', ',', ';', ':'])
+        .trim()
+        .to_string();
+    (!title.is_empty()).then_some(title)
+}
+
 /// Insert a thread with a caller-supplied ID, no-op if it already exists.
 /// Used on the host when a client sends a message for a thread that lives
 /// only in the client's local DB — without this, the FK on `messages` would
@@ -798,4 +855,83 @@ pub async fn question_answer_for_fact_check(
         question.map(|q| q.0).unwrap_or_default(),
         answer,
     )))
+}
+
+#[cfg(test)]
+mod thread_title_tests {
+    use super::derive_thread_title;
+
+    /// Verbatim first messages from the family DB. Before the fix every
+    /// one of these produced the sender's device name ("MacM2" / "kris")
+    /// because the host had nothing else to title the row with.
+    #[test]
+    fn real_client_messages_get_their_topic() {
+        // 3wzymt, 2026-08-18 — the user later renamed this "Universe" by hand.
+        assert_eq!(
+            derive_thread_title("What is the most recent discovery about our universe?").unwrap(),
+            "What is the most recent discovery about our universe"
+        );
+        // t5qdse, 2026-08-03 — the ONE thread whose auto-title ever landed.
+        // The host must reproduce the client's 47-char + ellipsis cut exactly.
+        assert_eq!(
+            derive_thread_title("what the best ready to use green coolant for kia sorento 2017 svl")
+                .unwrap(),
+            "what the best ready to use green coolant for ki…"
+        );
+        // 3wzymt, 2026-08-24 — long, no early sentence break.
+        let t = derive_thread_title(
+            "In our community, Sunset Lakes, an insurance represenative told us that we need to \
+             carry our own policy",
+        )
+        .unwrap();
+        assert!(t.starts_with("In our community, Sunset Lakes"), "got {t:?}");
+        assert!(t.ends_with('…'), "long input must be elided: {t:?}");
+    }
+
+    #[test]
+    fn short_messages_are_kept_whole_and_depunctuated() {
+        assert_eq!(derive_thread_title("test").unwrap(), "test");
+        assert_eq!(derive_thread_title("Why is the sky blue?").unwrap(), "Why is the sky blue");
+    }
+
+    #[test]
+    fn a_sentence_break_wins_over_the_length_cut() {
+        // Sentence ends at 21 chars — inside the 10..=60 window — so the
+        // title stops there instead of running to the 47-char cut.
+        let t = derive_thread_title(
+            "Is the pool open yet? I wanted to take the kids on Saturday afternoon.",
+        )
+        .unwrap();
+        assert_eq!(t, "Is the pool open yet");
+    }
+
+    #[test]
+    fn a_decimal_point_does_not_end_the_sentence() {
+        // "3.5" must not be treated as a sentence end — the client's regex
+        // requires whitespace-or-end after the punctuation, and so must we.
+        let t = derive_thread_title("Our mortgage rate is 3.5 percent, should we refinance?")
+            .unwrap();
+        assert!(t.starts_with("Our mortgage rate is 3.5 percent"), "got {t:?}");
+    }
+
+    #[test]
+    fn whitespace_is_collapsed_and_empty_falls_back_to_none() {
+        assert_eq!(derive_thread_title("  hello\n\n   world  ").unwrap(), "hello world");
+        // None lets the caller keep using the device name, so an empty
+        // message can never produce a blank sidebar row.
+        assert!(derive_thread_title("   \n\t ").is_none());
+        assert!(derive_thread_title("").is_none());
+        assert!(derive_thread_title("...").is_none());
+    }
+
+    #[test]
+    fn multibyte_text_is_cut_on_a_char_boundary() {
+        // Slicing by byte would panic here; the family writes German too.
+        let t = derive_thread_title(
+            "Können wir für die Wohnung in Barcelona eine Versicherung abschließen die auch Wasserschäden abdeckt",
+        )
+        .unwrap();
+        assert!(t.ends_with('…'));
+        assert!(t.chars().count() <= 48, "got {} chars", t.chars().count());
+    }
 }

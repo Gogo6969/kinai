@@ -813,10 +813,21 @@ async fn run_chat_turn(
 ) -> anyhow::Result<()> {
     // The client's thread row only lives in its local DB. Make sure the
     // host has a matching row, tagged with the connecting peer's id so
-    // every member's history lives in its own bucket on disk. Title falls
-    // back to the peer's display name so any admin reviewing the host DB
-    // can still tell threads apart.
-    let _ = s.app.db.upsert_thread(context_peer, thread_id, sender).await;
+    // every member's history lives in its own bucket on disk.
+    //
+    // Title it from the message, NOT the sender. `create_thread` has no
+    // `Mode::Client` branch (unlike list/rename/delete), so the host first
+    // hears about a client's thread here — after the client's auto-rename
+    // has already no-opped against a row that did not exist yet. Since
+    // `upsert_thread` is INSERT OR IGNORE, whatever we write now is
+    // permanent: using `sender` gave every family device a sidebar full of
+    // "MacM2" (1 of 122 client threads ever got a real title, vs 32 of 47
+    // on the host). `sender` remains the fallback for an empty message, so
+    // an admin reading the host DB can still tell threads apart — and the
+    // row carries peer_id regardless.
+    let seed_title = crate::db::messages::derive_thread_title(content)
+        .unwrap_or_else(|| sender.to_string());
+    let _ = s.app.db.upsert_thread(context_peer, thread_id, &seed_title).await;
 
     // Persist exactly what the user typed. Attachment text is extracted
     // at context-build time (see `context::builder::format_user`) so the

@@ -5,6 +5,24 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Conversations on family devices are named after the topic again, not
+  the device.** On a phone or laptop nearly every conversation in the
+  sidebar was titled with the device's own name — "MacM2" over and over —
+  while the same app on the host named them properly. Measured across the
+  household: 1 of 133 conversations started on a family device ever got a
+  real title, against 26 of 47 on the host. The cause is that a client's
+  conversation only reaches the host when its first message arrives, so
+  the rename the app sends a moment earlier lands on a conversation the
+  host has not heard of yet and is quietly dropped; the host then created
+  the row named after whoever sent it, and never renamed it. The host now
+  takes the title from the message itself, using the same rules the app
+  uses, so both agree. Existing conversations keep their current names —
+  renaming one by hand still works and still sticks.
+
 ## [0.2.110] — 2026-09-02
 
 ### Security
