@@ -384,7 +384,18 @@ fn html_to_text(html: &str) -> String {
 /// ~700 KB, so a fixed byte window would miss it entirely.
 fn extract_page_metadata(html: &str) -> Option<String> {
     let lower = html.to_ascii_lowercase();
-    let head_end = lower.find("</head>").unwrap_or(lower.len().min(1_000_000));
+    // Cap the scan, but land on a CHARACTER boundary: `fetch_page` eats
+    // arbitrary pages, and a >1 MB document with no `</head>` and a
+    // multibyte character straddling the cut would slice mid-character
+    // and panic. `to_ascii_lowercase` preserves byte offsets, so the
+    // index is valid in both strings.
+    let head_end = lower.find("</head>").unwrap_or_else(|| {
+        let mut cut = lower.len().min(1_000_000);
+        while cut > 0 && !html.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        cut
+    });
     let head = &html[..head_end];
     let head_lower = &lower[..head_end];
 
@@ -670,6 +681,20 @@ mod tests {
         let text = collapse_whitespace(&html_to_text(html));
         assert!(text.contains("Findings & results."), "{text:?}");
         assert!(text.starts_with("The Paper"), "{text:?}");
+    }
+
+    /// `fetch_page` eats arbitrary pages, so the head scan must not
+    /// panic on one. A document over the 1 MB scan window with no
+    /// `</head>` and a multibyte character straddling the cut would
+    /// slice mid-character — an instant panic on untrusted input.
+    #[test]
+    fn a_huge_headless_page_with_multibyte_text_does_not_panic() {
+        let mut html = String::from("<html><body>");
+        html.push_str(&"a".repeat(999_999 - html.len()));
+        html.push_str(&"€".repeat(200)); // 3 bytes each, straddles 1_000_000
+        html.push_str("</body></html>");
+        assert!(html.len() > 1_000_000);
+        let _ = html_to_text(&html); // must not panic
     }
 
     #[test]
