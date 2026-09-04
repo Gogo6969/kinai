@@ -19,7 +19,7 @@ async fn balanced_turn_uses_tools() {
     let runtime = ToolRuntime::from_tool_settings(&cfg.tools);
     let client = LlmClient::new(cfg.llm_balanced.clone());
     let messages = vec![
-        system_prompt(&cfg.host.family_name, &cfg.llm_balanced.system_addendum),
+        system_prompt(&cfg.host.family_name, &cfg.llm_balanced.system_addendum, ""),
         kinai::context::ChatMessage::User {
             content: "Who won the final of the soccer World Championship?".into(),
             name: Some("Wolf".into()),
@@ -30,7 +30,7 @@ async fn balanced_turn_uses_tools() {
         on_token: Arc::new(|_t| {}),
         on_reasoning: Arc::new(|_r| {}),
         on_tool: Arc::new(|e: ToolEvent| match e {
-            ToolEvent::Started { name, args } => eprintln!(">>> TOOL CALLED: {name} args={}", &args.chars().take(120).collect::<String>()),
+            ToolEvent::Started { name, args, .. } => eprintln!(">>> TOOL CALLED: {name} args={}", &args.chars().take(120).collect::<String>()),
             ToolEvent::Finished { name, ok, result } => eprintln!(">>> TOOL DONE: {name} ok={ok} result[0..160]={}", &result.chars().take(160).collect::<String>()),
         }),
     };
@@ -49,7 +49,7 @@ async fn followup_scenario(llm: kinai::config::LlmSettings, label: &str) {
     let runtime = ToolRuntime::from_tool_settings(&cfg.tools);
     let client = LlmClient::new(llm);
     let messages = vec![
-        system_prompt(&cfg.host.family_name, ""),
+        system_prompt(&cfg.host.family_name, "", ""),
         kinai::context::ChatMessage::User {
             content: "Who won the final of the soccer World Championship?".into(),
             name: Some("Wolf".into()),
@@ -71,7 +71,7 @@ async fn followup_scenario(llm: kinai::config::LlmSettings, label: &str) {
         on_token: Arc::new(|_| {}),
         on_reasoning: Arc::new(|_| {}),
         on_tool: Arc::new(move |e| {
-            if let ToolEvent::Started { name, args } = e {
+            if let ToolEvent::Started { name, args, .. } = e {
                 called2.store(true, std::sync::atomic::Ordering::SeqCst);
                 eprintln!(">>> [{}] TOOL: {name} {}", std::thread::current().name().unwrap_or("t"), &args.chars().take(100).collect::<String>());
             }
@@ -114,7 +114,7 @@ async fn dead_fast_slot_fails_over_to_balanced() {
     let tools = registry::enabled(&cfg.tools);
     let runtime = ToolRuntime::from_tool_settings(&cfg.tools);
     let messages = vec![
-        system_prompt(&cfg.host.family_name, ""),
+        system_prompt(&cfg.host.family_name, "", ""),
         kinai::context::ChatMessage::User {
             content: "In one short sentence: what is the capital of Spain?".into(),
             name: Some("Wolf".into()),
@@ -242,7 +242,7 @@ async fn unknown_fact_scenario(llm: kinai::config::LlmSettings, label: &str) {
     let runtime = ToolRuntime::from_tool_settings(&cfg.tools);
     let client = LlmClient::new(llm);
     let messages = vec![
-        system_prompt(&cfg.host.family_name, ""),
+        system_prompt(&cfg.host.family_name, "", ""),
         kinai::context::ChatMessage::User {
             content: "Who was Adam Riese?".into(),
             name: Some("Wolf".into()),
@@ -255,7 +255,7 @@ async fn unknown_fact_scenario(llm: kinai::config::LlmSettings, label: &str) {
         on_token: Arc::new(|_| {}),
         on_reasoning: Arc::new(|_| {}),
         on_tool: Arc::new(move |e| {
-            if let ToolEvent::Started { name, args } = e {
+            if let ToolEvent::Started { name, args, .. } = e {
                 called2.store(true, std::sync::atomic::Ordering::SeqCst);
                 eprintln!(">>> TOOL: {name} {}", &args.chars().take(100).collect::<String>());
             }

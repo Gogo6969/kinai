@@ -76,7 +76,7 @@ async fn a_poisoned_conversation_still_searches() {
 
     for i in 0..N {
         let history = vec![
-            system_prompt(&cfg.host.family_name, ""),
+            system_prompt(&cfg.host.family_name, "", ""),
             user("What's the earthquake in Japan?"),
             ChatMessage::Assistant { content: REFUSAL.into(), tool_calls: vec![] },
             user("What is the Bitcoin price rn?"),
@@ -115,7 +115,7 @@ async fn a_timeless_question_is_left_alone() {
     let mut searched = 0usize;
     for _ in 0..N {
         let history = vec![
-            system_prompt(&cfg.host.family_name, ""),
+            system_prompt(&cfg.host.family_name, "", ""),
             user("What is a mixture-of-experts language model? Answer in two sentences."),
         ];
         let (did, _) = turn(&cfg, history).await;

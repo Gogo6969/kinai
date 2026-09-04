@@ -61,7 +61,7 @@ async fn a_failed_lookup_is_reported_honestly() {
     };
 
     let messages = vec![
-        system_prompt(&cfg.host.family_name, &cfg.llm_balanced.system_addendum),
+        system_prompt(&cfg.host.family_name, &cfg.llm_balanced.system_addendum, ""),
         kinai::context::ChatMessage::User {
             content: "What Ethernet speed does the Olares One have? Give me the link.".into(),
             name: Some("Wolf".into()),

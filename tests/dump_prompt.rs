@@ -4,7 +4,7 @@
 #[test]
 #[ignore = "developer tool: writes the current system prompt to /tmp"]
 fn dump_system_prompt() {
-    let msg = kinai::context::system_prompt("Our Family", "");
+    let msg = kinai::context::system_prompt("Our Family", "", "");
     let text = match msg {
         kinai::context::ChatMessage::System { content } => content,
         _ => panic!("expected a system message"),

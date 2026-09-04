@@ -62,7 +62,7 @@ async fn asking_for_a_link_triggers_a_real_search() {
             }),
         };
         let messages = vec![
-            system_prompt(&cfg.host.family_name, ""),
+            system_prompt(&cfg.host.family_name, "", ""),
             ChatMessage::User {
                 content: "Olares One ethernet speed - with link".into(),
                 name: Some("Wolf".into()),
