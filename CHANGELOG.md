@@ -20,8 +20,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   host has not heard of yet and is quietly dropped; the host then created
   the row named after whoever sent it, and never renamed it. The host now
   takes the title from the message itself, using the same rules the app
-  uses, so both agree. Existing conversations keep their current names —
-  renaming one by hand still works and still sticks.
+  uses, so both agree. Existing conversations are repaired on first
+  launch: 57 of them get their topic back, taken from the message that
+  started them. Conversations you renamed by hand are left exactly as
+  you named them, and so are the Telegram ones.
 
 ## [0.2.110] — 2026-09-02
 

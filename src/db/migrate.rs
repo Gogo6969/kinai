@@ -1,7 +1,7 @@
 //! Hand-rolled migrations — kept inline so a fresh user just runs `pnpm tauri dev`.
 
 use anyhow::Result;
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 
 const STATEMENTS: &[&str] = &[
     r#"
@@ -298,6 +298,68 @@ pub async fn run(pool: &SqlitePool) -> Result<()> {
             }
             return Err(e.into());
         }
+    }
+    backfill_device_named_thread_titles(pool).await?;
+    Ok(())
+}
+
+/// One-off repair for threads the host titled after the sending device.
+///
+/// Until 0.2.111 a client's thread row was born inside `run_chat_turn`
+/// with `sender` as its title (see `network::server`), because
+/// `commands::create_thread` has no `Mode::Client` branch and the host
+/// therefore never heard of the thread until its first message. As
+/// `upsert_thread` is INSERT OR IGNORE, that name was permanent: on the
+/// household DB 57 of 61 non-Telegram client threads read "MacM2",
+/// "kris", "Rafael" … instead of their topic.
+///
+/// The fingerprint below is deliberately narrow — it must never rewrite
+/// a title a human chose:
+///   * title equals the sender of the thread's FIRST message, and that
+///     message is a `user` turn (an auto-stamp, by construction);
+///   * the thread has not been touched since its last message
+///     (`updated_at` == max(messages.created_at)). A manual rename bumps
+///     `updated_at` past that, which is what excluded the three
+///     hand-renamed threads in the household DB;
+///   * "Telegram" rows are skipped outright — the bridge titles those on
+///     purpose (`telegram::router`).
+///
+/// Writes `title` ONLY. `list_threads` orders by `updated_at DESC`, so
+/// touching that column would re-sort every family member's sidebar into
+/// migration order. Naturally idempotent: once rewritten the title no
+/// longer equals the sender, so a second run matches nothing.
+async fn backfill_device_named_thread_titles(pool: &SqlitePool) -> Result<()> {
+    let rows = sqlx::query(
+        r#"
+        SELECT t.id AS id, m.content AS content
+        FROM threads t
+        JOIN messages m ON m.thread_id = t.id
+        WHERE t.title <> 'Telegram'
+          AND m.created_at = (SELECT MIN(created_at) FROM messages WHERE thread_id = t.id)
+          AND m.role = 'user'
+          AND t.title = m.sender
+          AND t.updated_at = (SELECT MAX(created_at) FROM messages WHERE thread_id = t.id)
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut fixed = 0usize;
+    for row in rows {
+        let id: String = row.get("id");
+        let content: String = row.get("content");
+        let Some(title) = super::messages::derive_thread_title(&content) else {
+            continue; // empty first message — keep the device name
+        };
+        sqlx::query("UPDATE threads SET title = ?1 WHERE id = ?2")
+            .bind(&title)
+            .bind(&id)
+            .execute(pool)
+            .await?;
+        fixed += 1;
+    }
+    if fixed > 0 {
+        tracing::info!("migrate: retitled {fixed} device-named thread(s) from their first message");
     }
     Ok(())
 }
