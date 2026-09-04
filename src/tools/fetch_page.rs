@@ -341,6 +341,13 @@ fn html_to_text(html: &str) -> String {
     // pair with the next real `</script>` and silently delete the
     // article between them (review finding).
     let mut s = remove_comments(html);
+    // Lift the page's own summary out of <head> BEFORE it is dropped.
+    // On a JavaScript app the head IS the content: a YouTube Shorts page
+    // carries its title in `<meta name="title">` and nothing in the body
+    // but the footer, so stripping the head left KinAI with "the page
+    // only returned YouTube's standard footer" (field report,
+    // 2026-09-03). News, social and product pages behave the same way.
+    let meta = extract_page_metadata(&s);
     for tag in ["script", "style", "noscript", "head", "svg", "template"] {
         s = remove_element(&s, tag);
     }
@@ -358,7 +365,115 @@ fn html_to_text(html: &str) -> String {
             _ => {}
         }
     }
-    decode_entities(&out)
+    let body = decode_entities(&out);
+    match meta {
+        // The summary goes FIRST: everything downstream truncates the
+        // head of the text, so a trailing header would be the first
+        // thing cut on a long page.
+        Some(m) => format!("{m}\n\n{body}"),
+        None => body,
+    }
+}
+
+/// Pull a page's own one-line summary out of `<head>`: `<title>` plus the
+/// Open Graph / meta title and description.
+///
+/// Deliberately tolerant — attribute order varies (`content=` may precede
+/// `property=`), quoting may be single or double, and the tag may span
+/// lines. Scans only as far as `</head>` when present; YouTube's head is
+/// ~700 KB, so a fixed byte window would miss it entirely.
+fn extract_page_metadata(html: &str) -> Option<String> {
+    let lower = html.to_ascii_lowercase();
+    let head_end = lower.find("</head>").unwrap_or(lower.len().min(1_000_000));
+    let head = &html[..head_end];
+    let head_lower = &lower[..head_end];
+
+    let title = meta_content(head, head_lower, &["og:title", "twitter:title", "title"])
+        .or_else(|| element_text(head, head_lower, "title"));
+    let desc = meta_content(
+        head,
+        head_lower,
+        &["og:description", "twitter:description", "description"],
+    );
+
+    let mut out: Vec<String> = Vec::new();
+    if let Some(t) = title.filter(|t| !t.trim().is_empty()) {
+        out.push(t);
+    }
+    // Skip a description that merely repeats the title.
+    if let Some(d) = desc.filter(|d| !d.trim().is_empty()) {
+        if out.first().map(|t| t.trim() != d.trim()).unwrap_or(true) {
+            out.push(d);
+        }
+    }
+    (!out.is_empty()).then(|| out.join("\n"))
+}
+
+/// First `<meta>` whose `name`/`property` matches one of `keys`, in the
+/// order given, returning its decoded `content`.
+fn meta_content(head: &str, head_lower: &str, keys: &[&str]) -> Option<String> {
+    for key in keys {
+        let mut from = 0;
+        while let Some(rel) = head_lower[from..].find("<meta") {
+            let start = from + rel;
+            let end = head_lower[start..].find('>').map(|e| start + e)?;
+            let tag = &head[start..end];
+            let tag_lower = &head_lower[start..end];
+            let matches_key = attr(tag, tag_lower, "property")
+                .or_else(|| attr(tag, tag_lower, "name"))
+                .map(|v| v.trim().eq_ignore_ascii_case(key))
+                .unwrap_or(false);
+            if matches_key {
+                if let Some(c) = attr(tag, tag_lower, "content") {
+                    let c = decode_entities(&c).trim().to_string();
+                    if !c.is_empty() {
+                        return Some(c);
+                    }
+                }
+            }
+            from = end;
+        }
+    }
+    None
+}
+
+/// Value of `name="..."` (or `'...'`) within a single tag.
+fn attr(tag: &str, tag_lower: &str, name: &str) -> Option<String> {
+    let pat = format!("{name}=");
+    let mut from = 0;
+    while let Some(rel) = tag_lower[from..].find(&pat) {
+        let at = from + rel;
+        // Must be a attribute boundary, not the tail of another name
+        // (e.g. "og:title=" must not satisfy a search for "title=").
+        let boundary = at == 0
+            || tag
+                .as_bytes()
+                .get(at - 1)
+                .is_some_and(|b| b.is_ascii_whitespace());
+        let rest = &tag[at + pat.len()..];
+        if boundary {
+            let quote = rest.chars().next()?;
+            if quote == '"' || quote == '\'' {
+                let body = &rest[quote.len_utf8()..];
+                if let Some(close) = body.find(quote) {
+                    return Some(body[..close].to_string());
+                }
+            }
+        }
+        from = at + pat.len();
+    }
+    None
+}
+
+/// Text of the first `<title>` element.
+fn element_text(head: &str, head_lower: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}");
+    let close = format!("</{tag}");
+    let s = head_lower.find(&open)?;
+    let gt = head_lower[s..].find('>')? + s + 1;
+    let e = head_lower[gt..].find(&close)? + gt;
+    let text = decode_entities(head[gt..e].trim());
+    (!text.trim().is_empty()).then(|| text.trim().to_string())
 }
 
 fn remove_comments(s: &str) -> String {
@@ -505,6 +620,65 @@ mod tests {
         assert!(!text.contains("body{}"));
     }
 
+    /// The 2026-09-03 field report: "https://www.youtube.com/shorts/… —
+    /// watch this" came back as "the page behind the link only returned
+    /// YouTube's standard footer (no title, description, or transcript)".
+    /// The title was in the page the whole time, in a <meta> inside
+    /// <head>, which this function used to drop wholesale.
+    #[test]
+    fn a_javascript_app_still_yields_its_title_and_description() {
+        // Shape copied from the real Shorts page: og: tags in a big head,
+        // body carrying only chrome.
+        let html = "<!DOCTYPE html><html><head><title>Nvidia's RELEASING A New Flagship Gaming GPU! - YouTube</title>\
+<meta name=\"title\" content=\"Nvidia&#39;s RELEASING A New Flagship Gaming GPU!\">\
+<meta property=\"og:title\" content=\"Nvidia&#39;s RELEASING A New Flagship Gaming GPU!\">\
+<meta property=\"og:description\" content=\"Visit https://www.meldbytes.com to join the newsletter!\">\
+<script>var ytInitialData = {\"junk\":1};</script></head>\
+<body><div>About Press Copyright Contact us Creators Advertise Developers</div></body></html>";
+        let text = collapse_whitespace(&html_to_text(html));
+        assert!(text.contains("Nvidia's RELEASING A New Flagship Gaming GPU!"), "no title: {text:?}");
+        assert!(text.contains("meldbytes.com"), "no description: {text:?}");
+        // The summary must lead, because everything downstream cuts the head.
+        assert!(text.starts_with("Nvidia's"), "summary must come first: {text:?}");
+        // And the script junk must still be gone.
+        assert!(!text.contains("ytInitialData"), "script leaked: {text:?}");
+    }
+
+    #[test]
+    fn metadata_parsing_tolerates_real_world_markup() {
+        // content= before property=, single quotes, mixed case.
+        let html = "<html><head><META CONTENT='Reversed &amp; quoted' PROPERTY='og:title'>\
+<meta name='description' content='Desc here'></head><body>x</body></html>";
+        let text = collapse_whitespace(&html_to_text(html));
+        assert!(text.contains("Reversed & quoted"), "{text:?}");
+        assert!(text.contains("Desc here"), "{text:?}");
+    }
+
+    #[test]
+    fn a_description_that_repeats_the_title_is_not_printed_twice() {
+        let html = "<html><head><meta property=\"og:title\" content=\"Same thing\">\
+<meta property=\"og:description\" content=\"Same thing\"></head><body>body text</body></html>";
+        let text = collapse_whitespace(&html_to_text(html));
+        assert_eq!(text.matches("Same thing").count(), 1, "duplicated: {text:?}");
+    }
+
+    #[test]
+    fn an_ordinary_article_is_unchanged_apart_from_its_title() {
+        // Regression guard: the arXiv/Wikipedia path must keep working.
+        let html = "<html><head><title>The Paper</title></head><body><h1>The Paper</h1>\
+<p>Findings &amp; results.</p></body></html>";
+        let text = collapse_whitespace(&html_to_text(html));
+        assert!(text.contains("Findings & results."), "{text:?}");
+        assert!(text.starts_with("The Paper"), "{text:?}");
+    }
+
+    #[test]
+    fn a_page_with_no_metadata_is_untouched() {
+        let html = "<html><head><style>body{}</style></head><body><p>Just body.</p></body></html>";
+        let text = collapse_whitespace(&html_to_text(html));
+        assert_eq!(text.trim(), "Just body.");
+    }
+
     #[test]
     fn header_element_does_not_get_eaten_as_head() {
         // The prefix collision that blanked Wikipedia: <header> must not
@@ -513,7 +687,12 @@ mod tests {
 <header><nav>Menu</nav></header><main><p>The article body.</p></main></body></html>";
         let text = collapse_whitespace(&html_to_text(html));
         assert!(text.contains("The article body."), "body vanished: {text:?}");
-        assert!(!text.contains("t\n"), "head content should be gone");
+        // <header> must survive the <head> removal — that prefix collision
+        // is what this test exists for.
+        assert!(text.contains("Menu"), "<header> was eaten as <head>: {text:?}");
+        // The <title> now legitimately leads the text (metadata extraction),
+        // but the head's MARKUP must still be gone.
+        assert!(!text.contains("<title"), "head markup leaked: {text:?}");
     }
 
     #[test]

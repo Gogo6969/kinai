@@ -5,6 +5,23 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Links to sites that build their page in the browser now come back with
+  something useful.** Pasting a YouTube link returned "the page only
+  returned YouTube's standard footer" — the video's title was in the page
+  the whole time, in the `<head>`, which KinAI stripped away along with
+  the stylesheets and scripts. That was right for articles and wrong for
+  everything else: on a JavaScript site the head *is* the content. KinAI
+  now lifts the page's own title and description before discarding the
+  rest, so that same link comes back as "Nvidia's RELEASING A New Flagship
+  Gaming GPU!" instead of a list of footer links. This helps well beyond
+  YouTube — news sites, social posts and shop pages all put their summary
+  in exactly those tags. KinAI still cannot watch a video or read its
+  captions; it can now tell you what the video is.
+
 ## [0.2.111] — 2026-09-03
 
 ### Fixed
