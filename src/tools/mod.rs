@@ -14,5 +14,6 @@ pub mod image_search;
 pub mod loop_pipeline;
 pub mod registry;
 pub mod status_phrases;
+pub mod video_transcript;
 pub mod web_search;
 pub mod x_search;

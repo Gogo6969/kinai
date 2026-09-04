@@ -5,6 +5,26 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **KinAI can tell you what a video says.** Share a YouTube link and ask
+  what it's about, and KinAI reads the captions instead of guessing from
+  the title. Optional and off by default: it works only if the household
+  runs the small transcript service (`services/transcriptd.py`, one file,
+  no dependencies beyond yt-dlp) and pastes its address into Settings →
+  Tools. Nothing leaves the house — the service runs on your own
+  hardware, like SearXNG, and KinAI never runs third-party code itself.
+  Transcripts are cached forever, so asking about the same video twice is
+  instant.
+
+  Honest limits, which KinAI states rather than papering over: captions
+  are auto-generated so wording is imperfect and there are no speaker
+  names; not every video has them; and YouTube changes periodically break
+  the underlying tool, at which point new videos fail until it is updated
+  (cached ones keep working). See `docs/TRANSCRIPT-SERVICE.md`.
+
 ## [0.2.112] — 2026-09-04
 
 ### Fixed

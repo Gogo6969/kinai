@@ -94,6 +94,7 @@
     search_engine: 'duckduckgo',
     search_api_key: null,
     searxng_url: 'http://127.0.0.1:8888',
+    transcript_url: '',
     search_fallback_searxng: true,
   });
   const visionEmpty = (): VisionEndpoint => ({

@@ -1,0 +1,26 @@
+[Unit]
+Description=KinAI transcript service (yt-dlp captions for the family LLM)
+Documentation=https://github.com/Gogo6969/kinai
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=olares
+Environment=TRANSCRIPT_PORT=8099
+ExecStart=/usr/bin/python3 /home/olares/transcriptd.py
+Restart=on-failure
+RestartSec=5
+# Hardening: this shells out to yt-dlp on URLs that ultimately come from
+# chat, so keep its blast radius small.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/olares/.kinai-transcripts
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

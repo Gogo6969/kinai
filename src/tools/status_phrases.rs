@@ -48,6 +48,12 @@ const SOCIAL: &[&str] = &[
 
 const PICTURES: &[&str] = &["Looking for pictures…", "Finding an image…"];
 
+const WATCHING: &[&str] = &[
+    "Reading the video's captions…",
+    "Getting the transcript…",
+    "Listening in…",
+];
+
 const CALCULATING: &[&str] = &["Working it out…", "Crunching the numbers…"];
 
 const REMEMBERING: &[&str] = &["Saving that…", "Noting that down…"];
@@ -62,6 +68,7 @@ fn set_for(tool: &str) -> &'static [&'static str] {
     match tool {
         "web_search" => SEARCHING,
         "fetch_page" => READING,
+        "video_transcript" => WATCHING,
         "x_search" => SOCIAL,
         "image_search" => PICTURES,
         "calculator" => CALCULATING,
@@ -90,7 +97,8 @@ mod tests {
         // The registry's full catalogue must be covered — a tool falling
         // through to GENERIC is a miss, not a crash, so assert directly.
         for t in ["web_search", "fetch_page", "x_search", "image_search",
-                  "calculator", "remember", "forget", "datetime"] {
+                  "calculator", "remember", "forget", "datetime",
+                  "video_transcript"] {
             assert!(!std::ptr::eq(set_for(t), GENERIC), "{t} has no phrases of its own");
             assert!(!phrase_for(t).is_empty());
         }

@@ -19,6 +19,9 @@ pub struct ToolRuntime {
     pub searxng_url: String,
     /// Use SearXNG when the paid engine is permanently unavailable.
     pub search_fallback_searxng: bool,
+    /// Base URL of the family's transcript service; empty = the
+    /// `video_transcript` tool is not offered at all.
+    pub transcript_url: String,
     /// DB handle for memory tools (remember, forget). Set only when the
     /// caller wants those tools to actually persist — search-tool-only
     /// callsites (e.g. an isolated extractor pass) can leave it None.
@@ -39,6 +42,7 @@ impl ToolRuntime {
             search_api_key: s.search_api_key.clone(),
             searxng_url: s.searxng_url.clone(),
             search_fallback_searxng: s.search_fallback_searxng,
+            transcript_url: s.transcript_url.clone(),
             db: None,
             peer_id: None,
             source_msg_id: None,
@@ -81,6 +85,11 @@ pub fn enabled(settings: &ToolSettings) -> Vec<ToolDef> {
         // Same toggle, same privacy surface: fetching a page the user
         // linked is no more of a network disclosure than searching for it.
         out.push(fetch_page_def());
+    }
+    // Only offered when the household actually runs the service. A tool
+    // the model can call but that can never succeed is worse than none.
+    if !settings.transcript_url.trim().is_empty() {
+        out.push(video_transcript_def());
     }
     if settings.x_search {
         out.push(x_search_def());
@@ -134,6 +143,13 @@ pub async fn execute(name: &str, args_json: &str, runtime: &ToolRuntime) -> Resu
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| anyhow!("missing url"))?;
             super::fetch_page::fetch(url).await
+        }
+        "video_transcript" => {
+            let url = args
+                .get("url")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("missing url"))?;
+            super::video_transcript::fetch(&runtime.transcript_url, url).await
         }
         "x_search" => {
             let query = args
@@ -271,6 +287,30 @@ fn fetch_page_def() -> ToolDef {
                         "url": {
                             "type": "string",
                             "description": "The full http(s) URL to fetch, exactly as given or as found in search results."
+                        }
+                    },
+                    "required": ["url"]
+                }
+            }
+        }),
+    }
+}
+
+fn video_transcript_def() -> ToolDef {
+    ToolDef {
+        name: "video_transcript".into(),
+        description: "Read what is actually said in a YouTube video, from its captions.".into(),
+        schema: json!({
+            "type": "function",
+            "function": {
+                "name": "video_transcript",
+                "description": "Read a YouTube video's spoken content from its captions, on the family's own hardware. Use this whenever someone shares a YouTube link and wants to know what the video says — \"watch this\", \"what is this about\", \"summarise this video\". Returns the title, length and full transcript. Captions are auto-generated, so wording can be imperfect and speaker names are absent. Not every video has captions; if it doesn't, say so rather than guessing from the title. YouTube links only.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {
+                            "type": "string",
+                            "description": "The full YouTube URL, exactly as the user gave it."
                         }
                     },
                     "required": ["url"]

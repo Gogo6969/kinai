@@ -504,6 +504,14 @@ const OUTAGE_CLAIMS: &[&str] = &[
     "search came up short", "search came back empty", "search returned nothing",
     "no search results", "searxng", "suche ist ausgefallen",
     "suchmaschine ist", "keine suchergebnisse",
+    // Transcript-service failures. Every user-visible failure string the
+    // tool can produce belongs here the day it is written: KinAI's own
+    // honest "I couldn't get the transcript" otherwise survives in the
+    // thread and gets repeated as a standing incapacity long after the
+    // service is back. That is exactly how "the search backend is down"
+    // outlived the Exa outage by two days.
+    "transcript service", "no captions", "has no captions",
+    "captions were empty", "rate limiting transcript",
 ];
 
 /// True when `text` reports the search backend itself as broken.
@@ -559,6 +567,19 @@ math, and general knowledge all work fine.)";
         assert!(is_tool_outage_claim(echo), "echo must be flagged");
         // The echo also denies the capability outright.
         assert!(is_capability_denial(echo), "'not able to pull live web data' is a denial");
+    }
+
+    /// A transcript failure must be recognised as a transient outage
+    /// claim, not left to harden into "I can't read videos".
+    #[test]
+    fn transcript_failures_are_recognised_as_outage_claims() {
+        for msg in [
+            "I couldn't read it — the transcript service could not read that video.",
+            "That video has no captions to read, so I can't tell you what was said.",
+            "YouTube is rate-limiting transcript downloads right now; try again in a few minutes.",
+        ] {
+            assert!(is_tool_outage_claim(msg), "not flagged: {msg:?}");
+        }
     }
 
     #[test]

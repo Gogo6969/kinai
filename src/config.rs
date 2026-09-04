@@ -219,6 +219,18 @@ pub struct ToolSettings {
     /// off, and without it every search returns HTML we can't parse.
     #[serde(default = "default_searxng_url")]
     pub searxng_url: String,
+    /// Base URL of the family's own transcript service (see
+    /// `docs/TRANSCRIPT-SERVICE.md`), e.g. `http://192.168.1.25:8099`.
+    /// Empty — the default — disables the `video_transcript` tool
+    /// entirely, so a household that hasn't set one up never sees it.
+    ///
+    /// Host-configured ONLY, exactly like `searxng_url`. That is the
+    /// security property: `fetch_page` refuses LAN addresses so a web
+    /// page can't steer the model into probing the house, and this URL
+    /// is the deliberate exception the OWNER opens — never something a
+    /// fetched page can influence.
+    #[serde(default)]
+    pub transcript_url: String,
     /// Fall back to SearXNG when the paid engine is out of credits (or its
     /// key is rejected) instead of failing the turn.
     ///
@@ -251,6 +263,9 @@ impl Default for ToolSettings {
             search_api_key: None,
             searxng_url: default_searxng_url(),
             search_fallback_searxng: true,
+            // Off until the household stands up the service and pastes
+            // its URL — see docs/TRANSCRIPT-SERVICE.md.
+            transcript_url: String::new(),
         }
     }
 }

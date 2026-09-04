@@ -66,6 +66,8 @@ export interface ToolSettings {
   /** Base URL of the family's own SearXNG (engine `searxng`, and the
    *  fallback target when Exa is out of credit). */
   searxng_url: string;
+  /** Family transcript service base URL; empty disables the tool. */
+  transcript_url: string;
   /** Fall back to SearXNG when Exa is permanently unavailable. */
   search_fallback_searxng: boolean;
 }

@@ -142,6 +142,7 @@
     search_engine: 'duckduckgo',
     search_api_key: null,
     searxng_url: 'http://127.0.0.1:8888',
+    transcript_url: '',
     search_fallback_searxng: true,
   });
   const emptyEndpoint = (): VisionEndpoint => ({
@@ -1460,6 +1461,21 @@
               family's questions never leave your hardware.
             </p>
           {/if}
+        </label>
+        <label class="block">
+          <span class="text-sm text-white/70">Video transcript service</span>
+          <input
+            class="kin-field font-mono w-full mt-1"
+            bind:value={tools.transcript_url}
+            placeholder="http://192.168.1.25:8099 (leave empty to disable)"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <p class="text-xs text-white/40 mt-1">
+            Lets KinAI read what a YouTube video says, from its captions. Runs on
+            your own hardware — see docs/TRANSCRIPT-SERVICE.md to set one up.
+            Leave empty and KinAI simply won't offer it.
+          </p>
         </label>
         {#if tools.search_engine === 'searxng'}
           <label class="block">
