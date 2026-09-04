@@ -10,6 +10,12 @@ and "published".
 - [ ] All changes committed to the working tree you intend to ship (no
       "I'll add one more fix mid-pipeline"; a new fix = restart checklist).
 - [ ] `cargo test --lib` — all green.
+- [ ] `cargo test --no-run` — exit 0. `--lib` does NOT compile `tests/*.rs`,
+      and neither does release.yml (`cargo test --lib --quiet`), so both
+      gates stayed green from 0.2.107 to 0.2.111 while the integration
+      tests had not compiled since a `system_prompt` signature change.
+      `build.yml` (push to main) is the only job that catches it, and its
+      failures are easy to miss because no release depends on them.
 - [ ] `cd frontend && pnpm check` — no **new** errors vs main.
 - [ ] New/changed features exercised end-to-end in a running instance
       (dev mock scenario, live test, or the installed app — "tests pass"
