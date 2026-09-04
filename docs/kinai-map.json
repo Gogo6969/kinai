@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-09-02T15:53:28+00:00",
-  "version": "0.2.110",
+  "generated_at": "2026-09-04T01:57:02+00:00",
+  "version": "0.2.111",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 279,
-    "head": "efd481f"
+    "commits": 284,
+    "head": "7b8d0c6"
   },
   "totals": {
     "rust_files": 62,
-    "rust_lines": 27077,
+    "rust_lines": 27342,
     "frontend_files": 33,
     "frontend_lines": 12085,
-    "unit_tests": 215,
+    "unit_tests": 223,
     "integration_test_files": 12,
-    "releases": 102,
-    "tags": 96
+    "releases": 103,
+    "tags": 97
   },
   "areas": [
     {
@@ -178,14 +178,14 @@
     {
       "path": "src/db/messages.rs",
       "area": "db",
-      "lines": 802,
+      "lines": 993,
       "doc": "Thread + message persistence (async via SQLx).",
-      "tests": 7
+      "tests": 15
     },
     {
       "path": "src/db/migrate.rs",
       "area": "db",
-      "lines": 304,
+      "lines": 366,
       "doc": "Hand-rolled migrations — kept inline so a fresh user just runs `pnpm tauri dev`.",
       "tests": 0
     },
@@ -318,7 +318,7 @@
     {
       "path": "src/network/server.rs",
       "area": "network",
-      "lines": 1179,
+      "lines": 1191,
       "doc": "Host-side Axum HTTP+WebSocket server.",
       "tests": 0
     },
@@ -1074,6 +1074,18 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.111",
+      "date": "2026-09-03",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "Conversations on family devices are named after the topic again, not the device.",
+            "detail": "On a phone or laptop nearly every conversation in the sidebar was titled with the device's own name — \"MacM2\" over and over — while the same app on the host named them properly. Measured across the household: 1 of 133 conversations started on a family device ever got a real title, against 26 of 47 on the host. The cause is that a client's conversation only reaches the host when its first message arrives, so the rename the app sends a moment earlier lands on a conversation the host has not heard of yet and is quietly dropped; the host then created the row named after whoever sent it, and never renamed it. The host now takes the title from the message itself, using the same rules the app uses, so both agree. Existing conversations are repaired on first launch: 57 of them get their topic back, taken from the message that started them. Conversations you renamed by hand are left exactly as you named them, and so are the Telegram ones."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.110",
       "date": "2026-09-02",
@@ -3231,6 +3243,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.110",
+      "date": "2026-09-02"
+    },
     {
       "tag": "v0.2.109",
       "date": "2026-09-01"
