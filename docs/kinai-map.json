@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-09-04T13:38:26+00:00",
-  "version": "0.2.112",
+  "generated_at": "2026-09-04T19:54:24+00:00",
+  "version": "0.2.113",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 289,
-    "head": "03d3c26"
+    "commits": 291,
+    "head": "269f97e"
   },
   "totals": {
-    "rust_files": 62,
-    "rust_lines": 27546,
+    "rust_files": 63,
+    "rust_lines": 27811,
     "frontend_files": 33,
-    "frontend_lines": 12085,
-    "unit_tests": 229,
+    "frontend_lines": 12104,
+    "unit_tests": 234,
     "integration_test_files": 12,
-    "releases": 104,
-    "tags": 98
+    "releases": 105,
+    "tags": 99
   },
   "areas": [
     {
@@ -122,7 +122,7 @@
     {
       "path": "src/config.rs",
       "area": "entry",
-      "lines": 754,
+      "lines": 769,
       "doc": "Persistent configuration at `~/.kinai/config.toml`.",
       "tests": 6
     },
@@ -416,9 +416,9 @@
     {
       "path": "src/tools/force_search.rs",
       "area": "tools",
-      "lines": 810,
+      "lines": 831,
       "doc": "Taking the \"should I search?\" decision away from the model.",
-      "tests": 10
+      "tests": 11
     },
     {
       "path": "src/tools/image_recover.rs",
@@ -444,22 +444,29 @@
     {
       "path": "src/tools/mod.rs",
       "area": "tools",
-      "lines": 19,
+      "lines": 20,
       "doc": "Built-in tools invoked via OpenAI-style function calling.",
       "tests": 0
     },
     {
       "path": "src/tools/registry.rs",
       "area": "tools",
-      "lines": 419,
+      "lines": 459,
       "doc": "Tool catalogue — generated dynamically from `ToolSettings` so users can disable tools their model shouldn't be allowed to call.",
       "tests": 0
     },
     {
       "path": "src/tools/status_phrases.rs",
       "area": "tools",
-      "lines": 134,
+      "lines": 142,
       "doc": "Human-sounding status lines shown while a tool runs.",
+      "tests": 4
+    },
+    {
+      "path": "src/tools/video_transcript.rs",
+      "area": "tools",
+      "lines": 180,
+      "doc": "Read what a video actually says, via the family's own transcript service.",
       "tests": 4
     },
     {
@@ -522,7 +529,7 @@
     {
       "path": "frontend/src/lib/api.ts",
       "kind": "lib",
-      "lines": 678,
+      "lines": 680,
       "doc": "Pause toggle. When `false` this slot is hidden from slash menus and skipped during message routing. Defaults to `true` for the fast slot, `false` for the deep slot (until the user fills it)."
     },
     {
@@ -666,7 +673,7 @@
     {
       "path": "frontend/src/routes/host/+page.svelte",
       "kind": "route",
-      "lines": 1266,
+      "lines": 1267,
       "doc": "Secondary \"deep\" slot — same shape, but starts disabled + empty so hosts who only want one model keep their existing single-slot behaviour. The configure step now exposes BOTH slots so the user can pick a fast + deep backend in one screen."
     },
     {
@@ -696,7 +703,7 @@
     {
       "path": "frontend/src/routes/settings/+page.svelte",
       "kind": "route",
-      "lines": 2353,
+      "lines": 2369,
       "doc": "Fast model — the existing single slot. Reachable as `/fast` once the deep slot is also configured; the default routing target for plain (non-slash) messages."
     },
     {
@@ -1074,6 +1081,18 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.113",
+      "date": "2026-09-04",
+      "sections": {
+        "Added": [
+          {
+            "title": "KinAI can tell you what a video says.",
+            "detail": "Share a YouTube link and ask what it's about, and KinAI reads the captions instead of guessing from the title. Optional and off by default: it works only if the household runs the small transcript service (`services/transcriptd.py`, one file, no dependencies beyond yt-dlp) and pastes its address into Settings → Tools. Nothing leaves the house — the service runs on your own hardware, like SearXNG, and KinAI never runs third-party code itself. Transcripts are cached forever, so asking about the same video twice is instant. Honest limits, which KinAI states rather than papering over: captions are auto-generated so wording is imperfect and there are no speaker names; not every video has them; and YouTube changes periodically break the underlying tool, at which point new videos fail until it is updated (cached ones keep working). See `docs/TRANSCRIPT-SERVICE.md`."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.112",
       "date": "2026-09-04",
@@ -3255,6 +3274,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.112",
+      "date": "2026-09-04"
+    },
     {
       "tag": "v0.2.111",
       "date": "2026-09-03"
