@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-09-04T01:57:02+00:00",
-  "version": "0.2.111",
+  "generated_at": "2026-09-04T13:38:26+00:00",
+  "version": "0.2.112",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 284,
-    "head": "7b8d0c6"
+    "commits": 289,
+    "head": "03d3c26"
   },
   "totals": {
     "rust_files": 62,
-    "rust_lines": 27342,
+    "rust_lines": 27546,
     "frontend_files": 33,
     "frontend_lines": 12085,
-    "unit_tests": 223,
+    "unit_tests": 229,
     "integration_test_files": 12,
-    "releases": 103,
-    "tags": 97
+    "releases": 104,
+    "tags": 98
   },
   "areas": [
     {
@@ -409,9 +409,9 @@
     {
       "path": "src/tools/fetch_page.rs",
       "area": "tools",
-      "lines": 579,
+      "lines": 783,
       "doc": "Fetch a URL the user gave and return its text.",
-      "tests": 10
+      "tests": 16
     },
     {
       "path": "src/tools/force_search.rs",
@@ -1074,6 +1074,18 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.112",
+      "date": "2026-09-04",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "Links to sites that build their page in the browser now come back with something useful.",
+            "detail": "Pasting a YouTube link returned \"the page only returned YouTube's standard footer\" — the video's title was in the page the whole time, in the `<head>`, which KinAI stripped away along with the stylesheets and scripts. That was right for articles and wrong for everything else: on a JavaScript site the head *is* the content. KinAI now lifts the page's own title and description before discarding the rest, so that same link comes back as \"Nvidia's RELEASING A New Flagship Gaming GPU!\" instead of a list of footer links. This helps well beyond YouTube — news sites, social posts and shop pages all put their summary in exactly those tags. KinAI still cannot watch a video or read its captions; it can now tell you what the video is."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.111",
       "date": "2026-09-03",
@@ -3243,6 +3255,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.111",
+      "date": "2026-09-03"
+    },
     {
       "tag": "v0.2.110",
       "date": "2026-09-02"
