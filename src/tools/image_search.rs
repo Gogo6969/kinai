@@ -8,9 +8,12 @@
 //!     zero-config image source. Reliable, free, returns CC-licensed
 //!     images. Covers landmarks, people, history, biology, etc. very
 //!     well; thinner for product/celebrity shots.
-//!   * `Exa` — uses the regular Exa search with `contents.images`
-//!     enrichment so each result page contributes its primary image.
-//!     Same API key as the rest of Exa (web_search, x_search).
+//!   * `Exa` — uses the regular Exa search with `contents.extras.
+//!     imageLinks` enrichment so each result page contributes its primary
+//!     image. Same API key as the rest of Exa (web_search, x_search).
+//!     Falls back to Wikimedia Commons when Exa returns no images at all,
+//!     so a quiet API change or exhausted credits still leaves the family
+//!     with pictures rather than nothing.
 
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
@@ -174,19 +177,35 @@ struct ExaResult {
     author: Option<String>,
 }
 
+/// The request body Exa actually honours for images.
+///
+/// Extracted so a test can pin its shape: this is exactly what broke on
+/// 2026-09-05 and it broke SILENTLY — Exa kept returning 200 with normal
+/// results and simply omitted each result's `image`, so every picture
+/// request became "No images found" with a successful tool call in the
+/// log. Nothing surfaced until a family member asked for a photo.
+fn exa_image_request(query: &str, max: usize) -> serde_json::Value {
+    serde_json::json!({
+        "query": query,
+        "numResults": max.clamp(1, 15),
+        "contents": {
+            // We don't need the page text, just the headline image.
+            "text": false,
+            // `extras.imageLinks` is the switch that makes Exa populate
+            // the top-level `image` we filter on below. The older
+            // `"images": 1` is ignored — verified against the live API:
+            // old body -> keys [id,title,url]; this one -> [extras,id,
+            // image,title,url].
+            "extras": { "imageLinks": 1 }
+        }
+    })
+}
+
 async fn exa_images(query: &str, max: usize, api_key: &str) -> Result<String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .build()?;
-    let body = serde_json::json!({
-        "query": query,
-        "numResults": max.max(1).min(15),
-        "contents": {
-            // We don't need the page text, just the headline image.
-            "text": false,
-            "images": 1
-        }
-    });
+    let body = exa_image_request(query, max);
     let resp = client
         .post("https://api.exa.ai/search")
         .header("x-api-key", api_key)
@@ -207,7 +226,16 @@ async fn exa_images(query: &str, max: usize, api_key: &str) -> Result<String> {
         .filter(|r| r.image.as_deref().map(|s| !s.is_empty()).unwrap_or(false))
         .collect();
     if with_images.is_empty() {
-        return Ok(format!("No images found for \"{}\".", query));
+        // Don't dead-end on the paid engine. Wikimedia Commons needs no
+        // key and is already this tool's source in DuckDuckGo/SearXNG
+        // mode, so a family asking for a picture still gets one when Exa
+        // returns nothing — whether that is a quiet API change (as in
+        // 2026-09-05), an empty result set, or exhausted credits.
+        tracing::warn!(
+            query,
+            "Exa returned no images; falling back to Wikimedia Commons"
+        );
+        return wikimedia_commons(query, max).await;
     }
     let mut out = format!("Found these images for \"{}\":\n\n", query);
     for r in with_images.iter().take(max) {
@@ -252,4 +280,54 @@ fn user_agent() -> String {
         env!("CARGO_PKG_VERSION"),
         env!("CARGO_PKG_REPOSITORY"),
     )
+}
+
+#[cfg(test)]
+mod exa_request_tests {
+    use super::exa_image_request;
+
+    /// Guards the 2026-09-05 silent breakage. If someone reverts to
+    /// `contents.images`, Exa answers 200 with no `image` field and every
+    /// picture request quietly becomes "No images found" — the failure
+    /// has no error, no log line and no test to catch it but this one.
+    #[test]
+    fn the_request_asks_for_images_the_way_exa_still_honours() {
+        let body = exa_image_request("Kathryn Bigelow", 5);
+        let contents = &body["contents"];
+        assert_eq!(
+            contents["extras"]["imageLinks"], 1,
+            "extras.imageLinks is what populates each result's `image`"
+        );
+        assert!(
+            contents.get("images").is_none(),
+            "`contents.images` is the deprecated form Exa silently ignores"
+        );
+        assert_eq!(body["query"], "Kathryn Bigelow");
+    }
+
+    /// The fallback only runs when Exa is broken, so it would otherwise
+    /// ship having never executed. Ignored by default (it hits the
+    /// network); run with `cargo test -- --ignored wikimedia`.
+    #[tokio::test]
+    #[ignore = "hits the live Wikimedia Commons API"]
+    async fn the_fallback_actually_returns_pictures() {
+        let out = super::wikimedia_commons("Kathryn Bigelow", 3)
+            .await
+            .expect("Commons lookup should succeed");
+        assert!(
+            out.contains("http"),
+            "fallback produced no image URL: {out}"
+        );
+        assert!(
+            !out.starts_with("No images found"),
+            "fallback found nothing for a well-known person: {out}"
+        );
+    }
+
+    #[test]
+    fn the_result_count_stays_inside_exas_bounds() {
+        assert_eq!(exa_image_request("q", 0)["numResults"], 1, "never ask for zero");
+        assert_eq!(exa_image_request("q", 99)["numResults"], 15, "capped at 15");
+        assert_eq!(exa_image_request("q", 5)["numResults"], 5);
+    }
 }

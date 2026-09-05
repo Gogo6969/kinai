@@ -512,6 +512,21 @@ const OUTAGE_CLAIMS: &[&str] = &[
     // outlived the Exa outage by two days.
     "transcript service", "no captions", "has no captions",
     "captions were empty", "rate limiting transcript",
+    // Image-search failures. The Exa image request silently stopped
+    // returning pictures before 2026-09-05, so KinAI answered "0 results,
+    // try Google Images" — a reply that then sits in the thread and gets
+    // repeated as a standing incapacity even now that pictures work again.
+    // Only strings that report the failure itself. "google image search"
+    // and "google images instead" were here too and were removed before
+    // shipping: they are product names, so an ordinary successful reply
+    // ("drag it into Google Image Search or TinEye") tripped them, and
+    // OUTAGE_CLAIMS matches with no verb pairing to save it. A false
+    // positive here is not a one-turn blip — correction_for_history scans
+    // every assistant message in the window, so one innocent mention
+    // makes every later turn carry a note asserting something untrue.
+    "no images found", "no pictures found", "couldn t find any images",
+    "couldn t find any pictures", "image search returned nothing",
+    "keine bilder gefunden",
 ];
 
 /// True when `text` reports the search backend itself as broken.
@@ -551,6 +566,50 @@ the question needs current information, run the search first and report what act
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_failed_picture_search_does_not_become_a_standing_incapacity() {
+        // The reply shape that prompted this: image_search returned
+        // "No images found" for two months of quiet API breakage, and the
+        // model dutifully sent the family to Google. Once the tool works
+        // again, that reply must not be copied as precedent.
+        for reply in [
+            "I found no images found for that person, sorry.",
+            "The image search returned nothing — try Google Images instead.",
+            "I couldn't find any pictures of her. Google image search would work better.",
+            "Ich habe keine Bilder gefunden.",
+        ] {
+            assert!(
+                is_tool_outage_claim(reply),
+                "not recognised as poison: {reply}"
+            );
+        }
+    }
+
+    #[test]
+    fn naming_google_as_a_tool_is_not_an_outage_claim() {
+        // OUTAGE_CLAIMS matches with no verb pairing, which is only safe
+        // because the strings "have no innocent reading in an assistant
+        // reply". A product name always has one. These replies report no
+        // failure at all — two of them ran no search whatsoever.
+        for reply in [
+            "To find where a photo came from, drag it into Google Image Search or TinEye.",
+            "Google Image Search is the classic reverse-image tool; Google Lens is the newer one.",
+            "Here are three photos of the Sagrada Familia. For newer shots, try Google Images instead.",
+        ] {
+            assert!(
+                !is_tool_outage_claim(reply),
+                "innocent reply wrongly flagged as an outage claim: {reply}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_reply_that_actually_shows_pictures_is_not_flagged() {
+        assert!(!is_tool_outage_claim(
+            "Here are a few photos of Kathryn Bigelow, the director of The Hurt Locker."
+        ));
+    }
 
     #[test]
     fn real_outage_replies_are_recognised_as_poison() {
