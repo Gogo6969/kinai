@@ -1,6 +1,6 @@
 <script lang="ts">
   import { api, events, type Attachment } from '$lib/api';
-  import { renderMarkdown } from '$lib/markdown';
+  import { streamMarkdown } from '$lib/stream-html';
   import { fileToDataUrl } from '$lib/image';
   import { onMount, onDestroy } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -105,8 +105,6 @@
   function removeAttachment(idx: number) {
     pendingAttachments = pendingAttachments.filter((_, i) => i !== idx);
   }
-
-  const renderedHtml = $derived(streamingContent ? renderMarkdown(streamingContent) : '');
 
   // Resize the overlay window to fit its content. Tauri's overlay window
   // starts at ~80px; without this, anything past the input (reasoning,
@@ -606,7 +604,9 @@
     {/if}
     {#if streamingContent}
       <div class="border-t border-white/5 px-5 py-3 max-h-96 overflow-y-auto kin-prose text-ink-50">
-        {@html renderedHtml}
+        <!-- Same per-token re-render as the main chat window: keep decoded
+             images alive so a fresh picture doesn't strobe. -->
+        <div style="display: contents" use:streamMarkdown={streamingContent}></div>
       </div>
     {/if}
   </div>

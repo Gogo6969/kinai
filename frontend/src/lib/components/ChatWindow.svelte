@@ -16,7 +16,7 @@
     const raw = last.note ?? last.name.replace('_', ' ');
     return raw.replace(/[….]+$/, '');
   }
-  import { renderMarkdown as renderStreamMarkdown } from '$lib/markdown';
+  import { streamMarkdown } from '$lib/stream-html';
   import { api, type Attachment } from '$lib/api';
   import { fileToDataUrl } from '$lib/image';
   import { resolveActiveSlot, slotFromCommand, type SlotSlug } from '$lib/activeModel';
@@ -642,7 +642,11 @@
             class="max-w-[85%] rounded-2xl rounded-bl-md px-4 py-2.5 bg-white/5 border border-white/10 text-ink-50 kin-prose"
           >
             {#if app.streaming[id]}
-              {@html renderStreamMarkdown(app.streaming[id])}
+              <!-- Wrapper is display:contents so it adds no box; the action
+                   keeps already-decoded <img> elements alive across the
+                   per-token re-render, which otherwise recreates them 20-40
+                   times a second and makes a fresh picture strobe. -->
+              <div style="display: contents" use:streamMarkdown={app.streaming[id]}></div>
               <span class="inline-block w-1.5 h-4 bg-current align-middle ml-0.5 animate-pulse-soft"></span>
             {:else}
               <!-- Before the first token, say what is actually happening.
