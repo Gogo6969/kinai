@@ -5,6 +5,32 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.114] — 2026-09-05
+
+### Fixed
+
+- **Asking for a picture returns pictures again.** "Find a photo of
+  Kathryn Bigelow" came back with nothing found and a suggestion to try
+  Google Images — and it had been doing that for every picture request,
+  of anyone or anything. The image search asks Exa to attach each result
+  page's main photo, and Exa quietly stopped honouring the way KinAI was
+  asking: it kept answering normally and simply left the photo out, so
+  KinAI filtered away every result and truthfully reported finding none.
+  Nothing failed, nothing was logged as an error, and the host's own
+  record showed the search *succeeding* — which is why this survived
+  unnoticed until someone asked for a photo of a person. KinAI now asks
+  the way Exa still honours, and pictures come back: verified for a film
+  director, a musician, a landmark asked for in German, and a red panda.
+
+  Two further changes so the same silence cannot repeat. If Exa returns
+  no pictures at all — a future API change, an empty result, or credits
+  running out — KinAI now falls back to Wikimedia Commons instead of
+  giving up, the same free source it already uses when the household runs
+  DuckDuckGo or SearXNG. And the "I couldn't find any pictures" reply is
+  now recognised as a past failure rather than a standing fact, so it
+  stops being repeated in that conversation once pictures work again —
+  the same protection added for search outages and video transcripts.
+
 ## [0.2.113] — 2026-09-04
 
 ### Added
