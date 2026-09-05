@@ -20,7 +20,9 @@ pub mod polling;
 pub mod router;
 
 use std::sync::Arc;
+use std::time::Duration;
 
+use anyhow::Context as _;
 use tauri::{AppHandle, Runtime};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -59,38 +61,174 @@ pub async fn start_or_restart<R: Runtime>(state: SharedState, app: AppHandle<R>)
     }
 
     let api = api::BotApi::new(token);
-    // Validate + populate bot_username via getMe before kicking off
-    // long-poll. Saves a round-trip on every pairing-link build.
-    let me = api.get_me().await?;
-    {
-        let mut cfg = state.config.write();
-        cfg.telegram.bot_username = me.username.clone().unwrap_or_default();
-        cfg.save().ok();
-    }
+    // Everything from here runs INSIDE the supervised task, so that the
+    // getMe retry below is abortable. `stop()` aborts this handle, which
+    // means a token change in Settings cannot leave an old retry loop
+    // racing a new one into polling — two pollers would fight over
+    // getUpdates and Telegram answers that with a 409.
+    let handle = tokio::spawn(async move {
+        // Validate + populate bot_username via getMe before kicking off
+        // long-poll. Saves a round-trip on every pairing-link build.
+        let me = match get_me_retrying(&api).await {
+            Ok(me) => me,
+            Err(e) => {
+                tracing::error!("telegram: not starting — {e:#}");
+                return;
+            }
+        };
+        {
+            let mut cfg = state.config.write();
+            cfg.telegram.bot_username = me.username.clone().unwrap_or_default();
+            cfg.save().ok();
+        }
 
-    // Best-effort: set the command list so paired users see slash-cmd
-    // autocomplete in their phone keyboard. Failures here aren't fatal
-    // (the bot still works without the menu).
-    let menu = {
-        let cfg = state.config.read();
-        command_menu(&cfg)
-    };
-    tracing::info!(
-        commands = menu.len(),
-        list = %menu.iter().map(|c| format!("/{}", c.command)).collect::<Vec<_>>().join(" "),
-        "telegram: registering command menu"
-    );
-    if let Err(e) = api.set_my_commands(&menu).await {
-        tracing::warn!("telegram: setMyCommands failed (non-fatal): {e:?}");
-    }
+        // Best-effort: set the command list so paired users see slash-cmd
+        // autocomplete in their phone keyboard. Failures here aren't fatal
+        // (the bot still works without the menu).
+        let menu = {
+            let cfg = state.config.read();
+            command_menu(&cfg)
+        };
+        tracing::info!(
+            commands = menu.len(),
+            list = %menu.iter().map(|c| format!("/{}", c.command)).collect::<Vec<_>>().join(" "),
+            "telegram: registering command menu"
+        );
+        if let Err(e) = api.set_my_commands(&menu).await {
+            tracing::warn!("telegram: setMyCommands failed (non-fatal): {e:?}");
+        }
 
-    let handle = tokio::spawn(polling::run(api, state.clone(), app));
+        tracing::info!(
+            "telegram: long-poll started as @{}",
+            me.username.unwrap_or_else(|| "<unknown>".into())
+        );
+        polling::run(api, state, app).await;
+    });
     *sup.task.lock().await = Some(handle);
-    tracing::info!(
-        "telegram: long-poll started as @{}",
-        me.username.unwrap_or_else(|| "<unknown>".into())
-    );
     Ok(())
+}
+
+/// True when getMe failed because the TOKEN is wrong, rather than because
+/// the network was briefly unavailable.
+///
+/// Getting this wrong is bad in both directions, but not symmetrically:
+/// treating a blip as a bad token brings back the silent-deafness bug this
+/// whole change exists to kill, while treating a bad token as a blip only
+/// costs a retry every 60s. So this stays deliberately narrow — Telegram
+/// answers a bad token with `Unauthorized`, and everything else, including
+/// the `Bad Gateway` it returns under load, is worth waiting out.
+///
+/// Deliberately NOT included: the `Not Found` Telegram returns for a
+/// malformed token. A 404 is exactly what a captive portal or a meddling
+/// proxy also produces, and misreading one of those as "your token is
+/// wrong" would be the bad direction. A malformed token instead keeps
+/// retrying and is surfaced by the escalating log line in
+/// `get_me_retrying`, which names the token as a possible cause.
+fn is_token_rejection(msg: &str) -> bool {
+    msg.to_lowercase().contains("unauthorized")
+}
+
+/// Strip the bot token out of a message before it reaches the log.
+///
+/// reqwest's Display for a transport error appends the request URL, and
+/// every Bot API URL embeds the token: `.../bot<id>:<secret>/getMe`. The
+/// old code hit that once per process, so a token sat in the log file after
+/// a failed start. This change retries, which without redaction would write
+/// the token out every 60 seconds for as long as the network is down — a
+/// standing secret in a file that gets attached to bug reports.
+fn redact_token(msg: &str) -> String {
+    // Token shape is <digits>:<base64url-ish secret>, always preceded by
+    // "bot" in the URL path.
+    let mut out = String::with_capacity(msg.len());
+    let mut rest = msg;
+    while let Some(at) = rest.find("/bot") {
+        let (before, tail) = rest.split_at(at);
+        out.push_str(before);
+        let after = &tail[4..]; // skip "/bot"
+        let end = after
+            .find(|c: char| !(c.is_ascii_alphanumeric() || c == ':' || c == '_' || c == '-'))
+            .unwrap_or(after.len());
+        if after[..end].contains(':') {
+            out.push_str("/bot<redacted>");
+            rest = &after[end..];
+        } else {
+            // Not a token (e.g. "/bots"); keep it verbatim.
+            out.push_str("/bot");
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Longest wait between getMe attempts.
+const GET_ME_BACKOFF_CAP: Duration = Duration::from_secs(60);
+
+/// Attempt at which a failing start stops being a warning and becomes an
+/// error. 5 attempts is ~30s of backoff — past any ordinary blip.
+const ESCALATE_AFTER: u32 = 5;
+
+/// Identify the bot, retrying transient failures instead of giving up.
+///
+/// A single failure here used to take Telegram out for the entire life of
+/// the process. `start_or_restart` returned `Err`, both call sites merely
+/// logged a warning, and nothing retried — so the bot went deaf until a
+/// person noticed and restarted the app. That is exactly what happened on
+/// 2026-09-05: a "Connection reset by peer" on the startup getMe left the
+/// family with no Telegram for sixteen minutes, and the only reason it was
+/// found is that someone said "KinAI does not answer on Telegram".
+///
+/// The same shape is likely at every launch-at-login start, where the app
+/// can easily come up before the network is ready.
+///
+/// Note the asymmetry this repairs: `getUpdates` in polling.rs already
+/// backs off and retries, and `setMyCommands` above is explicitly
+/// non-fatal. This was the one call in the startup path with no
+/// resilience, and it happened to be the one gating everything else.
+///
+/// A wrong token is a different thing from an unreachable network, and no
+/// amount of retrying fixes it — Telegram answers those with
+/// `Unauthorized`, so that one still gives up. Settings' "Test" button
+/// (`test_telegram_token`) remains where a bad token gets reported.
+async fn get_me_retrying(api: &BotApi) -> anyhow::Result<api::BotUser> {
+    let mut delay = Duration::from_secs(2);
+    let mut attempt: u32 = 1;
+    loop {
+        match api.get_me().await {
+            Ok(me) => {
+                if attempt > 1 {
+                    tracing::info!(attempt, "telegram: getMe succeeded after retrying");
+                }
+                return Ok(me);
+            }
+            Err(e) => {
+                let msg = redact_token(&format!("{e:#}"));
+                if is_token_rejection(&msg) {
+                    return Err(e).context("telegram token rejected");
+                }
+                // Escalate once, so a host stuck here is obvious in the log
+                // rather than merely quiet. Today's incident was invisible
+                // precisely because nothing said Telegram had not come up.
+                if attempt == ESCALATE_AFTER {
+                    tracing::error!(
+                        attempt,
+                        "telegram: still not started after {attempt} attempts — the family's \
+                         phones are getting no answers. Check the host's network, and the bot \
+                         token in Settings if this persists: {msg}"
+                    );
+                } else {
+                    tracing::warn!(
+                        attempt,
+                        backoff_s = delay.as_secs(),
+                        "telegram: getMe failed, retrying: {msg}"
+                    );
+                }
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(GET_ME_BACKOFF_CAP);
+                attempt = attempt.saturating_add(1);
+            }
+        }
+    }
 }
 
 /// Re-register the command menu after the model configuration changes.
@@ -285,5 +423,62 @@ mod menu_tests {
         cfg.comfyui.base_url = "http://192.168.1.50:8188".into();
         let n = names(&cfg);
         assert!(n.contains(&"pic".to_string()) && n.contains(&"pichq".to_string()), "{n:?}");
+    }
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::is_token_rejection;
+
+    #[test]
+    fn a_bad_token_is_not_retried_forever() {
+        // What Telegram actually answers for a wrong token.
+        assert!(is_token_rejection("telegram error: Unauthorized"));
+        assert!(is_token_rejection("getMe send: telegram error: Unauthorized"));
+    }
+
+    #[test]
+    fn the_bot_token_never_reaches_the_log() {
+        use super::redact_token;
+        // Verbatim shape from the host's own log on 2026-09-05 — this is
+        // how the token got written to disk in the first place.
+        let real = "getMe send: error sending request for url \
+                    (https://api.telegram.org/bot8982506315:AAFCFidYDZ4ToXlAKXfp4HzscM9tgFnuOjI/getMe)";
+        let safe = redact_token(real);
+        assert!(!safe.contains("AAFCFidYDZ4ToXlAKXfp4HzscM9tgFnuOjI"), "secret survived: {safe}");
+        assert!(!safe.contains("8982506315:"), "bot id + secret survived: {safe}");
+        assert!(safe.contains("/bot<redacted>/getMe"), "lost the useful shape: {safe}");
+        // The rest of the message must survive — it is the diagnostic.
+        assert!(safe.contains("error sending request"));
+    }
+
+    #[test]
+    fn redaction_leaves_ordinary_text_alone() {
+        use super::redact_token;
+        for msg in [
+            "telegram error: Bad Gateway",
+            "connection reset by peer (os error 54)",
+            "no /bots here",
+        ] {
+            assert_eq!(redact_token(msg), msg, "mangled a message with no token");
+        }
+    }
+
+    #[test]
+    fn transient_failures_are_retried() {
+        // All three are verbatim from the host's own logs. The first is
+        // what took Telegram down on 2026-09-05; the second is what
+        // Telegram returns under load and which getUpdates already
+        // survives; the third is an ordinary timeout.
+        for msg in [
+            "getMe send: client error (Connect): Connection reset by peer (os error 54)",
+            "telegram error: Bad Gateway",
+            "getMe send: operation timed out",
+        ] {
+            assert!(
+                !is_token_rejection(msg),
+                "would have given up on a transient failure: {msg}"
+            );
+        }
     }
 }
