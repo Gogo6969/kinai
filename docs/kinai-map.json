@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-09-05T21:04:05+00:00",
-  "version": "0.2.115",
+  "generated_at": "2026-09-05T23:19:28+00:00",
+  "version": "0.2.116",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 295,
-    "head": "bbd37f5"
+    "commits": 297,
+    "head": "e3875d9"
   },
   "totals": {
     "rust_files": 63,
-    "rust_lines": 27948,
+    "rust_lines": 28143,
     "frontend_files": 34,
     "frontend_lines": 12218,
-    "unit_tests": 240,
+    "unit_tests": 244,
     "integration_test_files": 12,
-    "releases": 107,
-    "tags": 101
+    "releases": 108,
+    "tags": 102
   },
   "areas": [
     {
@@ -374,9 +374,9 @@
     {
       "path": "src/telegram/mod.rs",
       "area": "telegram",
-      "lines": 290,
+      "lines": 485,
       "doc": "Telegram bot integration — host-side only.",
-      "tests": 5
+      "tests": 9
     },
     {
       "path": "src/telegram/polling.rs",
@@ -1087,6 +1087,18 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.116",
+      "date": "2026-09-05",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "Telegram no longer goes quiet after a restart.",
+            "detail": "KinAI checks in with Telegram once when it starts, to confirm the bot token and learn the bot's name. If that single check failed — a momentary network hiccup was enough — KinAI gave up on Telegram entirely and never tried again. The app looked perfectly healthy: the window worked, the family's computers worked, and messages sent from phones simply vanished. That happened today: one dropped connection during a restart left the household with no Telegram for sixteen minutes, and the only reason anyone found out is that someone said \"KinAI doesn't answer\". KinAI now keeps trying, waiting a little longer between attempts, until it gets through. This most likely also fixes the case nobody had pinned down before: when the Mac starts KinAI at login, the app can be ready before the network is, which is the same failed check and the same silence. A genuinely wrong token is different — no amount of retrying fixes that — so KinAI still stops for one, and Settings → Telegram → Test remains where a bad token is reported. Two smaller things fixed alongside, both found by reviewing the change before shipping it. The bot token — the secret that controls the family bot — was being written into KinAI's log file when this check failed; it no longer is. And if KinAI ever does end up stuck waiting, the log now says so in plain words instead of staying silent, which is exactly what made today's outage so hard to notice."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.115",
       "date": "2026-09-05",
@@ -3304,6 +3316,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.115",
+      "date": "2026-09-05"
+    },
     {
       "tag": "v0.2.114",
       "date": "2026-09-05"

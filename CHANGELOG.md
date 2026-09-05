@@ -5,6 +5,37 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.116] — 2026-09-05
+
+### Fixed
+
+- **Telegram no longer goes quiet after a restart.** KinAI checks in with
+  Telegram once when it starts, to confirm the bot token and learn the
+  bot's name. If that single check failed — a momentary network hiccup was
+  enough — KinAI gave up on Telegram entirely and never tried again. The
+  app looked perfectly healthy: the window worked, the family's computers
+  worked, and messages sent from phones simply vanished. That happened
+  today: one dropped connection during a restart left the household with
+  no Telegram for sixteen minutes, and the only reason anyone found out is
+  that someone said "KinAI doesn't answer".
+
+  KinAI now keeps trying, waiting a little longer between attempts, until
+  it gets through. This most likely also fixes the case nobody had pinned
+  down before: when the Mac starts KinAI at login, the app can be ready
+  before the network is, which is the same failed check and the same
+  silence.
+
+  A genuinely wrong token is different — no amount of retrying fixes that
+  — so KinAI still stops for one, and Settings → Telegram → Test remains
+  where a bad token is reported.
+
+  Two smaller things fixed alongside, both found by reviewing the change
+  before shipping it. The bot token — the secret that controls the family
+  bot — was being written into KinAI's log file when this check failed; it
+  no longer is. And if KinAI ever does end up stuck waiting, the log now
+  says so in plain words instead of staying silent, which is exactly what
+  made today's outage so hard to notice.
+
 ## [0.2.115] — 2026-09-05
 
 ### Fixed
