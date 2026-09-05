@@ -5,6 +5,32 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.115] — 2026-09-05
+
+### Fixed
+
+- **Replies with a picture no longer flicker while they're being written.**
+  As soon as a photo appeared in an answer, the window strobed — "like an
+  old damaged TV", in the words of the person who hit it. While a reply is
+  streaming, KinAI re-draws it from scratch on every word that arrives.
+  That is invisible for text, but it meant each picture was thrown away and
+  rebuilt dozens of times a second, and a picture that has just been
+  rebuilt has no size and nothing to show yet — so it collapsed to nothing
+  and sprang back, over and over, dragging the rest of the conversation up
+  and down with it. KinAI now keeps a picture it has already loaded instead
+  of rebuilding it, and redraws at most once per frame rather than once per
+  word. The text still appears as it is written; the picture simply stays
+  put.
+
+  This was never new. It has been in the streaming code all along and
+  nobody could see it, because image search had been returning no pictures
+  for months — fixing that in 0.2.114 is what made it visible. Both the
+  main window and the quick overlay are fixed.
+
+  Redrawing less often also removes a real cost: every word used to re-run
+  the full formatting pass over the whole answer so far, which on a fast
+  local model left the app fighting itself to keep up.
+
 ## [0.2.114] — 2026-09-05
 
 ### Fixed
