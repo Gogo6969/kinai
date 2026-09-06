@@ -5,6 +5,39 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.117] — 2026-09-06
+
+### Fixed
+
+- **The bot token stops being written into KinAI's log.** The secret that
+  controls the family's Telegram bot was being copied into
+  `~/.kinai/logs/` every time a call to Telegram failed. 0.2.116 fixed the
+  one place that was known about — the check KinAI makes at startup — but
+  that turned out to be the rarest of them. The message-fetching loop runs
+  every thirty seconds all day, and it was the source of most of the
+  copies actually found on disk: five of the last eight daily log files
+  had the token in them.
+
+  The reason is easy to miss. Telegram's web address contains the token
+  itself, so any failure that quotes the address it was trying to reach —
+  a dropped connection, a timeout, a photo that wouldn't download —
+  quotes the secret along with it. Rather than remembering to strip it at
+  each of the twenty-odd places that report such a failure, KinAI now
+  strips it once, at the point where any Telegram failure is first
+  created. Nothing downstream can leak it by forgetting, including the
+  error text Settings → Telegram → Test shows on screen. The messages
+  themselves are unchanged and still say what went wrong.
+
+### Security
+
+- **Existing log files still contain the token, and so does this
+  project's public history.** This release stops new copies; it cannot
+  remove the ones already written. Anyone who has had a copy of those
+  files — or of the source, where 0.2.116 checked a real token in as test
+  data — can control the bot. Regenerate the token with @BotFather and
+  paste the new one into Settings → Telegram; the old one stops working
+  the moment you do.
+
 ## [0.2.116] — 2026-09-05
 
 ### Fixed
