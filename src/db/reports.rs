@@ -19,7 +19,7 @@ pub struct Report {
     pub id: String,
     /// Who reported it — `db::HOST_PEER` for the host's own flags.
     pub peer_id: String,
-    /// Display name at report time ("Mom", "Wolf"), so the host sees who
+    /// Display name at report time ("Mom", "Alex"), so the host sees who
     /// hit the button even after a peer reconnects with a new id.
     pub reporter: String,
     /// Id of the assistant message on the REPORTER's side. Kept for

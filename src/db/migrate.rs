@@ -310,8 +310,8 @@ pub async fn run(pool: &SqlitePool) -> Result<()> {
 /// `commands::create_thread` has no `Mode::Client` branch and the host
 /// therefore never heard of the thread until its first message. As
 /// `upsert_thread` is INSERT OR IGNORE, that name was permanent: on the
-/// household DB 57 of 61 non-Telegram client threads read "MacM2",
-/// "kris", "Rafael" … instead of their topic.
+/// household DB 57 of 61 non-Telegram client threads read as a device or
+/// sender name instead of their topic.
 ///
 /// The fingerprint below is deliberately narrow — it must never rewrite
 /// a title a human chose:

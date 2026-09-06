@@ -453,12 +453,12 @@ mod system_prompt_tests {
     fn models_roster_names_every_configured_slot() {
         use crate::config::AppConfig;
         let mut cfg = AppConfig::default();
-        cfg.llm.base_url = "http://192.168.1.25:8081".into();
+        cfg.llm.base_url = "http://192.168.1.210:8081".into();
         cfg.llm.model = "Qwen3.8-27B-Q4_K_M".into();
-        cfg.llm_balanced.base_url = "http://192.168.1.91:8084".into();
+        cfg.llm_balanced.base_url = "http://192.168.1.211:8084".into();
         cfg.llm_balanced.model = "Ornith-1.5-35B-A3B".into();
         cfg.llm_balanced.enabled = true;
-        cfg.llm_deep.base_url = "http://192.168.1.91:8086".into();
+        cfg.llm_deep.base_url = "http://192.168.1.211:8086".into();
         cfg.llm_deep.model = "Huihui-Qwen3.6-35B-A3B-abliterated-MTP".into();
         cfg.llm_deep.enabled = true;
         cfg.llm_online.base_url = "https://api.deepseek.com".into();
@@ -491,10 +491,10 @@ mod system_prompt_tests {
         use crate::config::AppConfig;
         let mut cfg = AppConfig::default();
         cfg.llm.model = "old-model-v1".into();
-        cfg.llm.base_url = "http://192.168.1.25:8081".into();
+        cfg.llm.base_url = "http://192.168.1.210:8081".into();
         let before = models_overview(&cfg, &cfg.llm);
         assert!(before.contains("old-model-v1"));
-        // Exactly what Wolf does when he swaps a GGUF: edit config.
+        // Exactly what the owner does when he swaps a GGUF: edit config.
         cfg.llm.model = "brand-new-model-v2".into();
         let after = models_overview(&cfg, &cfg.llm);
         assert!(after.contains("brand-new-model-v2"), "{after}");
@@ -514,9 +514,9 @@ mod system_prompt_tests {
     fn failover_retargets_the_active_slot_line() {
         use crate::config::AppConfig;
         let mut cfg = AppConfig::default();
-        cfg.llm.base_url = "http://192.168.1.25:8081".into();
+        cfg.llm.base_url = "http://192.168.1.210:8081".into();
         cfg.llm.model = "fast-model".into();
-        cfg.llm_deep.base_url = "http://192.168.1.91:8086".into();
+        cfg.llm_deep.base_url = "http://192.168.1.211:8086".into();
         cfg.llm_deep.model = "deep-model".into();
         cfg.llm_deep.enabled = true;
 

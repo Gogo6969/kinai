@@ -186,7 +186,7 @@ const DATETIME_ONLY: &[&str] = &[
 
 /// Deictic present/future phrases that force a search ON THEIR OWN.
 ///
-/// Owner rule (Wolf, 2026-08-12): "Everything with today, this week, or
+/// Owner rule (the owner, 2026-08-12): "Everything with today, this week, or
 /// dates in the future should be searched online." The two-signal
 /// discipline above stays for fuzzy cases, but these words anchor the
 /// question to *now or later* — the one region of time the model's
@@ -433,7 +433,7 @@ pub fn needs_live_data(question: &str) -> bool {
     {
         return true;
     }
-    // Owner rule (Wolf, 2026-08-12), after "best flights this week to
+    // Owner rule (the owner, 2026-08-12), after "best flights this week to
     // Belize" fell through the two-signal net: a deictic present/future
     // phrase — or a current/future year — forces a search WITHOUT a
     // second subject signal. Three containment walls, each one a class
@@ -607,15 +607,15 @@ mod tests {
     #[test]
     fn a_reply_that_actually_shows_pictures_is_not_flagged() {
         assert!(!is_tool_outage_claim(
-            "Here are a few photos of Kathryn Bigelow, the director of The Hurt Locker."
+            "Here are a few photos of Ada Lovelace, the mathematician."
         ));
     }
 
     #[test]
     fn real_outage_replies_are_recognised_as_poison() {
         // Verbatim from the family's own thread. Neither of these tripped
-        // the detector before, which is why KinAI kept telling Kris and
-        // Wolf that search was down long after it came back.
+        // the detector before, which is why KinAI kept telling the family
+        // the owner that search was down long after it came back.
         let poisoner = "I tried to look that up, but my search engine isn't returning any \
 results right now (it's running on your local SearXNG, which came back empty), so I can't \
 give you a live reading for Flushing Meadows.";

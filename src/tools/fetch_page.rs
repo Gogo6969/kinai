@@ -13,7 +13,7 @@
 //! own LAN (the llama servers, the host API, the router). Redirects are
 //! followed manually so every hop is re-checked, the vetted DNS answer
 //! is pinned against rebinding, and IPv6 forms that merely *wrap* an
-//! IPv4 address (`::ffff:192.168.1.25` and friends) are unwrapped before
+//! IPv4 address (`::ffff:192.168.1.210` and friends) are unwrapped before
 //! judging — an adversarial review found that exact bypass reaching the
 //! llama servers.
 
@@ -219,7 +219,7 @@ fn is_private(ip: IpAddr) -> bool {
         IpAddr::V6(v6) => {
             // An IPv6 address that merely WRAPS an IPv4 one must be judged
             // as that IPv4 address: dual-stack sockets route
-            // ::ffff:192.168.1.25 straight to the LAN. Checking only the
+            // ::ffff:192.168.1.210 straight to the LAN. Checking only the
             // v6 prefixes let exactly that through (review finding, high).
             if let Some(v4) = unwrap_v4(v6) {
                 return is_private_v4(v4);
@@ -590,7 +590,7 @@ mod tests {
 
     #[test]
     fn private_addresses_are_refused() {
-        for ip in ["192.168.1.25", "10.0.0.1", "127.0.0.1", "169.254.1.1", "100.64.0.5", "0.0.0.0"] {
+        for ip in ["192.168.1.210", "10.0.0.1", "127.0.0.1", "169.254.1.1", "100.64.0.5", "0.0.0.0"] {
             assert!(is_private(ip.parse().unwrap()), "{ip} must be private");
         }
         for ip in ["142.250.72.14", "1.1.1.1", "2606:4700:4700::1111"] {
@@ -604,13 +604,13 @@ mod tests {
         // an IPv4 host on a dual-stack socket, so every one must be
         // judged as that IPv4 address, not as an opaque v6 address.
         for ip in [
-            "::ffff:192.168.1.25",  // v4-mapped — the llama server
-            "::ffff:192.168.1.91",  // the other llama server
+            "::ffff:192.168.1.210",  // v4-mapped — the llama server
+            "::ffff:192.168.1.211",  // the other llama server
             "::ffff:127.0.0.1",     // loopback / host API
             "::ffff:10.0.0.1",
-            "::192.168.1.25",       // v4-compatible
-            "64:ff9b::192.168.1.25", // NAT64
-            "2002:c0a8:0119::1",    // 6to4 wrapping 192.168.1.25
+            "::192.168.1.210",       // v4-compatible
+            "64:ff9b::192.168.1.210", // NAT64
+            "2002:c0a8:0119::1",    // 6to4 wrapping 192.168.1.210
             "fec0::1",              // deprecated site-local
         ] {
             assert!(is_private(ip.parse().unwrap()), "{ip} must be refused");
@@ -774,7 +774,7 @@ mod tests {
         // The pipeline keys off this marker to stop the model offering a
         // retry that can never work. No network is touched: the scheme
         // and the literal-IP guard both reject before any request.
-        for bad in ["ftp://example.com/x", "http://192.168.1.25:8081/", "http://[::ffff:192.168.1.25]/"] {
+        for bad in ["ftp://example.com/x", "http://192.168.1.210:8081/", "http://[::ffff:192.168.1.210]/"] {
             let err = fetch(bad).await.unwrap_err();
             assert!(err.to_string().starts_with(URL_REFUSED), "{bad} got: {err}");
         }

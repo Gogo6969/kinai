@@ -22,7 +22,7 @@ async fn balanced_turn_uses_tools() {
         system_prompt(&cfg.host.family_name, &cfg.llm_balanced.system_addendum, ""),
         kinai::context::ChatMessage::User {
             content: "Who won the final of the soccer World Championship?".into(),
-            name: Some("Wolf".into()),
+            name: Some("Alex".into()),
             image_data_urls: vec![],
         },
     ];
@@ -52,7 +52,7 @@ async fn followup_scenario(llm: kinai::config::LlmSettings, label: &str) {
         system_prompt(&cfg.host.family_name, "", ""),
         kinai::context::ChatMessage::User {
             content: "Who won the final of the soccer World Championship?".into(),
-            name: Some("Wolf".into()),
+            name: Some("Alex".into()),
             image_data_urls: vec![],
         },
         kinai::context::ChatMessage::Assistant {
@@ -61,7 +61,7 @@ async fn followup_scenario(llm: kinai::config::LlmSettings, label: &str) {
         },
         kinai::context::ChatMessage::User {
             content: "Did the players argue with each other after the final whistle of the game?".into(),
-            name: Some("Wolf".into()),
+            name: Some("Alex".into()),
             image_data_urls: vec![],
         },
     ];
@@ -117,7 +117,7 @@ async fn dead_fast_slot_fails_over_to_balanced() {
         system_prompt(&cfg.host.family_name, "", ""),
         kinai::context::ChatMessage::User {
             content: "In one short sentence: what is the capital of Spain?".into(),
-            name: Some("Wolf".into()),
+            name: Some("Alex".into()),
             image_data_urls: vec![],
         },
     ];
@@ -245,7 +245,7 @@ async fn unknown_fact_scenario(llm: kinai::config::LlmSettings, label: &str) {
         system_prompt(&cfg.host.family_name, "", ""),
         kinai::context::ChatMessage::User {
             content: "Who was Adam Riese?".into(),
-            name: Some("Wolf".into()),
+            name: Some("Alex".into()),
             image_data_urls: vec![],
         },
     ];

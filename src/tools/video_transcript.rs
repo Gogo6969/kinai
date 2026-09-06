@@ -145,10 +145,10 @@ mod tests {
     #[test]
     fn the_lan_and_spoofed_hosts_never_reach_the_service() {
         for bad in [
-            "http://192.168.1.25:8081/v1/models",
+            "http://192.168.1.210:8081/v1/models",
             "http://127.0.0.1:4847/info",
             "http://localhost:8888/search",
-            "http://[::ffff:192.168.1.25]:8081/",
+            "http://[::ffff:192.168.1.210]:8081/",
             "https://youtube.com.evil.tld/watch?v=abc12345",
             "https://evil.tld/watch?v=abc12345",
             "file:///etc/passwd",

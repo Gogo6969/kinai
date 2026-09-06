@@ -57,7 +57,7 @@ There are therefore two locks, and both must hold:
    making the call, because the *model* chooses this tool's argument and a
    hostile page can influence what the model asks for.
 
-Without them, `video_transcript("http://192.168.1.25:8081/v1/models")`
+Without them, `video_transcript("http://192.168.1.210:8081/v1/models")`
 would read a model server through a component built to be helpful. Do not
 widen either list casually; if you add a host, add it in both places and
 extend the tests that assert LAN addresses are refused.
@@ -68,16 +68,16 @@ fetched page can influence.
 
 ## Install (Linux, systemd)
 
-Currently on Olares (`192.168.1.25`), which is always on and already hosts
+Currently on Olares (`192.168.1.210`), which is always on and already hosts
 the model servers.
 
 ```bash
 uv tool install yt-dlp                      # or pipx/pip
-scp transcriptd.py olares@192.168.1.25:~/
+scp transcriptd.py olares@192.168.1.210:~/
 sudo install -m 644 kinai-transcript.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now kinai-transcript
-curl -s http://192.168.1.25:8099/health
+curl -s http://192.168.1.210:8099/health
 ```
 
 The unit runs as an unprivileged user with `ProtectSystem=strict`,
@@ -85,7 +85,7 @@ The unit runs as an unprivileged user with `ProtectSystem=strict`,
 directory — it shells out to `yt-dlp` on URLs that ultimately come from
 chat, so its blast radius is kept small.
 
-Then paste `http://192.168.1.25:8099` into Settings → Tools.
+Then paste `http://192.168.1.210:8099` into Settings → Tools.
 
 ## Known limits
 

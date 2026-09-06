@@ -65,7 +65,7 @@ async fn asking_for_a_link_triggers_a_real_search() {
             system_prompt(&cfg.host.family_name, "", ""),
             ChatMessage::User {
                 content: "Olares One ethernet speed - with link".into(),
-                name: Some("Wolf".into()),
+                name: Some("Alex".into()),
                 image_data_urls: vec![],
             },
             ChatMessage::Assistant {
@@ -74,7 +74,7 @@ async fn asking_for_a_link_triggers_a_real_search() {
             },
             ChatMessage::User {
                 content: "Olares One ethernet speed - with link".into(),
-                name: Some("Wolf".into()),
+                name: Some("Alex".into()),
                 image_data_urls: vec![],
             },
         ];

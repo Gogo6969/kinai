@@ -25,7 +25,7 @@ use crate::context::ChatMessage;
 use crate::tools::registry::{self, ToolRuntime};
 
 /// The button (and the WS request) only exist when the checker can
-/// actually be called: base URL + model + a non-empty API key. Wolf's
+/// actually be called: base URL + model + a non-empty API key. the owner's
 /// rule: "only shows when there are credentials in the fourth model
 /// settings" — an online API without a key can't be it.
 pub fn is_configured(s: &LlmSettings) -> bool {

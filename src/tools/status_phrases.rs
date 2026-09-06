@@ -2,7 +2,7 @@
 //!
 //! A 30-second research turn used to look identical to a hung app: the
 //! phone showed only "typing…" and the desktop showed the raw tool id
-//! ("web search"). Wolf asked for varied, human phrasing so a waiting
+//! ("web search"). the owner asked for varied, human phrasing so a waiting
 //! family member can see that something is actually happening.
 //!
 //! Two rules the phrasing must keep:

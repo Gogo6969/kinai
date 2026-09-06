@@ -247,7 +247,7 @@ mod tests {
 
     /// upsert under (peer_id, key) must overwrite within the SAME peer,
     /// but creating the same key under a DIFFERENT peer must be a
-    /// separate row. That's how Wolf and the kid can both have
+    /// separate row. That's how the owner and the kid can both have
     /// `city` set to different things without colliding.
     #[tokio::test]
     async fn upsert_is_per_peer_not_global() {

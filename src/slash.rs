@@ -919,7 +919,7 @@ mod routing_tests {
         use crate::llm::is_server_down_error;
         // The three real dead-slot shapes seen in production logs.
         assert!(is_server_down_error(
-            "error sending request for url (http://192.168.1.91:8081/v1/chat/completions)"
+            "error sending request for url (http://192.168.1.211:8081/v1/chat/completions)"
         ));
         assert!(is_server_down_error("LLM error 503 Service Unavailable: Loading model"));
         assert!(is_server_down_error(
@@ -1033,7 +1033,7 @@ mod display_name_tests {
 
     #[test]
     fn paths_are_trimmed_to_the_model_name() {
-        // Wolf's three slots, verbatim from what each server reports.
+        // the owner's three slots, verbatim from what each server reports.
         assert_eq!(
             display_model_name("/home/olares/models/Qwen3.6-35B-A3B-MTP-UD-Q4_K_S.gguf"),
             "Qwen3.6-35B-A3B-MTP-UD-Q4_K_S"

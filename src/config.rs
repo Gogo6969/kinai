@@ -220,7 +220,7 @@ pub struct ToolSettings {
     #[serde(default = "default_searxng_url")]
     pub searxng_url: String,
     /// Base URL of the family's own transcript service (see
-    /// `docs/TRANSCRIPT-SERVICE.md`), e.g. `http://192.168.1.25:8099`.
+    /// `docs/TRANSCRIPT-SERVICE.md`), e.g. `http://192.168.1.210:8099`.
     /// Empty — the default — disables the `video_transcript` tool
     /// entirely, so a household that hasn't set one up never sees it.
     ///
@@ -753,7 +753,7 @@ system_addendum = ""
         let slot: LlmSettings = toml::from_str(
             r#"
             provider = "llamacpp"
-            base_url = "http://192.168.1.25:8081"
+            base_url = "http://192.168.1.210:8081"
             model = "Qwen3.8-27B-Q4_K_M"
             context_window = 65536
             temperature = 0.3

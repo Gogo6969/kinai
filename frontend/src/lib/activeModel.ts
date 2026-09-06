@@ -1,7 +1,7 @@
 /**
  * Which slot is answering *right now*, for the composer prompt label.
  *
- * Wolf's ask: "show in the prompt which model is currently set — so that
+ * the owner's ask: "show in the prompt which model is currently set — so that
  * the user always knows which model is right now working for him", and
  * then: "the chat entry in the app should just show fast: balanced: or
  * deep:". So this resolves the slot, not the model id — the per-message

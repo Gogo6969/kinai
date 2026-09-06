@@ -32,7 +32,7 @@ const REFUSAL: &str = "I don’t have live access to current events, and my trai
 goes up to 2024. For the very latest information, please check a news site directly.";
 
 fn user(s: &str) -> ChatMessage {
-    ChatMessage::User { content: s.into(), name: Some("Wolf".into()), image_data_urls: vec![] }
+    ChatMessage::User { content: s.into(), name: Some("Alex".into()), image_data_urls: vec![] }
 }
 
 /// Runs one turn, returns (searched, answer).

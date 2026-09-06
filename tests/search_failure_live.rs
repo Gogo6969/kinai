@@ -64,7 +64,7 @@ async fn a_failed_lookup_is_reported_honestly() {
         system_prompt(&cfg.host.family_name, &cfg.llm_balanced.system_addendum, ""),
         kinai::context::ChatMessage::User {
             content: "What Ethernet speed does the Olares One have? Give me the link.".into(),
-            name: Some("Wolf".into()),
+            name: Some("Alex".into()),
             image_data_urls: vec![],
         },
     ];

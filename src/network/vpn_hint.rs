@@ -3,11 +3,11 @@
 //! Field report 2026-08-12: a family member on Fedora installed Mullvad,
 //! and KinAI went dark with nothing but
 //!
-//!   Couldn't reach the KinAI host at ws://192.168.1.56:4847/kin:
+//!   Couldn't reach the KinAI host at ws://192.168.1.212:4847/kin:
 //!   IO error: Connection timed out (os error 110)
 //!
 //! The host was perfectly healthy — every other device was connected,
-//! and `ip route get 192.168.1.56` on the affected machine correctly
+//! and `ip route get 192.168.1.212` on the affected machine correctly
 //! reported `dev enp3s0`, its ethernet. Routing was never the problem:
 //! Mullvad (like most VPNs) blocks local-network traffic by default as
 //! part of its kill switch, which drops the packets AFTER the routing
@@ -113,7 +113,7 @@ fn is_private(ip: &IpAddr) -> bool {
 
 /// Interface name out of `ip route get` (Linux).
 ///
-/// `192.168.1.56 dev wg0-mullvad table 1836018789 src 10.160.125.87`
+/// `192.168.1.212 dev wg0-mullvad table 1836018789 src 10.160.125.87`
 pub(crate) fn parse_linux_route(out: &str) -> Option<String> {
     let mut it = out.split_whitespace();
     while let Some(tok) = it.next() {
@@ -127,7 +127,7 @@ pub(crate) fn parse_linux_route(out: &str) -> Option<String> {
 /// Interface name out of `route -n get <ip>` (macOS).
 ///
 /// ```text
-///    route to: 192.168.1.56
+///    route to: 192.168.1.212
 ///   interface: utun4
 /// ```
 pub(crate) fn parse_macos_route(out: &str) -> Option<String> {
@@ -226,7 +226,7 @@ enabled, and turn it off to reach devices at home."
 ///
 /// Checked in addition to the route, because the route table alone is
 /// NOT sufficient: a VPN kill switch filters packets AFTER the routing
-/// decision. On the 2026-08-12 Fedora case `ip route get 192.168.1.56`
+/// decision. On the 2026-08-12 Fedora case `ip route get 192.168.1.212`
 /// correctly reported `dev enp3s0` while Mullvad silently dropped the
 /// packets anyway.
 ///
@@ -407,14 +407,14 @@ mod tests {
     #[test]
     fn parses_the_real_mullvad_output() {
         // Verbatim from the Fedora machine that hit this.
-        let out = "192.168.1.56 dev wg0-mullvad table 1836018789 src 10.160.125.87 uid 1000\n    cache mtu 1305\n";
+        let out = "192.168.1.212 dev wg0-mullvad table 1836018789 src 10.160.125.87 uid 1000\n    cache mtu 1305\n";
         assert_eq!(parse_linux_route(out).as_deref(), Some("wg0-mullvad"));
         assert!(is_tunnel_interface("wg0-mullvad"));
     }
 
     #[test]
     fn a_healthy_linux_route_is_not_a_tunnel() {
-        let out = "192.168.1.56 dev enp3s0 src 192.168.1.42 uid 1000\n    cache\n";
+        let out = "192.168.1.212 dev enp3s0 src 192.168.1.42 uid 1000\n    cache\n";
         let iface = parse_linux_route(out).unwrap();
         assert_eq!(iface, "enp3s0");
         assert!(!is_tunnel_interface(&iface), "ethernet must not read as a tunnel");
@@ -422,11 +422,11 @@ mod tests {
 
     #[test]
     fn parses_macos_route_output() {
-        let vpn = "   route to: 192.168.1.56\ndestination: 192.168.1.56\n  interface: utun4\n";
+        let vpn = "   route to: 192.168.1.212\ndestination: 192.168.1.212\n  interface: utun4\n";
         assert_eq!(parse_macos_route(vpn).as_deref(), Some("utun4"));
         assert!(is_tunnel_interface("utun4"));
 
-        let lan = "   route to: 192.168.1.56\n  interface: en0\n";
+        let lan = "   route to: 192.168.1.212\n  interface: en0\n";
         assert_eq!(parse_macos_route(lan).as_deref(), Some("en0"));
         assert!(!is_tunnel_interface("en0"), "en0 is the Mac's Wi-Fi");
     }
@@ -441,7 +441,7 @@ mod tests {
 
     #[test]
     fn only_private_addresses_qualify() {
-        assert!(is_private(&"192.168.1.56".parse().unwrap()));
+        assert!(is_private(&"192.168.1.212".parse().unwrap()));
         assert!(is_private(&"10.0.0.5".parse().unwrap()));
         assert!(is_private(&"172.16.4.9".parse().unwrap()));
         // A host reachable over the internet is not a LAN-blocking case.
@@ -455,8 +455,8 @@ mod tests {
     #[test]
     fn pulls_the_ip_out_of_a_ws_url() {
         assert_eq!(
-            host_ip("ws://192.168.1.56:4847/kin").map(|i| i.to_string()),
-            Some("192.168.1.56".into())
+            host_ip("ws://192.168.1.212:4847/kin").map(|i| i.to_string()),
+            Some("192.168.1.212".into())
         );
         assert_eq!(
             host_ip("wss://10.0.0.9/kin").map(|i| i.to_string()),
@@ -487,7 +487,7 @@ mod interface_tests {
     fn stock_mac_without_a_vpn_reports_no_tunnel() {
         let out = "\
 en0: flags=8863<UP,BROADCAST,SMART,RUNNING,SIMPLEX,MULTICAST> mtu 1500\n\
-\tinet 192.168.1.56 netmask 0xffffff00 broadcast 192.168.1.255\n\
+\tinet 192.168.1.212 netmask 0xffffff00 broadcast 192.168.1.255\n\
 utun0: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1500\n\
 \tinet6 fe80::ce81:b1c:bd2c:69e%utun0 prefixlen 64 scopeid 0x10\n\
 utun3: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1000\n\
@@ -504,7 +504,7 @@ utun3: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1000\n\
     fn a_real_macos_vpn_is_still_detected() {
         let out = "\
 en0: flags=8863<UP,BROADCAST,RUNNING> mtu 1500\n\
-\tinet 192.168.1.56 netmask 0xffffff00\n\
+\tinet 192.168.1.212 netmask 0xffffff00\n\
 utun4: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1280\n\
 \tinet 10.64.0.2 --> 10.64.0.2 netmask 0xffffffff\n";
         let vpns: Vec<_> = parse_macos_ifconfig(out)
@@ -519,7 +519,7 @@ utun4: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1280\n\
     /// up with a routable address, so check 2 must catch it.
     #[test]
     fn mullvad_kill_switch_case_is_detected() {
-        let route = "192.168.1.56 dev enp3s0 src 192.168.1.218 uid 1000\n    cache\n";
+        let route = "192.168.1.212 dev enp3s0 src 192.168.1.218 uid 1000\n    cache\n";
         assert!(!is_tunnel_interface(&parse_linux_route(route).unwrap()));
 
         let addrs = "\

@@ -821,7 +821,7 @@ async fn run_chat_turn(
     // has already no-opped against a row that did not exist yet. Since
     // `upsert_thread` is INSERT OR IGNORE, whatever we write now is
     // permanent: using `sender` gave every family device a sidebar full of
-    // "MacM2" (1 of 61 non-Telegram client threads ever got a real title,
+    // the device name (1 of 61 non-Telegram client threads ever got a real title,
     // vs 26 of 26 eligible on the host, where the row already exists when
     // the rename lands). `sender` remains the fallback for empty content
     // (an attachment-only turn), so an admin reading the host DB can still

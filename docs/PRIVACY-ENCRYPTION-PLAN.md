@@ -15,7 +15,7 @@ The rollout is people-by-people, not all-at-once:
 
 1. Version ships. Everyone updates. Nothing changes for anyone — the
    first-start question appears and "skip" leaves you where you are.
-2. Wolf opts in first, on his own account. If sealing has a bug, it is
+2. the owner opts in first, on his own account. If sealing has a bug, it is
    his data and he is the one who can diagnose it.
 3. A few days of ordinary use: chat, memory, search, reconnect, a second
    device.

@@ -7,7 +7,7 @@ itself. Deliberately narrow:
   * ONLY recognised video hosts are accepted. This service sits at a LAN
     address, so it is a door around fetch_page's SSRF guard — without a
     host allowlist a hostile page could get the model to call it with
-    http://192.168.1.25:8081/... and read the model servers. The
+    http://192.168.1.210:8081/... and read the model servers. The
     allowlist is the security property; do not widen it casually.
   * One yt-dlp at a time. YouTube rate-limits per IP and a household
     shares one; a 429 was reproduced during development.

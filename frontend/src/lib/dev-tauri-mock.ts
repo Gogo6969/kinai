@@ -145,7 +145,7 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
     cfg.setup_completed = true;
     // A llama.cpp id in its ugliest real-world form — a filesystem
     // path from another machine — so the display-name handling stays
-    // visible in the mock (Wolf's real fast slot looks exactly like
+    // visible in the mock (the owner's real fast slot looks exactly like
     // this).
     cfg.llm.model = '/home/olares/models/local-fast-8b-Q4_K_M.gguf';
     if (scenario === 'host-three-slots') {

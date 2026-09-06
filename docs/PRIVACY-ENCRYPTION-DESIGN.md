@@ -4,7 +4,7 @@ Status: **proposal, not implemented.** Written 2026-08-12.
 
 ## 1. Why do this
 
-Wolf told the family he does not read their questions, and he does not.
+the owner told the family he does not read their questions, and he does not.
 Nothing here is a remediation for anything that happened; the point is
 to make the software enforce what he already practises, so the promise
 rests on the design instead of on his restraint.
@@ -19,7 +19,7 @@ hands.
 This is not about a stolen laptop, and the app's existing wording stays
 as it is: it describes the interface accurately and always has.
 
-## 2. Threat model (Wolf's, stated precisely)
+## 2. Threat model (the owner's, stated precisely)
 
 **In scope — must become impossible:**
 
@@ -33,7 +33,7 @@ as it is: it describes the interface accurately and always has.
 **Explicitly out of scope, by the host owner's own decision:**
 
 * The host process necessarily sees each message in RAM while it builds
-  the prompt and streams the answer. Wolf could add logging and capture
+  the prompt and streams the answer. the owner could add logging and capture
   it. He has decided he never will. That is an intention-based boundary
   he accepts, and encryption is not expected to cover it.
 
@@ -124,7 +124,7 @@ than glossed over.
 
 ## 5. Decisions taken
 
-**Encryption is opt-in, per person** (Wolf, 2026-08-12). On first
+**Encryption is opt-in, per person** (the owner, 2026-08-12). On first
 start of the new version each family member is asked once:
 
 * **Set a password** → their conversations, summaries and remembered
@@ -133,7 +133,7 @@ start of the new version each family member is asked once:
 * **Skip it** → everything is stored as it is today, readable on the
   family computer.
 
-Rationale: not everyone wants this. Wolf's wife would decline, and
+Rationale: not everyone wants this. the owner's wife would decline, and
 forcing a password on someone who does not care about it buys nothing
 and costs support calls. A mixed household is expected and supported —
 the database will hold plaintext rows for some peers and sealed rows for

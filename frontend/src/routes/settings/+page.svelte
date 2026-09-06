@@ -1467,7 +1467,7 @@
           <input
             class="kin-field font-mono w-full mt-1"
             bind:value={tools.transcript_url}
-            placeholder="http://192.168.1.25:8099 (leave empty to disable)"
+            placeholder="http://192.168.1.210:8099 (leave empty to disable)"
             autocomplete="off"
             spellcheck="false"
           />

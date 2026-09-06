@@ -292,7 +292,7 @@ mod exa_request_tests {
     /// has no error, no log line and no test to catch it but this one.
     #[test]
     fn the_request_asks_for_images_the_way_exa_still_honours() {
-        let body = exa_image_request("Kathryn Bigelow", 5);
+        let body = exa_image_request("Ada Lovelace", 5);
         let contents = &body["contents"];
         assert_eq!(
             contents["extras"]["imageLinks"], 1,
@@ -302,7 +302,7 @@ mod exa_request_tests {
             contents.get("images").is_none(),
             "`contents.images` is the deprecated form Exa silently ignores"
         );
-        assert_eq!(body["query"], "Kathryn Bigelow");
+        assert_eq!(body["query"], "Ada Lovelace");
     }
 
     /// The fallback only runs when Exa is broken, so it would otherwise
@@ -311,7 +311,7 @@ mod exa_request_tests {
     #[tokio::test]
     #[ignore = "hits the live Wikimedia Commons API"]
     async fn the_fallback_actually_returns_pictures() {
-        let out = super::wikimedia_commons("Kathryn Bigelow", 3)
+        let out = super::wikimedia_commons("Ada Lovelace", 3)
             .await
             .expect("Commons lookup should succeed");
         assert!(

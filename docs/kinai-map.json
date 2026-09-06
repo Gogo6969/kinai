@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-09-05T23:19:28+00:00",
-  "version": "0.2.116",
+  "generated_at": "2026-09-06T16:10:50+00:00",
+  "version": "0.2.117",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 297,
-    "head": "e3875d9"
+    "commits": 301,
+    "head": "4acd7d3"
   },
   "totals": {
     "rust_files": 63,
-    "rust_lines": 28143,
+    "rust_lines": 28299,
     "frontend_files": 34,
     "frontend_lines": 12218,
-    "unit_tests": 244,
+    "unit_tests": 249,
     "integration_test_files": 12,
-    "releases": 108,
-    "tags": 102
+    "releases": 109,
+    "tags": 104
   },
   "areas": [
     {
@@ -178,7 +178,7 @@
     {
       "path": "src/db/messages.rs",
       "area": "db",
-      "lines": 993,
+      "lines": 994,
       "doc": "Thread + message persistence (async via SQLx).",
       "tests": 15
     },
@@ -353,9 +353,9 @@
     {
       "path": "src/telegram/api.rs",
       "area": "telegram",
-      "lines": 534,
+      "lines": 639,
       "doc": "Thin reqwest wrapper around the Telegram Bot API.",
-      "tests": 0
+      "tests": 3
     },
     {
       "path": "src/telegram/echo.rs",
@@ -374,14 +374,14 @@
     {
       "path": "src/telegram/mod.rs",
       "area": "telegram",
-      "lines": 485,
+      "lines": 524,
       "doc": "Telegram bot integration — host-side only.",
-      "tests": 9
+      "tests": 11
     },
     {
       "path": "src/telegram/polling.rs",
       "area": "telegram",
-      "lines": 58,
+      "lines": 69,
       "doc": "getUpdates long-poll loop. Runs forever (until aborted by the supervisor in mod.rs) and feeds each incoming update into `router::handle_update`.",
       "tests": 0
     },
@@ -524,7 +524,7 @@
       "path": "frontend/src/lib/activeModel.ts",
       "kind": "lib",
       "lines": 97,
-      "doc": "Which slot is answering *right now*, for the composer prompt label. Wolf's ask: \"show in the prompt which model is currently set — so that the user always knows which model is right now working for him\", and then: \"the chat entry in the app should just show fast: balanced: or deep:\". So this resolves the slot, not the model id — the per-message footer already carries the full model name and stays "
+      "doc": "Which slot is answering *right now*, for the composer prompt label. the owner's ask: \"show in the prompt which model is currently set — so that the user always knows which model is right now working for him\", and then: \"the chat entry in the app should just show fast: balanced: or deep:\". So this resolves the slot, not the model id — the per-message footer already carries the full model name and s"
     },
     {
       "path": "frontend/src/lib/api.ts",
@@ -1088,6 +1088,24 @@
   },
   "history": [
     {
+      "version": "0.2.117",
+      "date": "2026-09-06",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "The bot token stops being written into KinAI's log.",
+            "detail": "The secret that controls the family's Telegram bot was being copied into `~/.kinai/logs/` every time a call to Telegram failed. 0.2.116 fixed the one place that was known about — the check KinAI makes at startup — but that turned out to be the rarest of them. The message-fetching loop runs every thirty seconds all day, and it was the source of most of the copies actually found on disk: five of the last eight daily log files had the token in them. The reason is easy to miss. Telegram's web address contains the token itself, so any failure that quotes the address it was trying to reach — a dropped connection, a timeout, a photo that wouldn't download — quotes the secret along with it. Rather than remembering to strip it at each of the twenty-odd places that report such a failure, KinAI now strips it once, at the point where any Telegram failure is first created. Nothing downstream can leak it by forgetting, including the error text Settings → Telegram → Test shows on screen. The messages themselves are unchanged and still say what went wrong."
+          }
+        ],
+        "Security": [
+          {
+            "title": "Existing log files still contain the token, and so does this project's public history.",
+            "detail": "This release stops new copies; it cannot remove the ones already written. Anyone who has had a copy of those files — or of the source, where 0.2.116 checked a real token in as test data — can control the bot. Regenerate the token with @BotFather and paste the new one into Settings → Telegram; the old one stops working the moment you do."
+          }
+        ]
+      }
+    },
+    {
       "version": "0.2.116",
       "date": "2026-09-05",
       "sections": {
@@ -1118,7 +1136,7 @@
         "Fixed": [
           {
             "title": "Asking for a picture returns pictures again.",
-            "detail": "\"Find a photo of Kathryn Bigelow\" came back with nothing found and a suggestion to try Google Images — and it had been doing that for every picture request, of anyone or anything. The image search asks Exa to attach each result page's main photo, and Exa quietly stopped honouring the way KinAI was asking: it kept answering normally and simply left the photo out, so KinAI filtered away every result and truthfully reported finding none. Nothing failed, nothing was logged as an error, and the host's own record showed the search *succeeding* — which is why this survived unnoticed until someone asked for a photo of a person. KinAI now asks the way Exa still honours, and pictures come back: verified for a film director, a musician, a landmark asked for in German, and a red panda. Two further changes so the same silence cannot repeat. If Exa returns no pictures at all — a future API change, an empty result, or credits running out — KinAI now falls back to Wikimedia Commons instead of giving up, the same free source it already uses when the household runs DuckDuckGo or SearXNG. And the \"I couldn't find any pictures\" reply is now recognised as a past failure rather than a standing fact, so it stops being repeated in that conversation once pictures work again — the same protection added for search outages and video transcripts."
+            "detail": "\"Find a photo of a film director\" came back with nothing found and a suggestion to try Google Images — and it had been doing that for every picture request, of anyone or anything. The image search asks Exa to attach each result page's main photo, and Exa quietly stopped honouring the way KinAI was asking: it kept answering normally and simply left the photo out, so KinAI filtered away every result and truthfully reported finding none. Nothing failed, nothing was logged as an error, and the host's own record showed the search *succeeding* — which is why this survived unnoticed until someone asked for a photo of a person. KinAI now asks the way Exa still honours, and pictures come back: verified for a film director, a musician, a landmark asked for in German, and a red panda. Two further changes so the same silence cannot repeat. If Exa returns no pictures at all — a future API change, an empty result, or credits running out — KinAI now falls back to Wikimedia Commons instead of giving up, the same free source it already uses when the household runs DuckDuckGo or SearXNG. And the \"I couldn't find any pictures\" reply is now recognised as a past failure rather than a standing fact, so it stops being repeated in that conversation once pictures work again — the same protection added for search outages and video transcripts."
           }
         ]
       }
@@ -1154,7 +1172,7 @@
         "Fixed": [
           {
             "title": "Conversations on family devices are named after the topic again, not the device.",
-            "detail": "On a phone or laptop nearly every conversation in the sidebar was titled with the device's own name — \"MacM2\" over and over — while the same app on the host named them properly. Measured across the household: 1 of 133 conversations started on a family device ever got a real title, against 26 of 47 on the host. The cause is that a client's conversation only reaches the host when its first message arrives, so the rename the app sends a moment earlier lands on a conversation the host has not heard of yet and is quietly dropped; the host then created the row named after whoever sent it, and never renamed it. The host now takes the title from the message itself, using the same rules the app uses, so both agree. Existing conversations are repaired on first launch: 57 of them get their topic back, taken from the message that started them. Conversations you renamed by hand are left exactly as you named them, and so are the Telegram ones."
+            "detail": "On a phone or laptop nearly every conversation in the sidebar was titled with the device's own name — over and over — while the same app on the host named them properly. Measured across the household: 1 of 133 conversations started on a family device ever got a real title, against 26 of 47 on the host. The cause is that a client's conversation only reaches the host when its first message arrives, so the rename the app sends a moment earlier lands on a conversation the host has not heard of yet and is quietly dropped; the host then created the row named after whoever sent it, and never renamed it. The host now takes the title from the message itself, using the same rules the app uses, so both agree. Existing conversations are repaired on first launch: 57 of them get their topic back, taken from the message that started them. Conversations you renamed by hand are left exactly as you named them, and so are the Telegram ones."
           }
         ]
       }
@@ -1206,7 +1224,7 @@
           },
           {
             "title": "KinAI can now read links — including PDFs.",
-            "detail": "A new `fetch_page` tool downloads a URL the user gives (or one found in search results) and returns its readable text: web pages are stripped to prose, and online PDF papers/reports get full text extraction through the same parser that chat attachments use. Until now a linked 50-page paper reached the model as three search-snippet sentences — it honestly answered \"I can't open PDF files\". Enabled with the Web search toggle (same privacy surface). Safety, after an adversarial review of the first draft found real holes in it: only public http/https URLs are fetched; private and internal addresses are refused before any request, including the IPv6 forms that merely wrap an IPv4 address (`::ffff:192.168.1.25` reached the family's own model servers in the first draft); every redirect hop is re-checked and the vetted DNS answer is pinned against rebinding; a fetched page is handed to the model fenced and labelled as untrusted data, so a page cannot instruct it to leak the conversation; and PDF parsing runs one-at-a-time under a timeout, since a crafted PDF can otherwise allocate gigabytes. The same review caught the feature under-delivering: the pipeline's per-result ceiling was cutting fetched documents to their first two pages, so a \"full text\" fetch reached the model as roughly 4% of the paper."
+            "detail": "A new `fetch_page` tool downloads a URL the user gives (or one found in search results) and returns its readable text: web pages are stripped to prose, and online PDF papers/reports get full text extraction through the same parser that chat attachments use. Until now a linked 50-page paper reached the model as three search-snippet sentences — it honestly answered \"I can't open PDF files\". Enabled with the Web search toggle (same privacy surface). Safety, after an adversarial review of the first draft found real holes in it: only public http/https URLs are fetched; private and internal addresses are refused before any request, including the IPv6 forms that merely wrap an IPv4 address (`::ffff:192.168.1.210` reached the family's own model servers in the first draft); every redirect hop is re-checked and the vetted DNS answer is pinned against rebinding; a fetched page is handed to the model fenced and labelled as untrusted data, so a page cannot instruct it to leak the conversation; and PDF parsing runs one-at-a-time under a timeout, since a crafted PDF can otherwise allocate gigabytes. The same review caught the feature under-delivering: the pipeline's per-result ceiling was cutting fetched documents to their first two pages, so a \"full text\" fetch reached the model as roughly 4% of the paper."
           }
         ],
         "Fixed": [
@@ -3316,6 +3334,14 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.117",
+      "date": "2026-09-06"
+    },
+    {
+      "tag": "v0.2.116",
+      "date": "2026-09-05"
+    },
     {
       "tag": "v0.2.115",
       "date": "2026-09-05"

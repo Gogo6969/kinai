@@ -588,13 +588,13 @@ mod image_strip_tests {
             ChatMessage::System { content: "sys".into() },
             ChatMessage::User {
                 content: "look at this".into(),
-                name: Some("Wolf".into()),
+                name: Some("Alex".into()),
                 image_data_urls: vec!["data:image/png;base64,AAAA".into()],
             },
             ChatMessage::Assistant { content: "nice pic".into(), tool_calls: vec![] },
             ChatMessage::User {
                 content: "/deep test".into(),
-                name: Some("Wolf".into()),
+                name: Some("Alex".into()),
                 image_data_urls: vec![],
             },
         ];
@@ -723,13 +723,13 @@ mod vision_history_tests {
             ChatMessage::System { content: "sys".into() },
             ChatMessage::User {
                 content: "first pic".into(),
-                name: Some("Wolf".into()),
+                name: Some("Alex".into()),
                 image_data_urls: vec!["data:image/png;base64,OLD".into()],
             },
             ChatMessage::Assistant { content: "ok".into(), tool_calls: vec![] },
             ChatMessage::User {
                 content: "what do you see?".into(),
-                name: Some("Wolf".into()),
+                name: Some("Alex".into()),
                 image_data_urls: vec!["data:image/png;base64,CURRENT".into()],
             },
         ];

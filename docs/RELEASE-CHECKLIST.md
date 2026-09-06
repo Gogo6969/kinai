@@ -69,7 +69,7 @@ and "published".
       that is configured, because that path differs: it forces a web
       search, and forcing is the part providers disagree about.
 
-      Wolf's rule, 2026-08-12, after 0.2.98 shipped with `/online`
+      the owner's rule, 2026-08-12, after 0.2.98 shipped with `/online`
       broken for exactly this: the forced-search round sends
       `tool_choice: "required"`, which llama.cpp and vLLM honour and
       DeepSeek's thinking mode rejects with a 400. Every live-data
@@ -129,7 +129,7 @@ and "published".
       links go in a **reply**, never in tweet 1) — only after step 5's
       public-endpoint check passed. **At most ONE post per day**: on
       multi-release days, skip per-release posts and publish a single
-      EVENING post covering the day's newest version (Wolf's rule,
+      EVENING post covering the day's newest version (the owner's rule,
       2026-07-23).
 
 ## If a release must be amended

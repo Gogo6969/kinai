@@ -100,7 +100,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Fixed
 
 - **Asking for a picture returns pictures again.** "Find a photo of
-  Kathryn Bigelow" came back with nothing found and a suggestion to try
+  a film director" came back with nothing found and a suggestion to try
   Google Images — and it had been doing that for every picture request,
   of anyone or anything. The image search asks Exa to attach each result
   page's main photo, and Exa quietly stopped honouring the way KinAI was
@@ -164,7 +164,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - **Conversations on family devices are named after the topic again, not
   the device.** On a phone or laptop nearly every conversation in the
-  sidebar was titled with the device's own name — "MacM2" over and over —
+  sidebar was titled with the device's own name — over and over —
   while the same app on the host named them properly. Measured across the
   household: 1 of 133 conversations started on a family device ever got a
   real title, against 26 of 47 on the host. The cause is that a client's
@@ -291,7 +291,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Safety, after an adversarial review of the first draft found real
   holes in it: only public http/https URLs are fetched; private and
   internal addresses are refused before any request, including the IPv6
-  forms that merely wrap an IPv4 address (`::ffff:192.168.1.25` reached
+  forms that merely wrap an IPv4 address (`::ffff:192.168.1.210` reached
   the family's own model servers in the first draft); every redirect hop
   is re-checked and the vetted DNS answer is pinned against rebinding;
   a fetched page is handed to the model fenced and labelled as untrusted

@@ -104,7 +104,7 @@ pub async fn create_thread(
 /// silently no-ops on a missing row. The row is then created here, and
 /// because `upsert_thread` is INSERT OR IGNORE the first title sticks
 /// forever. Titling it after the sender gave every family device a
-/// sidebar full of "MacM2": of the 61 non-Telegram client threads in the
+/// sidebar full of one device name: of the 61 non-Telegram client threads in the
 /// family DB exactly 1 ever got a real auto-title (57 carry the device
 /// name, 3 were renamed by hand days later), while on the host — where
 /// `create_thread` has already written the row the rename lands on — 26
@@ -869,30 +869,31 @@ pub async fn question_answer_for_fact_check(
 mod thread_title_tests {
     use super::derive_thread_title;
 
-    /// Verbatim first messages from the family DB. Before the fix every
-    /// one of these produced the sender's device name ("MacM2" / "kris")
+    /// First messages of the three shapes seen in a household DB (a plain
+    /// question, a long lowercase sentence, a long comma-joined sentence).
+    /// Before the fix every one of these produced the sender's device name
     /// because the host had nothing else to title the row with.
     #[test]
     fn real_client_messages_get_their_topic() {
-        // 3wzymt, 2026-08-18 — the user later renamed this "Universe" by hand.
+        // A plain question: the trailing "?" is dropped, nothing else changes.
         assert_eq!(
-            derive_thread_title("What is the most recent discovery about our universe?").unwrap(),
-            "What is the most recent discovery about our universe"
+            derive_thread_title("What is the tallest mountain on Mars?").unwrap(),
+            "What is the tallest mountain on Mars"
         );
-        // t5qdse, 2026-08-03 — the ONE thread whose auto-title ever landed.
-        // The host must reproduce the client's 47-char + ellipsis cut exactly.
+        // A long lowercase sentence with no early break: the host must
+        // reproduce the client's 47-char + ellipsis cut exactly.
         assert_eq!(
-            derive_thread_title("what the best ready to use green coolant for kia sorento 2017 svl")
+            derive_thread_title("what is the best ready to use coolant for a small hatchback from 2017")
                 .unwrap(),
-            "what the best ready to use green coolant for ki…"
+            "what is the best ready to use coolant for a sma…"
         );
-        // 3wzymt, 2026-08-24 — long, no early sentence break.
+        // Long, comma-joined, no early sentence break.
         let t = derive_thread_title(
-            "In our community, Sunset Lakes, an insurance represenative told us that we need to \
-             carry our own policy",
+            "In our building, Maple Court, the caretaker told us that we need to arrange \
+             our own bicycle storage",
         )
         .unwrap();
-        assert!(t.starts_with("In our community, Sunset Lakes"), "got {t:?}");
+        assert!(t.starts_with("In our building, Maple Court"), "got {t:?}");
         assert!(t.ends_with('…'), "long input must be elided: {t:?}");
     }
 

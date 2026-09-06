@@ -1,6 +1,6 @@
 //! SearXNG through KinAI's real dispatcher.
 //!
-//! Wolf runs an instance locally; this checks the integration against it
+//! the owner runs an instance locally; this checks the integration against it
 //! rather than a fixture, because the two things that actually break are
 //! environmental: the instance must have the JSON output format enabled
 //! (SearXNG ships with it OFF and answers HTML, which would otherwise

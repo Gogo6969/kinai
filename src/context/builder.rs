@@ -713,7 +713,7 @@ mod cache_stability_tests {
         let t = db.create_thread("host", Some("t")).await.unwrap();
 
         let m1 = db
-            .append_message(&t.id, "user", "Wolf", "what colour is grass?", &[])
+            .append_message(&t.id, "user", "Alex", "what colour is grass?", &[])
             .await
             .unwrap();
         let ctx1 = build_context(&db, &cfg, &llm, "host", &t.id, &m1).await.unwrap();
@@ -722,7 +722,7 @@ mod cache_stability_tests {
             .await
             .unwrap();
         let m2 = db
-            .append_message(&t.id, "user", "Wolf", "and the sky?", &[])
+            .append_message(&t.id, "user", "Alex", "and the sky?", &[])
             .await
             .unwrap();
         let ctx2 = build_context(&db, &cfg, &llm, "host", &t.id, &m2).await.unwrap();
