@@ -26,6 +26,9 @@ use crate::network::protocol::Envelope;
 use crate::SharedState;
 
 use super::api::{BotApi, PhotoSize, TelegramMessage, TelegramUpdate};
+use std::collections::HashMap;
+use std::sync::Arc;
+use once_cell::sync::Lazy;
 
 pub async fn handle_update<R: Runtime>(
     api: &BotApi,
@@ -152,6 +155,17 @@ pub async fn handle_update<R: Runtime>(
     }
 
     // Routed — run the chat turn.
+    // One turn at a time per chat. Every update is spawned into its own
+    // task (polling.rs) so one slow answer cannot stall the poll loop — but
+    // that also let two messages from the same chat run concurrently. The
+    // second turn then built its context before the first had replied, saw
+    // an unanswered question followed by a new one, and answered the OLD
+    // one: on 2026-09-06 a follow-up sent 31 s into a slow deep-slot turn
+    // came back with the previous question's answer. Holding this lock for
+    // the duration of the turn means the follow-up's context includes the
+    // reply it was following up on. Other chats are unaffected.
+    let turn_lock = chat_turn_lock(chat_id);
+    let _turn_guard = turn_lock.lock().await;
     if let Err(e) = run_turn_for_peer(api, state, app, chat_id, &peer_id, &text_or_caption, msg)
         .await
     {
@@ -1597,4 +1611,65 @@ pub fn telegram_thread_id_for_peer(peer_id: &str) -> String {
         ((lo >> 48) & 0xffff) as u16,
         lo & 0xffff_ffff_ffff
     )
+}
+
+/// Per-chat turn locks. Entries are never removed: there is one per family
+/// member who has ever messaged, which is a handful, and a stale entry
+/// costs one `Arc<Mutex<()>>`.
+static CHAT_TURN_LOCKS: Lazy<parking_lot::Mutex<HashMap<i64, Arc<tokio::sync::Mutex<()>>>>> =
+    Lazy::new(Default::default);
+
+/// The lock that serialises turns for one Telegram chat.
+pub(crate) fn chat_turn_lock(chat_id: i64) -> Arc<tokio::sync::Mutex<()>> {
+    CHAT_TURN_LOCKS.lock().entry(chat_id).or_default().clone()
+}
+
+#[cfg(test)]
+mod turn_ordering_tests {
+    use super::chat_turn_lock;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    /// The overlap that produced a wrong answer: a slow first turn, a
+    /// follow-up arriving while it runs. The follow-up must not start
+    /// until the first has finished.
+    #[tokio::test]
+    async fn a_follow_up_waits_for_the_slow_turn_before_it() {
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let chat = 4242;
+        let o1 = order.clone();
+        let first = tokio::spawn(async move {
+            let lock = chat_turn_lock(chat);
+            let _g = lock.lock().await;
+            o1.lock().unwrap().push("first:start");
+            tokio::time::sleep(Duration::from_millis(150)).await; // a slow slot answering
+            o1.lock().unwrap().push("first:end");
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await; // the follow-up lands mid-turn
+        let o2 = order.clone();
+        let second = tokio::spawn(async move {
+            let lock = chat_turn_lock(chat);
+            let _g = lock.lock().await;
+            o2.lock().unwrap().push("second:start");
+        });
+        first.await.unwrap();
+        second.await.unwrap();
+        assert_eq!(*order.lock().unwrap(), vec!["first:start", "first:end", "second:start"]);
+    }
+
+    /// Serialising one chat must not make the family wait on each other.
+    #[tokio::test]
+    async fn other_chats_are_not_held_up() {
+        let a = chat_turn_lock(1);
+        let b = chat_turn_lock(2);
+        let _held = a.lock().await;
+        let got = tokio::time::timeout(Duration::from_millis(100), b.lock()).await;
+        assert!(got.is_ok(), "a different chat's turn was blocked");
+    }
+
+    #[test]
+    fn the_same_chat_always_gets_the_same_lock() {
+        assert!(Arc::ptr_eq(&chat_turn_lock(7), &chat_turn_lock(7)));
+        assert!(!Arc::ptr_eq(&chat_turn_lock(7), &chat_turn_lock(8)));
+    }
 }
