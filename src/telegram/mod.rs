@@ -136,7 +136,13 @@ fn is_token_rejection(msg: &str) -> bool {
 /// a failed start. This change retries, which without redaction would write
 /// the token out every 60 seconds for as long as the network is down — a
 /// standing secret in a file that gets attached to bug reports.
-fn redact_token(msg: &str) -> String {
+///
+/// The primary caller is `api::scrub`, which runs every Bot API error
+/// through this at the boundary — see the reasoning there for why the
+/// startup path alone was not enough. It stayed the startup path only in
+/// 0.2.116, and the log kept collecting tokens from `getUpdates`, which
+/// fails far more often than `getMe` ever does.
+pub(crate) fn redact_token(msg: &str) -> String {
     // Token shape is <digits>:<base64url-ish secret>, always preceded by
     // "bot" in the URL path.
     let mut out = String::with_capacity(msg.len());
@@ -440,16 +446,49 @@ mod startup_tests {
     #[test]
     fn the_bot_token_never_reaches_the_log() {
         use super::redact_token;
-        // Verbatim shape from the host's own log on 2026-09-05 — this is
-        // how the token got written to disk in the first place.
-        let real = "getMe send: error sending request for url \
-                    (https://api.telegram.org/bot8982506315:AAFCFidYDZ4ToXlAKXfp4HzscM9tgFnuOjI/getMe)";
-        let safe = redact_token(real);
-        assert!(!safe.contains("AAFCFidYDZ4ToXlAKXfp4HzscM9tgFnuOjI"), "secret survived: {safe}");
-        assert!(!safe.contains("8982506315:"), "bot id + secret survived: {safe}");
+        // The shape the host's own log wrote on 2026-09-05 — this is how
+        // the token got onto disk in the first place. The token below is a
+        // fake with the real layout: 0.2.116 pasted the family's actual
+        // token in here, and that commit is public.
+        let leaked = "getMe send: error sending request for url \
+                      (https://api.telegram.org/bot1234567890:AAFakeFakeFakeFakeFakeFakeFakeFakeFak/getMe)";
+        let safe = redact_token(leaked);
+        assert!(!safe.contains("AAFakeFakeFakeFakeFakeFakeFakeFakeFak"), "secret survived: {safe}");
+        assert!(!safe.contains("1234567890:"), "bot id + secret survived: {safe}");
         assert!(safe.contains("/bot<redacted>/getMe"), "lost the useful shape: {safe}");
         // The rest of the message must survive — it is the diagnostic.
         assert!(safe.contains("error sending request"));
+    }
+
+    #[test]
+    fn the_bot_token_never_reaches_the_log_from_getupdates() {
+        use super::redact_token;
+        // 0.2.116 redacted only the startup getMe, but four of the five
+        // tokens that actually landed in ~/.kinai/logs/ came from the poll
+        // loop. This is that error's shape, as polling.rs formats it:
+        // anyhow's `{e:?}` prints the context line, then the chain.
+        let leaked = "telegram getUpdates failed: getUpdates send: error sending request for url \
+                      (https://api.telegram.org/bot1234567890:AAFakeFakeFakeFakeFakeFakeFakeFakeFak/getUpdates): \
+                      Connection reset by peer (os error 54) — backing off 2s";
+        let safe = redact_token(leaked);
+        assert!(!safe.contains("AAFakeFakeFakeFakeFakeFakeFakeFakeFak"), "secret survived: {safe}");
+        assert!(!safe.contains("1234567890:"), "bot id + secret survived: {safe}");
+        assert!(safe.contains("/bot<redacted>/getUpdates"), "lost the useful shape: {safe}");
+        // Everything a person reads the line for must survive.
+        assert!(safe.contains("Connection reset by peer"), "lost the cause: {safe}");
+        assert!(safe.contains("backing off 2s"), "lost the backoff: {safe}");
+    }
+
+    #[test]
+    fn the_file_download_url_is_redacted_too() {
+        use super::redact_token;
+        // Downloads use a different path shape — /file/bot<token>/... —
+        // and reach the log via router.rs's photo and voice handlers.
+        let leaked = "download_file send: error sending request for url \
+                      (https://api.telegram.org/file/bot1234567890:AAFakeFakeFakeFakeFakeFakeFakeFakeFak/photos/f_1.jpg)";
+        let safe = redact_token(leaked);
+        assert!(!safe.contains("AAFakeFakeFakeFakeFakeFakeFakeFakeFak"), "secret survived: {safe}");
+        assert!(safe.contains("/file/bot<redacted>/photos/f_1.jpg"), "lost the useful shape: {safe}");
     }
 
     #[test]

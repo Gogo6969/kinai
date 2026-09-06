@@ -10,10 +10,23 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct BotApi {
     token: String,
     http: reqwest::Client,
+}
+
+/// Hand-written so the token cannot be printed by accident.
+///
+/// The derived `Debug` rendered the field verbatim, so a single
+/// `tracing::warn!("telegram: {api:?}")` anywhere would have put the
+/// family's bot token in the log — the same way the derived `Display` on
+/// a reqwest error already did. Nothing formats a `BotApi` today; this is
+/// here so nothing can start to.
+impl std::fmt::Debug for BotApi {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BotApi").field("token", &"<redacted>").finish_non_exhaustive()
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -96,6 +109,37 @@ pub struct BotCommand {
     pub description: String,
 }
 
+/// Turn a `reqwest` error into one that is safe to write to a log.
+///
+/// reqwest's `Display` appends the request URL, and every Bot API URL
+/// embeds the token (`.../bot<id>:<secret>/getUpdates`). So *any* caller
+/// that formats one of these errors — a `tracing::warn!("{e:?}")` in the
+/// poll loop, the string `test_telegram_token` hands back to Settings —
+/// writes the family's bot token out in the clear. It reached
+/// `~/.kinai/logs/` that way on five days running, mostly from getUpdates.
+///
+/// 0.2.116 redacted the one startup path it knew about. Redacting at each
+/// log site does not scale: there are ~20 of them across polling, router,
+/// echo and commands, every one of them a chance to forget, and a new one
+/// is added every time someone logs a send failure. So scrub here, at the
+/// single boundary where a Bot API error is born, and no call site can
+/// leak the token by omission.
+///
+/// The source chain is flattened into the message rather than kept as a
+/// `source`: the sources carry the part worth reading ("Connection reset
+/// by peer"), but leaving the original error attached would let `{e:?}`
+/// print the unredacted URL straight back out.
+fn scrub(ctx: &'static str, e: reqwest::Error) -> anyhow::Error {
+    let mut msg = e.to_string();
+    let mut src: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(&e);
+    while let Some(s) = src {
+        msg.push_str(": ");
+        msg.push_str(&s.to_string());
+        src = s.source();
+    }
+    anyhow::anyhow!("{ctx}: {}", super::redact_token(&msg))
+}
+
 impl BotApi {
     pub fn new(token: String) -> Self {
         // The default getUpdates long-poll timeout we ask Telegram for
@@ -121,7 +165,7 @@ impl BotApi {
     async fn unwrap_response<T: serde::de::DeserializeOwned>(
         resp: reqwest::Response,
     ) -> Result<T> {
-        let value: Value = resp.json().await.context("decode telegram json")?;
+        let value: Value = resp.json().await.map_err(|e| scrub("decode telegram json", e))?;
         let ok = value.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
         if !ok {
             let desc = value
@@ -146,7 +190,7 @@ impl BotApi {
             .get(self.endpoint("getMe"))
             .send()
             .await
-            .context("getMe send")?;
+            .map_err(|e| scrub("getMe send", e))?;
         Self::unwrap_response(resp).await
     }
 
@@ -166,7 +210,7 @@ impl BotApi {
             }))
             .send()
             .await
-            .context("getUpdates send")?;
+            .map_err(|e| scrub("getUpdates send", e))?;
         Self::unwrap_response(resp).await
     }
 
@@ -206,7 +250,7 @@ impl BotApi {
             }))
             .send()
             .await
-            .context("editMessageText send")?;
+            .map_err(|e| scrub("editMessageText send", e))?;
         match Self::unwrap_response::<Value>(resp).await {
             Ok(_) => Ok(()),
             Err(e) => {
@@ -248,7 +292,7 @@ impl BotApi {
                 .json(&body)
                 .send()
                 .await
-                .context("sendMessage send")?;
+                .map_err(|e| scrub("sendMessage send", e))?;
             let sent: TelegramMessage = Self::unwrap_response(resp).await?;
             if first_id.is_none() {
                 first_id = Some(sent.message_id);
@@ -270,7 +314,7 @@ impl BotApi {
             .json(&json!({ "chat_id": chat_id, "message_id": message_id }))
             .send()
             .await
-            .context("deleteMessage send")?;
+            .map_err(|e| scrub("deleteMessage send", e))?;
         match Self::unwrap_response::<Value>(resp).await {
             Ok(_) => Ok(()),
             Err(e) => {
@@ -294,7 +338,7 @@ impl BotApi {
             .json(&json!({ "chat_id": chat_id, "action": action }))
             .send()
             .await
-            .context("sendChatAction send")?;
+            .map_err(|e| scrub("sendChatAction send", e))?;
         let _: Value = Self::unwrap_response(resp).await?;
         Ok(())
     }
@@ -350,7 +394,7 @@ impl BotApi {
             .multipart(form)
             .send()
             .await
-            .context("sendPhoto send")?;
+            .map_err(|e| scrub("sendPhoto send", e))?;
         let _: Value = Self::unwrap_response(resp).await?;
         Ok(())
     }
@@ -395,7 +439,7 @@ impl BotApi {
             .multipart(form)
             .send()
             .await
-            .context("sendPhoto(bytes) send")?;
+            .map_err(|e| scrub("sendPhoto(bytes) send", e))?;
         let _: Value = Self::unwrap_response(resp).await?;
         Ok(())
     }
@@ -444,7 +488,7 @@ impl BotApi {
             .multipart(form)
             .send()
             .await
-            .context("sendVoice send")?;
+            .map_err(|e| scrub("sendVoice send", e))?;
         let _: Value = Self::unwrap_response(resp).await?;
         Ok(())
     }
@@ -458,7 +502,7 @@ impl BotApi {
             .json(&json!({ "file_id": file_id }))
             .send()
             .await
-            .context("getFile send")?;
+            .map_err(|e| scrub("getFile send", e))?;
         Self::unwrap_response(resp).await
     }
 
@@ -471,9 +515,9 @@ impl BotApi {
             .get(url)
             .send()
             .await
-            .context("download_file send")?
+            .map_err(|e| scrub("download_file send", e))?
             .error_for_status()
-            .context("download_file status")?;
+            .map_err(|e| scrub("download_file status", e))?;
         Ok(resp.bytes().await?.to_vec())
     }
 
@@ -484,7 +528,7 @@ impl BotApi {
             .json(&json!({ "commands": cmds }))
             .send()
             .await
-            .context("setMyCommands send")?;
+            .map_err(|e| scrub("setMyCommands send", e))?;
         let _: Value = Self::unwrap_response(resp).await?;
         Ok(())
     }
@@ -530,4 +574,65 @@ pub(crate) fn split_for_telegram(text: &str) -> Vec<String> {
         parts.push(current);
     }
     parts
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::{super::redact_token, scrub, BotApi};
+
+    /// The derived `Debug` printed `token` verbatim; this keeps the
+    /// hand-written one honest if someone reaches for the derive again.
+    #[test]
+    fn debug_formatting_a_botapi_does_not_print_the_token() {
+        let token = "1234567890:AAFakeFakeFakeFakeFakeFakeFakeFakeFak";
+        let shown = format!("{:?}", BotApi::new(token.to_string()));
+        assert!(!shown.contains(token), "token survived Debug: {shown}");
+        assert!(shown.contains("<redacted>"), "unexpected shape: {shown}");
+    }
+
+    /// Proves the assumption the whole redaction rests on: that a *real*
+    /// reqwest transport error prints the request URL, and that `scrub`
+    /// takes it back out of the message and every source in the chain.
+    /// The string-level tests above cannot see that — they assert against
+    /// a shape typed by hand.
+    ///
+    /// Networked (it connects to a port nothing listens on), so it is
+    /// `#[ignore]`d and stays out of `cargo test --lib` and CI. Run it by
+    /// hand when touching either half:
+    /// `cargo test --lib -- --ignored scrub_strips`
+    #[tokio::test]
+    #[ignore]
+    async fn scrub_strips_the_token_from_a_real_reqwest_error() {
+        let token = "1234567890:AAFakeFakeFakeFakeFakeFakeFakeFakeFak";
+        // Port 1 on loopback: nothing listens, so this fails to connect —
+        // the same class of error as the "Connection reset by peer" that
+        // wrote the token to the log on 2026-09-05.
+        let url = format!("http://127.0.0.1:1/bot{token}/getUpdates");
+        let err = reqwest::Client::new().get(&url).send().await.unwrap_err();
+        assert!(
+            err.to_string().contains(token),
+            "reqwest no longer puts the URL in Display — re-check what this guards: {err}"
+        );
+        let scrubbed = format!("{:?}", scrub("getUpdates send", err));
+        assert!(!scrubbed.contains(token), "token survived scrub: {scrubbed}");
+        assert!(
+            scrubbed.contains("/bot<redacted>/getUpdates"),
+            "lost the useful shape: {scrubbed}"
+        );
+    }
+
+    /// Guards the pairing rather than a hand-written string: the redactor
+    /// runs over the URLs `BotApi` actually builds, so a change to either
+    /// side has to keep them matched. Both shapes carry the token —
+    /// `/bot<token>/<method>` and `/file/bot<token>/<path>`.
+    #[test]
+    fn every_bot_api_url_we_build_redacts_cleanly() {
+        let token = "1234567890:AAFakeFakeFakeFakeFakeFakeFakeFakeFak";
+        let api = BotApi::new(token.to_string());
+        for url in [api.endpoint("getUpdates"), api.file_endpoint("photos/f_1.jpg")] {
+            let safe = redact_token(&url);
+            assert!(!safe.contains(token), "token survived in {url}: {safe}");
+            assert!(safe.contains("/bot<redacted>/"), "unexpected shape: {safe}");
+        }
+    }
 }

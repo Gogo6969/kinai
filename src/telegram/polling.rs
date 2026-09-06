@@ -9,6 +9,7 @@ use tauri::{AppHandle, Runtime};
 use crate::SharedState;
 
 use super::api::BotApi;
+use super::redact_token;
 use super::router;
 
 /// Seconds we ask Telegram to hold each long-poll request open before
@@ -42,13 +43,23 @@ pub async fn run<R: Runtime>(api: BotApi, state: SharedState, app: AppHandle<R>)
                     let app = app.clone();
                     tokio::spawn(async move {
                         if let Err(e) = router::handle_update(&api, &state, &app, &update).await {
-                            tracing::warn!("telegram router: {e:?}");
+                            tracing::warn!("telegram router: {}", redact_token(&format!("{e:?}")));
                         }
                     });
                 }
             }
             Err(e) => {
-                tracing::warn!("telegram getUpdates failed: {e:?} — backing off {backoff:?}");
+                // Redacted twice over: `api::scrub` already strips the token
+                // from every Bot API error, and this is the loop that logs
+                // one on every failed poll — four of the five tokens that
+                // reached ~/.kinai/logs/ came out of here, not the startup
+                // getMe. Cheap insurance on the highest-frequency path, and
+                // `handle_update` above can surface an error from any
+                // subsystem, not only Telegram.
+                tracing::warn!(
+                    "telegram getUpdates failed: {} — backing off {backoff:?}",
+                    redact_token(&format!("{e:?}"))
+                );
                 tokio::time::sleep(backoff).await;
                 backoff = (backoff * 2).min(Duration::from_secs(60));
             }
