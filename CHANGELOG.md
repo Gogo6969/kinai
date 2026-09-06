@@ -5,6 +5,42 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.118] — 2026-09-06
+
+### Fixed
+
+- **A follow-up sent while KinAI is still answering no longer gets the
+  previous question's answer.** On Telegram, every incoming message runs
+  in its own task so one slow reply cannot stall everyone else — but that
+  also let two messages from the same chat run at once. The second one
+  built its view of the conversation before the first had been answered,
+  saw an unanswered question followed by a new one, and answered the old
+  one again. Found during a release test: a question sent thirty seconds
+  into a slow answer came back with the earlier answer repeated. Turns in
+  one chat now run strictly in order, so a follow-up always sees the reply
+  it is following up on; other family members' chats are unaffected.
+
+### Changed
+
+- **Nothing of the household's is in the public source any more.** An audit
+  of the repository found pieces of real family text that had been used as
+  worked examples — a few first messages as test fixtures, one search
+  query as a changelog example, first names and a device name in comments,
+  internal ids, and the household's own network addresses. None of it was a
+  credential, and none of it was a log; it was still their words in a
+  public place. Every fixture is now an invented string of the same shape,
+  comments name the pattern instead of the person, and addresses are
+  documentation examples. No behaviour changes.
+
+- **A privacy guard now stands between this repository and GitHub.**
+  `scripts/privacy-guard.sh` refuses any commit, commit message, or push
+  that contains a secret, a pasted log line, an email address, or anything
+  on a household denylist that lives outside the repository and is never
+  committed. It is wired into git's `pre-commit`, `commit-msg` and
+  `pre-push` hooks on the host. Matching runs in Python rather than
+  `grep`, because BSD `grep` silently rejected one pattern during testing
+  and would have let a token through.
+
 ## [0.2.117] — 2026-09-06
 
 ### Fixed

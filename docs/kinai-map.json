@@ -1,21 +1,21 @@
 {
-  "generated_at": "2026-09-06T16:10:50+00:00",
-  "version": "0.2.117",
+  "generated_at": "2026-09-06T16:51:10+00:00",
+  "version": "0.2.118",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 301,
-    "head": "4acd7d3"
+    "commits": 302,
+    "head": "05c2451"
   },
   "totals": {
     "rust_files": 63,
-    "rust_lines": 28299,
+    "rust_lines": 28374,
     "frontend_files": 34,
     "frontend_lines": 12218,
-    "unit_tests": 249,
+    "unit_tests": 252,
     "integration_test_files": 12,
-    "releases": 109,
+    "releases": 110,
     "tags": 104
   },
   "areas": [
@@ -388,9 +388,9 @@
     {
       "path": "src/telegram/router.rs",
       "area": "telegram",
-      "lines": 1601,
+      "lines": 1676,
       "doc": "Route incoming Telegram updates into KinAI's chat pipeline.",
-      "tests": 10
+      "tests": 13
     },
     {
       "path": "src/tools/calculator.rs",
@@ -1087,6 +1087,28 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.118",
+      "date": "2026-09-06",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "A follow-up sent while KinAI is still answering no longer gets the previous question's answer.",
+            "detail": "On Telegram, every incoming message runs in its own task so one slow reply cannot stall everyone else — but that also let two messages from the same chat run at once. The second one built its view of the conversation before the first had been answered, saw an unanswered question followed by a new one, and answered the old one again. Found during a release test: a question sent thirty seconds into a slow answer came back with the earlier answer repeated. Turns in one chat now run strictly in order, so a follow-up always sees the reply it is following up on; other family members' chats are unaffected."
+          }
+        ],
+        "Changed": [
+          {
+            "title": "Nothing of the household's is in the public source any more.",
+            "detail": "An audit of the repository found pieces of real family text that had been used as worked examples — a few first messages as test fixtures, one search query as a changelog example, first names and a device name in comments, internal ids, and the household's own network addresses. None of it was a credential, and none of it was a log; it was still their words in a public place. Every fixture is now an invented string of the same shape, comments name the pattern instead of the person, and addresses are documentation examples. No behaviour changes."
+          },
+          {
+            "title": "A privacy guard now stands between this repository and GitHub.",
+            "detail": "`scripts/privacy-guard.sh` refuses any commit, commit message, or push that contains a secret, a pasted log line, an email address, or anything on a household denylist that lives outside the repository and is never committed. It is wired into git's `pre-commit`, `commit-msg` and `pre-push` hooks on the host. Matching runs in Python rather than `grep`, because BSD `grep` silently rejected one pattern during testing and would have let a token through."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.117",
       "date": "2026-09-06",
