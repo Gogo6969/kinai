@@ -5,6 +5,24 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.119] — 2026-09-09
+
+### Fixed
+
+- **A follow-up about a photo you just sent no longer answers blind.**
+  After a photo, the next messages ("Continue", "can you do it?") were
+  built from a stored copy of the conversation in which every picture had
+  been replaced by a placeholder called "omitted" — so KinAI truthfully
+  reported that the image had been omitted. The most recent photo now
+  rides along for the next three exchanges; older pictures still stay out
+  to keep requests small.
+- **A photo whose caption needs a lookup now gets one.** When the model
+  you are talking to cannot see images, the photo goes to the household's
+  vision model. That path ran without tools, so a caption like "find where
+  this comes from" ended after the model announced a search it could not
+  make. When the vision model is one of the household's own chat models,
+  its tools now stay available on photo turns and their follow-ups.
+
 ## [0.2.118] — 2026-09-06
 
 ### Fixed
