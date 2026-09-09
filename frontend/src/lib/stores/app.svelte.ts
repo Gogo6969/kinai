@@ -9,9 +9,15 @@ import {
   type ThreadMeta,
   type SearchHit,
   type Report,
+  type Reminder,
   type TurnMetrics,
 } from '$lib/api';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import {
+  isPermissionGranted,
+  requestPermission,
+  sendNotification,
+} from '@tauri-apps/plugin-notification';
 
 class AppStore {
   config = $state<AppConfig | null>(null);
@@ -53,6 +59,14 @@ class AppStore {
   reports = $state<Report[]>([]);
   /** Open (unreviewed) report count — drives the sidebar badge. */
   openReports = $state(0);
+  /** This member's reminders (every status except cancelled), as the
+   *  host orders them. Feeds the Calendar panel and the sidebar badge.
+   *  Loaded in BOTH modes — a client's rows live on the host and arrive
+   *  over the WS. */
+  reminders = $state<Reminder[]>([]);
+  /** Fired reminders waiting for the member — the popup shows the first
+   *  one. Deduped by id; replaced, never pushed. */
+  dueReminders = $state<Reminder[]>([]);
   /** Per-message fact-check panels, keyed by assistant message id.
    *  Ephemeral — never persisted, never part of model context. */
   factChecks = $state<
@@ -108,6 +122,8 @@ class AppStore {
     host_reports?: boolean;
     /** Host applies client-initiated thread delete/rename (0.2.86+). */
     host_thread_ops?: boolean;
+    /** Host runs the reminder scheduler + answers the reminder calls. */
+    host_reminders?: boolean;
   } | null>(null);
   /** mDNS-discovered KinAI hosts on the local network. Kept at the store
    *  level (not inside /client/+page.svelte) because the discovery event
@@ -147,6 +163,7 @@ class AppStore {
     }
     await this.refreshStats();
     await this.loadReports();
+    await this.loadReminders();
   }
 
   async refreshStats() {
@@ -564,6 +581,51 @@ class AppStore {
     }
   }
 
+  /** Pull this member's reminders. Any row still `fired` is queued for
+   *  the popup as well: a reminder that went off while the app was
+   *  closed emitted its `kinai://reminder` into the void, so the list is
+   *  the only way it resurfaces on launch. No host guard — clients have
+   *  reminders too. */
+  async loadReminders() {
+    try {
+      this.reminders = await api.listReminders();
+      this.queueDueReminders(this.reminders.filter((r) => r.status === 'fired'));
+    } catch (e) {
+      console.warn('reminders', e);
+    }
+  }
+
+  /** Acknowledge, snooze or delete a reminder, then re-sync the list and
+   *  drop it from the popup queue. `minutes` only matters for `snooze`. */
+  async reminderAction(id: string, action: 'ack' | 'snooze' | 'delete', minutes?: number) {
+    await api.reminderAction(id, action, minutes);
+    await this.loadReminders();
+    this.dueReminders = this.dueReminders.filter((r) => r.id !== id);
+  }
+
+  /** Append to the popup queue, skipping ids already waiting. Returns
+   *  the ones that were actually new. */
+  private queueDueReminders(rows: Reminder[]): Reminder[] {
+    const waiting = new Set(this.dueReminders.map((r) => r.id));
+    const fresh = rows.filter((r) => !waiting.has(r.id));
+    if (fresh.length > 0) this.dueReminders = [...this.dueReminders, ...fresh];
+    return fresh;
+  }
+
+  /** OS-level notification for a reminder that just fired, so it reaches
+   *  the member even with the window hidden in the tray. Best-effort:
+   *  permission can be refused and unsigned dev builds may not post at
+   *  all — none of that may break the in-app popup. */
+  private async notifyReminder(r: Reminder) {
+    try {
+      let granted = await isPermissionGranted();
+      if (!granted) granted = (await requestPermission()) === 'granted';
+      if (granted) sendNotification({ title: 'KinAI reminder', body: r.text });
+    } catch (e) {
+      console.warn('reminder notification', e);
+    }
+  }
+
   async setReportReviewed(id: string, reviewed: boolean) {
     await api.setReportReviewed(id, reviewed);
     await this.loadReports();
@@ -965,6 +1027,21 @@ class AppStore {
     this.cleanups.push(
       await events.onReport(() => {
         void this.loadReports();
+      })
+    );
+    this.cleanups.push(
+      await events.onReminder((r) => {
+        // The scheduler leased the row as `firing` and is delivering it
+        // right now; from this window's point of view it has fired, so
+        // the badge and the Calendar reflect that without a round-trip.
+        const fired: Reminder = { ...r, status: 'fired' };
+        this.reminders = [...this.reminders.filter((x) => x.id !== r.id), fired];
+        const fresh = this.queueDueReminders([fired]);
+        // Tauri emits reach both webviews; only the main window notifies,
+        // or every reminder would land twice in Notification Center.
+        if (fresh.length > 0 && getCurrentWindow().label === 'main') {
+          void this.notifyReminder(fired);
+        }
       })
     );
     this.cleanups.push(await events.onStats((s) => (this.stats = s)));

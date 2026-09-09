@@ -313,6 +313,10 @@ export interface HostInfo {
   /** Host applies client-initiated thread delete/rename (0.2.86+).
    *  Absent/false means such changes would silently revert on restart. */
   host_thread_ops?: boolean;
+  /** Host runs the reminder scheduler and answers `list_reminders` /
+   *  `reminder_action` over the WS. Absent/false on older hosts — the
+   *  Calendar entry stays hidden on client peers rather than hanging. */
+  host_reminders?: boolean;
 }
 
 /** An answer a family member flagged with the Report button. The host
@@ -329,6 +333,33 @@ export interface Report {
   slot: string;
   created_at: string;
   reviewed_at: string | null;
+}
+
+/** A reminder a family member set through KinAI ("Remind me tomorrow at
+ *  9 to…"). Show `due_local` (already in the member's own zone); `due_at`
+ *  is the UTC instant the host's scheduler fires on and is never
+ *  reformatted in the UI. */
+export interface Reminder {
+  id: string;
+  /** Owner: "host" or the invite short code. */
+  peer_id: string;
+  thread_id: string | null;
+  text: string;
+  /** UTC RFC3339 — the next time it fires. */
+  due_at: string;
+  /** IANA zone the member used, e.g. "Europe/Berlin". */
+  tz: string;
+  /** "YYYY-MM-DDTHH:MM" in `tz` — the value to display. */
+  due_local: string;
+  /** "" for now. */
+  repeat: string;
+  /** `fired` = delivered, waiting to be acknowledged (popup + "due now");
+   *  `firing` is the scheduler's transient lease; `cancelled` rows are
+   *  kept for history and never listed. */
+  status: 'scheduled' | 'firing' | 'fired' | 'done' | 'cancelled';
+  fired_at: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface RuntimeStats {
@@ -604,6 +635,15 @@ export const api = {
   deleteReport: (id: string) => invoke<void>('delete_report', { id }),
   deleteReviewedReports: () => invoke<number>('delete_reviewed_reports'),
 
+  /** This member's reminders, every status except `cancelled`, due-time
+   *  ascending. Same call in both modes — the Rust command forwards it
+   *  to the host over the WS on client peers. */
+  listReminders: () => invoke<Reminder[]>('list_reminders'),
+  /** `ack` → done; `snooze` → due again in `snoozeMinutes` (≥ 1);
+   *  `delete` → row removed (resolves null). */
+  reminderAction: (id: string, action: 'ack' | 'snooze' | 'delete', snoozeMinutes?: number) =>
+    invoke<Reminder | null>('reminder_action', { id, action, snoozeMinutes: snoozeMinutes ?? 0 }),
+
   runtimeStats: () => invoke<RuntimeStats>('runtime_stats'),
   /** Liveness of the host's ACTIVE model slots (label -> alive), served
    *  from a short-TTL cache. Empty map on client instances — their menu
@@ -617,6 +657,11 @@ export const events = {
   /** Host-side: a report just arrived (or the host filed one). */
   onReport: (cb: (p: { reporter: string }) => void): Promise<UnlistenFn> =>
     listen<{ reporter: string }>('kinai://report', (e) => cb(e.payload)),
+  /** A reminder just fired for this member. Host: emitted by the
+   *  scheduler; client: relayed from the host's `Reminder` envelope. The
+   *  payload IS the reminder (not wrapped). */
+  onReminder: (cb: (r: Reminder) => void): Promise<UnlistenFn> =>
+    listen<Reminder>('kinai://reminder', (e) => cb(e.payload)),
   onMessage: (cb: (m: Message) => void): Promise<UnlistenFn> =>
     listen<Message>('kinai://message', (e) => cb(e.payload)),
   onToken: (cb: (d: TokenDelta) => void): Promise<UnlistenFn> =>

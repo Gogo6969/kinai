@@ -12,6 +12,7 @@
   import { save as saveDialog } from '@tauri-apps/plugin-dialog';
   import { invoke } from '@tauri-apps/api/core';
   import ChangelogModal from '$lib/components/ChangelogModal.svelte';
+  import ReminderPopup from '$lib/components/ReminderPopup.svelte';
 
   let { children } = $props();
   const cleanups: Array<() => void> = [];
@@ -190,6 +191,9 @@
 -->
 {#if !page.url.pathname.startsWith('/overlay')}
   <ChangelogModal />
+  <!-- Due-reminder popup — reads `app.dueReminders`, so it can only live
+       where the store is loaded (never on /overlay). -->
+  <ReminderPopup />
 {/if}
 
 {#if toastMsg}

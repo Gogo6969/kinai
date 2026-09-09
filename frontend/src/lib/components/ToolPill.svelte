@@ -1,5 +1,16 @@
 <script lang="ts">
-  import { Globe, Calculator, Clock, MessagesSquare, CheckCheck, Loader2, XCircle } from '@lucide/svelte';
+  import {
+    Globe,
+    Calculator,
+    Clock,
+    MessagesSquare,
+    CheckCheck,
+    Loader2,
+    XCircle,
+    AlarmClockPlus,
+    AlarmClockOff,
+    CalendarDays,
+  } from '@lucide/svelte';
 
   let { name, ok }: { name: string; ok?: boolean } = $props();
 
@@ -12,7 +23,13 @@
           ? Calculator
           : name === 'datetime'
             ? Clock
-            : Globe
+            : name === 'set_reminder'
+              ? AlarmClockPlus
+              : name === 'list_reminders'
+                ? CalendarDays
+                : name === 'cancel_reminder'
+                  ? AlarmClockOff
+                  : Globe
   );
 
   const label = $derived(
@@ -24,7 +41,13 @@
           ? 'Calculating'
           : name === 'datetime'
             ? 'Checking the date'
-            : name
+            : name === 'set_reminder'
+              ? 'Setting a reminder'
+              : name === 'list_reminders'
+                ? 'Checking reminders'
+                : name === 'cancel_reminder'
+                  ? 'Cancelling a reminder'
+                  : name
   );
 
   const StatusIcon = $derived(ok === undefined ? Loader2 : ok ? CheckCheck : XCircle);

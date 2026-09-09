@@ -214,6 +214,10 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
       return 'Thanks — the host can see this answer now.';
     },
     list_reports: () => w.__mockReports ?? [],
+    // Reminders: an unhandled command would return null and the Calendar
+    // page's `.filter` would throw — keep the browser-only flow alive.
+    list_reminders: () => [],
+    reminder_action: () => null,
     open_report_count: () => (w.__mockReports ?? []).filter((r: any) => !r.reviewed_at).length,
     set_report_reviewed: (a) => {
       w.__mockReports = (w.__mockReports ?? []).map((r: any) =>
