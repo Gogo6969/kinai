@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-09-06T16:51:10+00:00",
-  "version": "0.2.118",
+  "generated_at": "2026-09-09T14:20:42+00:00",
+  "version": "0.2.119",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 302,
-    "head": "05c2451"
+    "commits": 307,
+    "head": "f6f1917"
   },
   "totals": {
     "rust_files": 63,
-    "rust_lines": 28374,
+    "rust_lines": 28711,
     "frontend_files": 34,
     "frontend_lines": 12218,
-    "unit_tests": 252,
-    "integration_test_files": 12,
-    "releases": 110,
-    "tags": 104
+    "unit_tests": 259,
+    "integration_test_files": 13,
+    "releases": 111,
+    "tags": 106
   },
   "areas": [
     {
@@ -115,7 +115,7 @@
     {
       "path": "src/commands.rs",
       "area": "entry",
-      "lines": 3262,
+      "lines": 3267,
       "doc": "Tauri command surface — every IPC entrypoint the frontend can call.",
       "tests": 0
     },
@@ -129,7 +129,7 @@
     {
       "path": "src/context/builder.rs",
       "area": "context",
-      "lines": 757,
+      "lines": 759,
       "doc": "Build the per-request message list from system prompt + memory + history.",
       "tests": 17
     },
@@ -178,9 +178,9 @@
     {
       "path": "src/db/messages.rs",
       "area": "db",
-      "lines": 994,
+      "lines": 1125,
       "doc": "Thread + message persistence (async via SQLx).",
-      "tests": 15
+      "tests": 17
     },
     {
       "path": "src/db/migrate.rs",
@@ -192,7 +192,7 @@
     {
       "path": "src/db/mod.rs",
       "area": "db",
-      "lines": 263,
+      "lines": 264,
       "doc": "SQLx-backed SQLite layer.",
       "tests": 0
     },
@@ -318,7 +318,7 @@
     {
       "path": "src/network/server.rs",
       "area": "network",
-      "lines": 1191,
+      "lines": 1197,
       "doc": "Host-side Axum HTTP+WebSocket server.",
       "tests": 0
     },
@@ -339,7 +339,7 @@
     {
       "path": "src/slash.rs",
       "area": "routing",
-      "lines": 1067,
+      "lines": 1069,
       "doc": "Slash commands — intercepted BEFORE the LLM pipeline so messages starting with /pic, /picHQ, /help, ? skip the chat model entirely and route to native handlers (ComfyUI for image gen, a static command list for help).",
       "tests": 18
     },
@@ -388,7 +388,7 @@
     {
       "path": "src/telegram/router.rs",
       "area": "telegram",
-      "lines": 1676,
+      "lines": 1682,
       "doc": "Route incoming Telegram updates into KinAI's chat pipeline.",
       "tests": 13
     },
@@ -514,9 +514,9 @@
     {
       "path": "src/vision.rs",
       "area": "routing",
-      "lines": 771,
+      "lines": 955,
       "doc": "Vision routing for image attachments.",
-      "tests": 9
+      "tests": 14
     }
   ],
   "frontend": [
@@ -845,6 +845,16 @@
       ]
     },
     {
+      "file": "tests/photo_followup_live.rs",
+      "doc": "Live proof for the photo follow-up fix (0.2.119), spoken over the real client WebSocket the way a family device does: redeem an invite, say Hello, send a picture with a caption that needs a lookup on a slot that cannot see images, then…",
+      "tests": [
+        {
+          "name": "a_follow_up_about_a_photo_still_sees_it",
+          "ignored": true
+        }
+      ]
+    },
+    {
       "file": "tests/routing.rs",
       "doc": "Tests for slash routing — specifically the bare `/fast` / `/deep` mode switch that must NOT run an empty LLM turn.",
       "tests": [
@@ -1087,6 +1097,22 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.119",
+      "date": "2026-09-09",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "A follow-up about a photo you just sent no longer answers blind.",
+            "detail": "After a photo, the next messages (\"Continue\", \"can you do it?\") were built from a stored copy of the conversation in which every picture had been replaced by a placeholder called \"omitted\" — so KinAI truthfully reported that the image had been omitted. The most recent photo now rides along for the next three exchanges; older pictures still stay out to keep requests small."
+          },
+          {
+            "title": "A photo whose caption needs a lookup now gets one.",
+            "detail": "When the model you are talking to cannot see images, the photo goes to the household's vision model. That path ran without tools, so a caption like \"find where this comes from\" ended after the model announced a search it could not make. When the vision model is one of the household's own chat models, its tools now stay available on photo turns and their follow-ups."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.118",
       "date": "2026-09-06",
@@ -3356,6 +3382,14 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.119",
+      "date": "2026-09-09"
+    },
+    {
+      "tag": "v0.2.118",
+      "date": "2026-09-06"
+    },
     {
       "tag": "v0.2.117",
       "date": "2026-09-06"
