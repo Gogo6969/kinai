@@ -114,7 +114,7 @@ sha2 = "0.10"
 # Pure-Rust PDF text extraction. Used by run_chat_turn to inline a
 # user-attached PDF's text into the prompt — no model dependency, works
 # with any chat backend.
-pdf-extract = "0.7"
+pdf-extract = "0.12"
 hex = "0.4"
 base64 = "0.22"
 
