@@ -2172,9 +2172,14 @@ async fn run_assistant_turn(
         }),
     };
 
-    let route = crate::vision::decide(&active_llm_settings, &user_msg.attachments, &cfg.vision)
-        .await
-        .map_err(err)?;
+    let route = crate::vision::decide(
+        &active_llm_settings,
+        &user_msg.attachments,
+        &cfg.vision,
+        crate::vision::history_has_image(&messages),
+    )
+    .await
+    .map_err(err)?;
     // Keep a runtime copy for post-turn image recovery (run_with_route
     // consumes tool_runtime).
     let recover_runtime = tool_runtime.clone();

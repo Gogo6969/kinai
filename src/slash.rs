@@ -123,6 +123,7 @@ where
         let max_tokens = max_tokens_for(&settings, &messages);
         let result = crate::vision::run_with_route(
             route,
+            cfg,
             llm,
             &settings,
             messages,
@@ -222,6 +223,7 @@ answering with **{next}** (`{next_model}`) instead._\n\n"
         let llm = crate::llm::LlmClient::new(settings.clone());
         let attempt = crate::vision::run_with_route(
             crate::vision::Route::Chat,
+            cfg,
             llm,
             &settings,
             attempt_msgs,

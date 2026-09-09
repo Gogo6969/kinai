@@ -21,11 +21,13 @@ pub async fn build_context(
     thread_id: &str,
     new_message: &Message,
 ) -> Result<Vec<ChatMessage>> {
-    // Context load strips history image payloads at the SQL layer — the
-    // vision router only sends current-turn images anyway, and full rows
-    // meant parsing tens of MB of base64 per turn in image-bearing threads.
+    // Context load strips history image payloads at the SQL layer (full
+    // rows meant parsing tens of MB of base64 per turn in image-bearing
+    // threads), except the newest image within the carry window — a text
+    // follow-up about the photo just sent must still see it. The current
+    // message is excluded: it is appended below with its live attachments.
     let recent = db
-        .load_messages_for_context(peer_id, thread_id, RECENT_TURNS)
+        .load_messages_for_context(peer_id, thread_id, RECENT_TURNS, Some(&new_message.id))
         .await?;
     let memories = db
         .relevant_memories(peer_id, thread_id, &new_message.content, TOP_MEMORIES)

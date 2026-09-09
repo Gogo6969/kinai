@@ -289,7 +289,8 @@ pub async fn load(
 /// 81MB messages table was attachment base64 — and the context builder was
 /// pulling, allocating, and JSON-parsing those multi-MB blobs on EVERY turn
 /// in an image-bearing thread, only for the vision router to discard them
-/// (vision sends current-turn images only).
+/// (vision sends the current turn's image plus the newest recent one —
+/// see `IMAGE_CARRY_ROWS`).
 ///
 /// The CASE keeps two things intact:
 ///   * PDF-bearing rows pass through whole — `format_user` re-extracts their
@@ -314,11 +315,29 @@ pub async fn count_in_thread(pool: &SqlitePool, thread_id: &str) -> Result<i64> 
     Ok(row.0)
 }
 
+/// How many stored rows back — not counting the message being answered —
+/// the newest image keeps its payload in the context load. A photo question
+/// is rarely one turn: "Continue", "can you do it?", "what does the second
+/// paragraph say?" all refer to the picture the family member just sent,
+/// and a stripped row turned every one of those into "the image shows as
+/// omitted" (Telegram field report). Six rows is three exchanges — long
+/// enough for a follow-up, short enough that an old photo does not ride on
+/// every request for the rest of the thread.
+pub const IMAGE_CARRY_ROWS: usize = 6;
+
+/// `load_messages` for the LLM context builder. Image payloads are stripped
+/// at the SQL layer (rationale above `count_in_thread`), with ONE exception:
+/// the newest image-bearing user row within `IMAGE_CARRY_ROWS` of the end is
+/// reloaded whole, so a text follow-up about a just-sent photo still
+/// carries the photo. `current_msg_id` is the row being answered — the
+/// builder appends it separately with its live attachments, so it neither
+/// counts toward the window nor gets reloaded.
 pub async fn load_for_context(
     pool: &SqlitePool,
     peer_id: &str,
     thread_id: &str,
     limit: i64,
+    current_msg_id: Option<&str>,
 ) -> Result<Vec<Message>> {
     // PDF detection matches the serialized `"mime":"application/pdf"` field
     // or a PDF data-URL prefix — NOT the bare substring 'application/pdf',
@@ -330,7 +349,7 @@ pub async fn load_for_context(
                   WHEN m.attachments LIKE '%\"mime\":\"application/pdf\"%'
                     OR m.attachments LIKE '%data:application/pdf%' THEN m.attachments
                   WHEN m.attachments LIKE '%data:image%'
-                    THEN '[{\"kind\":\"image\",\"name\":\"(earlier image omitted)\"}]'
+                    THEN '[{\"kind\":\"image\",\"name\":\"(earlier image, not shown again)\"}]'
                   ELSE m.attachments
                 END AS attachments,
                 m.created_at, m.summarized_into, m.metrics
@@ -345,8 +364,42 @@ pub async fn load_for_context(
     .fetch_all(pool)
     .await?;
     let mut messages: Vec<Message> = rows.into_iter().map(row_to_message).collect();
+    // Rows arrive newest-first. Reload the payload of the newest recent
+    // image — one row, one small query, not the every-row parse the strip
+    // exists to avoid.
+    let carry = messages
+        .iter()
+        .filter(|m| Some(m.id.as_str()) != current_msg_id)
+        .take(IMAGE_CARRY_ROWS)
+        .find(|m| m.role == "user" && has_stripped_image(m))
+        .map(|m| m.id.clone());
+    if let Some(id) = carry {
+        let full = attachments_of(pool, &id).await?;
+        if let Some(m) = messages.iter_mut().find(|m| m.id == id) {
+            m.attachments = full;
+        }
+    }
     messages.reverse();
     Ok(messages)
+}
+
+/// An image attachment whose payload the context load stripped.
+fn has_stripped_image(m: &Message) -> bool {
+    m.attachments
+        .iter()
+        .any(|a| a.kind == "image" && a.data_url.is_none())
+}
+
+/// The stored attachments of one message, payloads included.
+async fn attachments_of(pool: &SqlitePool, id: &str) -> Result<Vec<Attachment>> {
+    let att: Option<String> =
+        sqlx::query_scalar("SELECT attachments FROM messages WHERE id = ?1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(att
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default())
 }
 
 /// One cross-thread search result: the matching message plus its thread's
@@ -770,7 +823,7 @@ mod tests {
         append(&pool, &tid, "user", "me", "plain", &[]).await.unwrap();
         // Image whose NAME contains the pdf mime string — must still strip
         // (the LIKE must key on the mime field, not any substring).
-        append(
+        let current = append(
             &pool,
             &tid,
             "user",
@@ -781,13 +834,23 @@ mod tests {
         .await
         .unwrap();
 
-        let msgs = load_for_context(&pool, HOST_PEER, &tid, 50).await.unwrap();
+        let msgs = load_for_context(&pool, HOST_PEER, &tid, 50, Some(&current.id))
+            .await
+            .unwrap();
         assert_eq!(msgs.len(), 4);
-        // Image row: placeholder, no payload — but still an attachment so
-        // the "[attached image: …]" continuity hint survives.
+        // Oldest image row: the newest image before the current turn, and
+        // within the carry window — payload reloaded so a follow-up about
+        // it still sees it.
         assert_eq!(msgs[0].attachments.len(), 1);
-        assert!(msgs[0].attachments[0].data_url.is_none(), "image payload stripped");
         assert_eq!(msgs[0].attachments[0].kind, "image");
+        assert!(
+            msgs[0].attachments[0]
+                .data_url
+                .as_deref()
+                .unwrap_or("")
+                .starts_with("data:image/png"),
+            "newest recent image is carried whole"
+        );
         // PDF row: passes through whole (text re-extraction needs it).
         assert_eq!(msgs[1].attachments.len(), 1);
         assert!(
@@ -796,12 +859,80 @@ mod tests {
         );
         // Plain row untouched.
         assert!(msgs[2].attachments.is_empty());
-        // Tricky filename: still stripped.
+        // The current turn's row: stripped by the load (the builder appends
+        // the live message itself) — and the pdf-ish filename must not
+        // defeat the strip. Still an attachment, so the "[attached image:
+        // …]" continuity hint survives.
+        assert_eq!(msgs[3].attachments.len(), 1);
         assert!(msgs[3].attachments[0].data_url.is_none(), "pdf-ish filename must not defeat the strip");
 
         // The UI path is unaffected — full payloads still come back.
         let full = load(&pool, HOST_PEER, &tid, 50).await.unwrap();
         assert!(full[0].attachments[0].data_url.is_some(), "UI listing keeps payloads");
+    }
+
+    #[tokio::test]
+    async fn context_load_carries_only_the_newest_recent_image() {
+        let pool = fresh_pool().await;
+        let tid = seed_thread(&pool, HOST_PEER, "t").await;
+        append(&pool, &tid, "user", "me", "old photo", &[img_attachment("old.png")])
+            .await
+            .unwrap();
+        append(&pool, &tid, "assistant", "KinAI", "I see a cat", &[]).await.unwrap();
+        append(&pool, &tid, "user", "me", "new photo", &[img_attachment("new.png")])
+            .await
+            .unwrap();
+        append(&pool, &tid, "assistant", "KinAI", "Let me look that up", &[])
+            .await
+            .unwrap();
+        let current = append(&pool, &tid, "user", "me", "Continue", &[]).await.unwrap();
+
+        let msgs = load_for_context(&pool, HOST_PEER, &tid, 50, Some(&current.id))
+            .await
+            .unwrap();
+        assert_eq!(msgs.len(), 5);
+        assert!(msgs[0].attachments[0].data_url.is_none(), "older image stays stripped");
+        assert!(
+            msgs[2].attachments[0].data_url.is_some(),
+            "the newest recent image rides along for the follow-up"
+        );
+    }
+
+    #[tokio::test]
+    async fn context_load_image_expires_after_the_carry_window() {
+        let pool = fresh_pool().await;
+        let filler = |i: usize| if i % 2 == 0 { ("assistant", "KinAI") } else { ("user", "me") };
+
+        // IMAGE_CARRY_ROWS rows between the photo and the current turn: the
+        // photo has left the window and is not re-sent.
+        let tid = seed_thread(&pool, HOST_PEER, "expired").await;
+        append(&pool, &tid, "user", "me", "photo", &[img_attachment("pic.png")]).await.unwrap();
+        for i in 0..IMAGE_CARRY_ROWS {
+            let (role, sender) = filler(i);
+            append(&pool, &tid, role, sender, "…", &[]).await.unwrap();
+        }
+        let current = append(&pool, &tid, "user", "me", "unrelated", &[]).await.unwrap();
+        let msgs = load_for_context(&pool, HOST_PEER, &tid, 50, Some(&current.id))
+            .await
+            .unwrap();
+        assert!(
+            msgs[0].attachments[0].data_url.is_none(),
+            "an image older than the carry window is not re-sent"
+        );
+
+        // One row fewer: still inside the window, so it rides along. The
+        // current turn's own row must not count toward the window.
+        let tid = seed_thread(&pool, HOST_PEER, "inside").await;
+        append(&pool, &tid, "user", "me", "photo", &[img_attachment("pic.png")]).await.unwrap();
+        for i in 0..IMAGE_CARRY_ROWS - 1 {
+            let (role, sender) = filler(i);
+            append(&pool, &tid, role, sender, "…", &[]).await.unwrap();
+        }
+        let current = append(&pool, &tid, "user", "me", "and the photo?", &[]).await.unwrap();
+        let msgs = load_for_context(&pool, HOST_PEER, &tid, 50, Some(&current.id))
+            .await
+            .unwrap();
+        assert!(msgs[0].attachments[0].data_url.is_some(), "just inside the window: carried");
     }
 }
 

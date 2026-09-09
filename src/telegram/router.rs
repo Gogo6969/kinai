@@ -795,7 +795,13 @@ back, unless you switch model yourself.",
         })
     };
 
-    let route = crate::vision::decide(&active_llm_settings, &attachments, &cfg.vision).await?;
+    let route = crate::vision::decide(
+        &active_llm_settings,
+        &attachments,
+        &cfg.vision,
+        crate::vision::history_has_image(&messages),
+    )
+    .await?;
     let started = std::time::Instant::now();
     // Runtime copy for post-turn image recovery (run_with_route consumes it).
     let recover_runtime = tool_runtime.clone();

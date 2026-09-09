@@ -268,23 +268,39 @@ pub enum Route {
 ///
 /// * `chat` — the settings of the slot serving this turn (its
 ///   image_recognition preference and server decide the native path)
-/// * `attachments` — what the user attached this turn
+/// * `attachments` — what the user attached THIS turn
 /// * `vision` — the host's vision settings
+/// * `history_has_image` — whether the built context still carries an
+///   image from a recent turn (see `history_has_image`). A text follow-up
+///   about the photo just sent must reach a model that can see it, or
+///   "Continue" after a photo answers blind.
 pub async fn decide(
     chat: &LlmSettings,
     attachments: &[Attachment],
     vision: &VisionSettings,
+    history_has_image: bool,
 ) -> Result<Route> {
-    let has_image = attachments.iter().any(is_image);
-    if !has_image {
+    let fresh_image = attachments.iter().any(is_image);
+    if !fresh_image && !history_has_image {
         return Ok(Route::Chat);
     }
+    let turn = if fresh_image { "image turn" } else { "follow-up about a recent image" };
     if chat_handles_images(chat).await {
-        tracing::info!(model = %chat.model, "image turn: chat model answers natively");
+        tracing::info!(model = %chat.model, "{}: chat model answers natively", turn);
         return Ok(Route::Chat);
     }
-    tracing::info!(model = %chat.model, "image turn: routing to the vision endpoint");
     if !vision.enabled || vision.primary.base_url.is_empty() || vision.primary.model.is_empty() {
+        if !fresh_image {
+            // Nothing can see the carried image, but the user typed plain
+            // text: run the turn on the chat model (the history image
+            // becomes a text marker there) rather than failing a text turn.
+            tracing::info!(
+                model = %chat.model,
+                "{}: no vision endpoint, chat model answers without the image",
+                turn
+            );
+            return Ok(Route::Chat);
+        }
         // Branch on WHY this slot can't take the image, or the advice
         // sends people to fixes that can't work (a slot pinned to
         // "external" ignores the chat model entirely; a probed "no"
@@ -303,6 +319,7 @@ pub async fn decide(
             ),
         });
     }
+    tracing::info!(model = %chat.model, "{}: routing to the vision endpoint", turn);
     let failover = if !vision.failover.base_url.is_empty() && !vision.failover.model.is_empty() {
         Some(vision.failover.clone())
     } else {
@@ -312,6 +329,39 @@ pub async fn decide(
         primary: vision.primary.clone(),
         failover,
     })
+}
+
+/// Does the built context still carry an image payload? True for the
+/// current turn's own attachments and for the newest recent image the
+/// context load carries forward (`db::messages::IMAGE_CARRY_ROWS`); older
+/// images are stripped at the SQL layer and never reach here.
+pub fn history_has_image(messages: &[crate::context::ChatMessage]) -> bool {
+    messages.iter().any(|m| {
+        matches!(
+            m,
+            crate::context::ChatMessage::User { image_data_urls, .. } if !image_data_urls.is_empty()
+        )
+    })
+}
+
+/// Should a vision turn on this endpoint keep the chat toolset? Yes when
+/// the endpoint is the same server AND model as an active chat slot: that
+/// pair already runs tool-enabled image turns on the chat path (verified
+/// on the fast slot), so the "arbitrary endpoint" caution that keeps other
+/// vision endpoints tool-free does not apply. Without this, a photo whose
+/// caption asks for a lookup ends after the model's announcement — it
+/// writes a tool call the pipeline then has to strip.
+pub fn endpoint_keeps_tools(ep: &VisionEndpoint, cfg: &crate::config::AppConfig) -> bool {
+    fn norm(url: &str) -> String {
+        url.trim().trim_end_matches('/').to_ascii_lowercase()
+    }
+    let (url, model) = (norm(&ep.base_url), ep.model.trim());
+    !url.is_empty()
+        && !model.is_empty()
+        && crate::slash::SLOTS.iter().any(|s| {
+            let slot = crate::slash::slot_settings(cfg, s);
+            slot.is_active() && norm(&slot.base_url) == url && slot.model.trim() == model
+        })
 }
 
 /// Convert a `VisionEndpoint` into the `LlmSettings` shape the existing
@@ -347,14 +397,15 @@ pub fn endpoint_to_llm_settings(ep: &VisionEndpoint, base: &LlmSettings) -> LlmS
 /// LlmClient pointed at the primary vision endpoint, and falls over to
 /// the failover endpoint exactly once on a transient error.
 ///
-/// Tools are intentionally disabled on the vision path. Most vision
-/// providers (Gemini, Anthropic via OpenAI-compat, vLLM/Ollama llava)
-/// either don't support function calling on multimodal turns, or do so
-/// inconsistently. The user-facing intent of "ask about this image" is
-/// also rarely a research session — keeping it single-shot avoids tool
-/// loops misfiring on multipart content.
+/// Tools stay off on the vision path for arbitrary endpoints — most hosted
+/// vision providers (Gemini, Anthropic via OpenAI-compat, vLLM/Ollama
+/// llava) handle function calling on multimodal turns inconsistently —
+/// EXCEPT when the endpoint is one of the household's own chat slots
+/// (`endpoint_keeps_tools`), which already run tool-enabled image turns
+/// natively.
 pub async fn run_with_route(
     route: Route,
+    cfg: &crate::config::AppConfig,
     default_client: crate::llm::LlmClient,
     chat_cfg: &LlmSettings,
     messages: Vec<crate::context::ChatMessage>,
@@ -454,43 +505,20 @@ pub async fn run_with_route(
             // accepts. (`None` already means "let the server decide".)
             const VISION_MAX_TOKENS: usize = 4096;
             let vision_max_tokens = max_tokens.map(|m| m.min(VISION_MAX_TOKENS));
-            // Send only the image just attached, not every image ever sent in
-            // this thread — otherwise the accumulated history 413s hosted
-            // providers and stalls local models in multi-image prefill.
-            let mut messages = keep_only_current_turn_images(messages);
-            // This route runs tool-free (arbitrary endpoint models handle
-            // multimodal function calling inconsistently) — SAY so, or a
-            // tool-trained model asked "is this real?" writes tool-call
-            // syntax into its visible reply and then claims it has no web
-            // access at all. Folded into the existing leading system
-            // message when there is one: strict templates reject a second
-            // system message anywhere after position 0.
-            const NO_TOOLS_NOTE: &str = "You are answering a single question about the \
-attached image, and no tools are available on this turn. Answer from the image itself. \
-If the question also needs live information (verifying claims, current prices, news), \
-describe what you see and suggest asking again as a plain text message, where KinAI's \
-normal tools apply. Never write tool-call syntax into your reply, and make no claims \
-about what KinAI can or cannot access — this turn's limits are not KinAI's limits.";
-            match messages.first_mut() {
-                Some(crate::context::ChatMessage::System { content }) => {
-                    content.push_str("\n\n");
-                    content.push_str(NO_TOOLS_NOTE);
-                }
-                _ => messages.insert(0, crate::context::ChatMessage::System {
-                    content: NO_TOOLS_NOTE.into(),
-                }),
-            }
-            let primary_client =
-                crate::llm::LlmClient::new(endpoint_to_llm_settings(&primary, chat_cfg));
-            // Vision turns skip tools — see function doc comment for why.
-            let no_tools: Vec<crate::tools::registry::ToolDef> = vec![];
-            let no_runtime = crate::tools::registry::ToolRuntime::default();
-            let attempt = run_pipeline(
-                primary_client,
+            // Send only the newest image — the one just attached, or the
+            // recent one the context load carried forward for a follow-up —
+            // not every image ever sent in this thread: the accumulated
+            // history 413s hosted providers and stalls local models in
+            // multi-image prefill.
+            let messages = keep_only_current_turn_images(messages);
+            let attempt = run_vision_endpoint(
+                &primary,
+                cfg,
+                chat_cfg,
                 messages.clone(),
-                no_tools.clone(),
+                &tools,
+                &tool_runtime,
                 vision_max_tokens,
-                no_runtime.clone(),
                 handlers.clone(),
                 cancel.clone(),
             )
@@ -501,7 +529,7 @@ about what KinAI can or cannot access — this turn's limits are not KinAI's lim
                     let msg = e.to_string();
                     let should_fail_over = failover.is_some() && is_transient_failure(&msg);
                     if !should_fail_over {
-                        return Err(e.into());
+                        return Err(e);
                     }
                     let fo = failover.unwrap();
                     tracing::warn!(
@@ -509,23 +537,75 @@ about what KinAI can or cannot access — this turn's limits are not KinAI's lim
                         primary.label,
                         fo.label
                     );
-                    let fo_client =
-                        crate::llm::LlmClient::new(endpoint_to_llm_settings(&fo, chat_cfg));
-                    run_pipeline(
-                        fo_client,
+                    run_vision_endpoint(
+                        &fo,
+                        cfg,
+                        chat_cfg,
                         messages,
-                        no_tools,
+                        &tools,
+                        &tool_runtime,
                         vision_max_tokens,
-                        no_runtime,
                         handlers,
                         cancel,
                     )
                     .await
-                    .map_err(Into::into)
                 }
             }
         }
     }
+}
+
+/// One vision-endpoint attempt. Tools ride along only when the endpoint is
+/// a household chat slot (`endpoint_keeps_tools`); otherwise the turn is
+/// tool-free and the system prompt SAYS so — a tool-trained model asked
+/// "is this real?" otherwise writes tool-call syntax into its visible reply
+/// and then claims it has no web access at all.
+#[allow(clippy::too_many_arguments)]
+async fn run_vision_endpoint(
+    ep: &VisionEndpoint,
+    cfg: &crate::config::AppConfig,
+    chat_cfg: &LlmSettings,
+    mut messages: Vec<crate::context::ChatMessage>,
+    tools: &[crate::tools::registry::ToolDef],
+    tool_runtime: &crate::tools::registry::ToolRuntime,
+    max_tokens: Option<usize>,
+    handlers: crate::tools::loop_pipeline::PipelineHandlers,
+    cancel: tokio_util::sync::CancellationToken,
+) -> Result<crate::tools::loop_pipeline::PipelineResult> {
+    let with_tools = !tools.is_empty() && endpoint_keeps_tools(ep, cfg);
+    tracing::info!(endpoint = %ep.label, model = %ep.model, tools = with_tools, "vision turn");
+    let (tools, runtime) = if with_tools {
+        (tools.to_vec(), tool_runtime.clone())
+    } else {
+        // Folded into the existing leading system message when there is
+        // one: strict templates reject a second system message anywhere
+        // after position 0.
+        const NO_TOOLS_NOTE: &str = "You are answering a single question about the \
+attached image, and no tools are available on this turn. Answer from the image itself. \
+If the question also needs live information (verifying claims, current prices, news), \
+describe what you see and suggest asking again as a plain text message, where KinAI's \
+normal tools apply. Never write tool-call syntax into your reply, and make no claims \
+about what KinAI can or cannot access — this turn's limits are not KinAI's limits.";
+        match messages.first_mut() {
+            Some(crate::context::ChatMessage::System { content }) => {
+                content.push_str("\n\n");
+                content.push_str(NO_TOOLS_NOTE);
+            }
+            _ => messages.insert(
+                0,
+                crate::context::ChatMessage::System {
+                    content: NO_TOOLS_NOTE.into(),
+                },
+            ),
+        }
+        (Vec::new(), crate::tools::registry::ToolRuntime::default())
+    };
+    let client = crate::llm::LlmClient::new(endpoint_to_llm_settings(ep, chat_cfg));
+    crate::tools::loop_pipeline::run_pipeline(
+        client, messages, tools, max_tokens, runtime, handlers, cancel,
+    )
+    .await
+    .map_err(Into::into)
 }
 
 /// Returns true when a primary-endpoint failure warrants trying the
@@ -766,5 +846,109 @@ mod vision_history_tests {
         } else {
             panic!("expected User");
         }
+    }
+}
+
+#[cfg(test)]
+mod carried_image_route_tests {
+    use super::*;
+    use crate::config::{AppConfig, VisionEndpoint, VisionSettings};
+    use crate::context::ChatMessage;
+
+    /// An openai-compat slot: no llama.cpp probe runs, and the model name
+    /// is not on the vision list — the slot cannot see.
+    fn blind_chat() -> LlmSettings {
+        let mut s = LlmSettings::default();
+        s.provider = "openai-compat".into();
+        s.base_url = "https://api.example.test".into();
+        s.model = "text-only-model".into();
+        s.image_recognition = "auto".into();
+        s
+    }
+
+    fn vision_on() -> VisionSettings {
+        VisionSettings {
+            enabled: true,
+            primary: VisionEndpoint {
+                label: "Local".into(),
+                base_url: "http://10.0.0.1:8081".into(),
+                model: "see-model".into(),
+                api_key: None,
+            },
+            failover: VisionEndpoint::default(),
+        }
+    }
+
+    fn img() -> Attachment {
+        Attachment {
+            kind: "image".into(),
+            mime: Some("image/jpeg".into()),
+            name: Some("photo.jpg".into()),
+            data_url: Some("data:image/jpeg;base64,QUJD".into()),
+        }
+    }
+
+    #[tokio::test]
+    async fn text_follow_up_about_a_carried_image_routes_to_vision() {
+        let route = decide(&blind_chat(), &[], &vision_on(), true).await.unwrap();
+        assert!(matches!(route, Route::Vision { .. }), "carried image must reach a model that sees");
+    }
+
+    #[tokio::test]
+    async fn plain_text_turn_stays_on_chat() {
+        let route = decide(&blind_chat(), &[], &vision_on(), false).await.unwrap();
+        assert!(matches!(route, Route::Chat));
+    }
+
+    #[tokio::test]
+    async fn carried_image_without_a_vision_endpoint_still_answers() {
+        let route = decide(&blind_chat(), &[], &VisionSettings::default(), true)
+            .await
+            .unwrap();
+        assert!(matches!(route, Route::Chat), "a text turn must not fail over a stale image");
+        // A FRESH image with nowhere to go is still an error the user can fix.
+        assert!(decide(&blind_chat(), &[img()], &VisionSettings::default(), false)
+            .await
+            .is_err());
+    }
+
+    #[test]
+    fn history_has_image_sees_any_user_image() {
+        let msgs = vec![
+            ChatMessage::User {
+                content: "photo".into(),
+                name: None,
+                image_data_urls: vec!["data:image/png;base64,A".into()],
+            },
+            ChatMessage::Assistant { content: "ok".into(), tool_calls: vec![] },
+            ChatMessage::User {
+                content: "Continue".into(),
+                name: None,
+                image_data_urls: vec![],
+            },
+        ];
+        assert!(history_has_image(&msgs));
+        assert!(!history_has_image(&msgs[1..]));
+    }
+
+    #[test]
+    fn tools_stay_on_only_for_a_household_chat_slot() {
+        let mut cfg = AppConfig::default();
+        cfg.llm.enabled = true;
+        cfg.llm.base_url = "http://10.0.0.1:8081/".into();
+        cfg.llm.model = "see-model".into();
+        let ep = vision_on().primary;
+        assert!(endpoint_keeps_tools(&ep, &cfg), "same server + model as the fast slot");
+
+        let mut other = ep.clone();
+        other.model = "other-model".into();
+        assert!(!endpoint_keeps_tools(&other, &cfg), "same server, different model");
+
+        let mut hosted = ep.clone();
+        hosted.base_url = "https://vision.example.test".into();
+        assert!(!endpoint_keeps_tools(&hosted, &cfg), "a hosted endpoint stays tool-free");
+
+        cfg.llm.enabled = false;
+        assert!(!endpoint_keeps_tools(&ep, &cfg), "an inactive slot is no evidence");
     }
 }

@@ -101,8 +101,9 @@ impl Db {
         peer_id: &str,
         thread_id: &str,
         limit: i64,
+        current_msg_id: Option<&str>,
     ) -> Result<Vec<Message>> {
-        messages::load_for_context(&self.pool, peer_id, thread_id, limit).await
+        messages::load_for_context(&self.pool, peer_id, thread_id, limit, current_msg_id).await
     }
     pub async fn search_messages(
         &self,
