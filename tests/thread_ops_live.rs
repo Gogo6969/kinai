@@ -65,6 +65,7 @@ async fn client_thread_delete_reaches_the_host() {
         token: invite.jwt.clone(),
         display_name: "Thread Op Test".into(),
         client_version: env!("CARGO_PKG_VERSION").into(),
+        tz: String::new(),
     };
     sink.send(WsMessage::Text(serde_json::to_string(&hello).unwrap().into()))
         .await

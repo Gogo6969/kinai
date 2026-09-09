@@ -1638,6 +1638,143 @@ async fn client_user_facts_request(
     }
 }
 
+// ---- Reminders ----
+//
+// Same shape as the user-facts commands: the frontend calls one name in
+// both modes, and the command either reads the host DB as HOST_PEER or
+// speaks the envelope protocol to the family's host and awaits the reply.
+
+/// `ListReminders` → `Reminders` (client mode). One slot with an in-flight
+/// guard — the Calendar and the popup queue never overlap their loads.
+async fn client_reminders_request(
+    state: &tauri::State<'_, SharedState>,
+) -> Result<Vec<db::Reminder>> {
+    let host_ok = state
+        .stats
+        .read()
+        .host_info
+        .as_ref()
+        .map(|h| h.host_reminders)
+        .unwrap_or(false);
+    if !host_ok {
+        return Err(
+            "Your family's KinAI host needs updating before reminders work from this device."
+                .into(),
+        );
+    }
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let tx = {
+        let mut net = state.net.lock().await;
+        if net.reminders_pending.is_some() {
+            return Err(
+                "another reminders request is already in flight; try again in a moment".into(),
+            );
+        }
+        net.reminders_pending = Some(sender);
+        net.client_tx.clone()
+    };
+    let Some(tx) = tx else {
+        state.net.lock().await.reminders_pending = None;
+        return Err("Not connected to your family's KinAI host.".into());
+    };
+    if tx
+        .send(crate::network::protocol::Envelope::ListReminders)
+        .is_err()
+    {
+        state.net.lock().await.reminders_pending = None;
+        return Err("Lost the host connection.".into());
+    }
+    match tokio::time::timeout(std::time::Duration::from_secs(10), receiver).await {
+        Ok(Ok(items)) => Ok(items),
+        _ => {
+            state.net.lock().await.reminders_pending = None;
+            Err("timed out waiting for the host's reminders".into())
+        }
+    }
+}
+
+/// `ReminderAction` → `ReminderActionAck` (client mode), keyed by the
+/// reminder id so the popup and the Calendar can act on different rows.
+async fn client_reminder_action(
+    state: &tauri::State<'_, SharedState>,
+    id: &str,
+    action: &str,
+    snooze_minutes: u32,
+) -> Result<Option<db::Reminder>> {
+    let host_ok = state
+        .stats
+        .read()
+        .host_info
+        .as_ref()
+        .map(|h| h.host_reminders)
+        .unwrap_or(false);
+    if !host_ok {
+        return Err(
+            "Your family's KinAI host needs updating before reminders work from this device."
+                .into(),
+        );
+    }
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let tx = {
+        let mut net = state.net.lock().await;
+        net.reminder_action_pending.insert(id.to_string(), sender);
+        net.client_tx.clone()
+    };
+    let Some(tx) = tx else {
+        state.net.lock().await.reminder_action_pending.remove(id);
+        return Err("Not connected to your family's KinAI host.".into());
+    };
+    let envelope = crate::network::protocol::Envelope::ReminderAction {
+        id: id.to_string(),
+        action: action.to_string(),
+        snooze_minutes,
+    };
+    if tx.send(envelope).is_err() {
+        state.net.lock().await.reminder_action_pending.remove(id);
+        return Err("Lost the host connection before the reminder could be updated.".into());
+    }
+    let outcome = match tokio::time::timeout(std::time::Duration::from_secs(15), receiver).await {
+        Err(_) => Err("The host didn't confirm the change — please try again.".to_string()),
+        Ok(Err(_)) => Err("The host dropped the request.".to_string()),
+        Ok(Ok((true, _msg, reminder))) => Ok(reminder),
+        Ok(Ok((false, msg, _))) => Err(msg),
+    };
+    state.net.lock().await.reminder_action_pending.remove(id);
+    outcome
+}
+
+/// The member's reminders, soonest first (cancelled ones excluded).
+#[tauri::command]
+pub async fn list_reminders(
+    state: tauri::State<'_, SharedState>,
+) -> Result<Vec<db::Reminder>> {
+    if matches!(state.config.read().mode, Mode::Client) {
+        return client_reminders_request(&state).await;
+    }
+    state.db.list_reminders(db::HOST_PEER).await.map_err(err)
+}
+
+/// `action` is "ack", "snooze" or "delete"; `snooze_minutes` only matters
+/// for "snooze" (0 = default). Returns the updated row, or None after a
+/// delete.
+#[tauri::command]
+pub async fn reminder_action(
+    state: tauri::State<'_, SharedState>,
+    id: String,
+    action: String,
+    snooze_minutes: Option<u32>,
+) -> Result<Option<db::Reminder>> {
+    let minutes = snooze_minutes.unwrap_or(0);
+    if matches!(state.config.read().mode, Mode::Client) {
+        return client_reminder_action(&state, &id, &action, minutes).await;
+    }
+    state
+        .db
+        .apply_reminder_action(db::HOST_PEER, &id, &action, minutes)
+        .await
+        .map_err(err)
+}
+
 #[tauri::command]
 pub async fn list_user_facts(
     state: tauri::State<'_, SharedState>,

@@ -91,6 +91,7 @@ async fn a_follow_up_about_a_photo_still_sees_it() {
         token: invite.jwt.clone(),
         display_name: "Photo Test".into(),
         client_version: env!("CARGO_PKG_VERSION").into(),
+        tz: String::new(),
     };
     sink.send(WsMessage::Text(serde_json::to_string(&hello).unwrap().into()))
         .await

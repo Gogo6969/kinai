@@ -2,6 +2,8 @@
 
 mod memory;
 pub mod messages;
+pub mod peers;
+pub mod reminders;
 pub mod reports;
 pub(crate) mod migrate;
 pub mod telegram;
@@ -13,6 +15,7 @@ use anyhow::Result;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 
 pub use memory::MemoryNote;
+pub use reminders::Reminder;
 pub use reports::Report;
 pub use messages::{Attachment, Message, SearchHit, ThreadMeta, HOST_PEER};
 pub use user_facts::UserFact;
@@ -259,5 +262,109 @@ impl Db {
 
     pub async fn clear_user_facts(&self, peer_id: &str) -> Result<u64> {
         user_facts::clear_all(&self.pool, peer_id).await
+    }
+
+    // ---- Reminders (per-member timed nudges) ----
+
+    pub async fn create_reminder(
+        &self,
+        peer_id: &str,
+        thread_id: Option<&str>,
+        text: &str,
+        due_at: chrono::DateTime<chrono::Utc>,
+        tz: &str,
+        source_msg_id: Option<&str>,
+    ) -> Result<Reminder> {
+        reminders::create(&self.pool, peer_id, thread_id, text, due_at, tz, source_msg_id).await
+    }
+
+    /// A member's reminders, soonest first, cancelled ones excluded.
+    pub async fn list_reminders(&self, peer_id: &str) -> Result<Vec<Reminder>> {
+        reminders::list_for_peer(&self.pool, peer_id, false).await
+    }
+
+    pub async fn get_reminder(&self, peer_id: &str, id: &str) -> Result<Option<Reminder>> {
+        reminders::get(&self.pool, peer_id, id).await
+    }
+
+    pub async fn find_reminders_by_prefix(
+        &self,
+        peer_id: &str,
+        prefix: &str,
+    ) -> Result<Vec<Reminder>> {
+        reminders::find_by_prefix(&self.pool, peer_id, prefix).await
+    }
+
+    pub async fn find_finished_reminders_by_prefix(
+        &self,
+        peer_id: &str,
+        prefix: &str,
+    ) -> Result<Vec<Reminder>> {
+        reminders::finished_by_prefix(&self.pool, peer_id, prefix).await
+    }
+
+    /// The model's view: live reminders only, soonest first, bounded.
+    /// The Calendar uses `list_reminders`, which keeps the history.
+    pub async fn list_live_reminders(
+        &self,
+        peer_id: &str,
+        limit: i64,
+    ) -> Result<Vec<Reminder>> {
+        reminders::list_live_for_peer(&self.pool, peer_id, limit).await
+    }
+
+    pub async fn count_live_reminders(&self, peer_id: &str) -> Result<i64> {
+        reminders::count_live_for_peer(&self.pool, peer_id).await
+    }
+
+    /// Cross-peer by design: the scheduler leases for the whole household
+    /// and routes each row by `Reminder::peer_id`. Never expose to a client.
+    pub async fn lease_due_reminders(
+        &self,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<Reminder>> {
+        reminders::lease_due(&self.pool, now).await
+    }
+
+    /// Cross-peer by design — see `lease_due_reminders`.
+    pub async fn release_stuck_reminders(
+        &self,
+        older_than: chrono::DateTime<chrono::Utc>,
+    ) -> Result<u64> {
+        reminders::release_stuck(&self.pool, older_than).await
+    }
+
+    pub async fn mark_reminder_fired(&self, peer_id: &str, id: &str) -> Result<bool> {
+        reminders::mark_fired(&self.pool, peer_id, id).await
+    }
+
+    pub async fn cancel_reminder(&self, peer_id: &str, id: &str) -> Result<bool> {
+        reminders::cancel(&self.pool, peer_id, id).await
+    }
+
+    /// "ack" / "snooze" / "delete" from the popup, the Calendar or a client.
+    pub async fn apply_reminder_action(
+        &self,
+        peer_id: &str,
+        id: &str,
+        action: &str,
+        snooze_minutes: u32,
+    ) -> Result<Option<Reminder>> {
+        reminders::apply_action(&self.pool, peer_id, id, action, snooze_minutes).await
+    }
+
+    // ---- Peers (device identities) ----
+
+    pub async fn upsert_peer_on_connect(
+        &self,
+        id: &str,
+        display_name: &str,
+        tz: Option<&str>,
+    ) -> Result<()> {
+        peers::upsert_on_connect(&self.pool, id, display_name, tz).await
+    }
+
+    pub async fn peer_tz(&self, peer_id: &str) -> Result<Option<String>> {
+        peers::tz(&self.pool, peer_id).await
     }
 }

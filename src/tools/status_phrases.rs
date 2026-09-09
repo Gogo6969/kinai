@@ -62,6 +62,12 @@ const FORGETTING: &[&str] = &["Updating what I remember…", "Forgetting that…
 
 const CLOCK: &[&str] = &["Checking the date…"];
 
+const REMINDING: &[&str] = &["Setting a reminder…", "Putting that in your calendar…"];
+
+const LISTING_REMINDERS: &[&str] = &["Checking your reminders…", "Looking at your calendar…"];
+
+const CANCELLING: &[&str] = &["Cancelling that reminder…", "Taking that off your calendar…"];
+
 const GENERIC: &[&str] = &["Working on it…", "On it…", "One moment…"];
 
 fn set_for(tool: &str) -> &'static [&'static str] {
@@ -75,6 +81,9 @@ fn set_for(tool: &str) -> &'static [&'static str] {
         "remember" => REMEMBERING,
         "forget" => FORGETTING,
         "datetime" => CLOCK,
+        "set_reminder" => REMINDING,
+        "list_reminders" => LISTING_REMINDERS,
+        "cancel_reminder" => CANCELLING,
         // An unknown tool is a real possibility (the catalogue grows);
         // a vague-but-true line beats naming the wrong activity.
         _ => GENERIC,
@@ -98,7 +107,8 @@ mod tests {
         // through to GENERIC is a miss, not a crash, so assert directly.
         for t in ["web_search", "fetch_page", "x_search", "image_search",
                   "calculator", "remember", "forget", "datetime",
-                  "video_transcript"] {
+                  "video_transcript", "set_reminder", "list_reminders",
+                  "cancel_reminder"] {
             assert!(!std::ptr::eq(set_for(t), GENERIC), "{t} has no phrases of its own");
             assert!(!phrase_for(t).is_empty());
         }

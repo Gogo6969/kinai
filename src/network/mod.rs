@@ -91,6 +91,13 @@ pub struct NetState {
     pub report_pending: HashMap<String, oneshot::Sender<(bool, String)>>,
     /// Pending thread delete/rename round-trips keyed by thread_id.
     pub thread_op_pending: HashMap<String, oneshot::Sender<(bool, String)>>,
+    /// Pending `ListReminders` → `Reminders` round-trip. One slot: the
+    /// Calendar and the popup queue only ever have one list in flight.
+    pub reminders_pending: Option<oneshot::Sender<Vec<crate::db::Reminder>>>,
+    /// Pending `ReminderAction` → `ReminderActionAck`, keyed by reminder
+    /// id — the popup and the Calendar may act on different rows at once.
+    pub reminder_action_pending:
+        HashMap<String, oneshot::Sender<(bool, String, Option<crate::db::Reminder>)>>,
 }
 
 impl Default for NetState {
@@ -111,6 +118,8 @@ impl Default for NetState {
             fact_check_pending: HashMap::new(),
             report_pending: HashMap::new(),
             thread_op_pending: HashMap::new(),
+            reminders_pending: None,
+            reminder_action_pending: HashMap::new(),
         }
     }
 }

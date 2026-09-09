@@ -189,10 +189,17 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
     let text = frame_text(&hello_frame)
         .ok_or_else(|| anyhow::anyhow!("hello not text"))?;
     let envelope: Envelope = serde_json::from_str(&text)?;
-    let (token, display_name) = match envelope {
-        Envelope::Hello { token, display_name, .. } => (token, display_name),
+    let (token, display_name, tz) = match envelope {
+        Envelope::Hello { token, display_name, tz, .. } => (token, display_name, tz),
         _ => return Err(anyhow::anyhow!("expected Hello frame")),
     };
+    // Untrusted client input that later lands in a prompt: keep it only
+    // when it is a real IANA zone name, spelled the canonical way.
+    let peer_tz: Option<String> = tz
+        .trim()
+        .parse::<chrono_tz::Tz>()
+        .ok()
+        .map(|z| z.name().to_string());
 
     let host_url = {
         let stats = s.app.stats.read();
@@ -268,6 +275,16 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
         );
         s.app.stats.write().peers_connected = net.peers.len();
     }
+    // Remember the device's zone (keyed by the storage peer id, the same
+    // value threads/facts/reminders use) — after the net lock is gone.
+    if let Err(e) = s
+        .app
+        .db
+        .upsert_peer_on_connect(&claims.sub, &display_name, peer_tz.as_deref())
+        .await
+    {
+        tracing::warn!("peer upsert failed: {e:#}");
+    }
     let _ = s.tauri.emit(
         "kinai://peer-joined",
         serde_json::json!({"id": peer_id, "name": display_name}),
@@ -335,6 +352,7 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
         host_fact_check,
         host_reports: true,
         host_thread_ops: true,
+        host_reminders: true,
     });
 
     let writer = tokio::spawn(async move {
@@ -368,8 +386,17 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
         // decorative for anything a client can trigger in a loop.
         if matches!(env, Envelope::SendMessage { .. } | Envelope::FactCheckRequest { .. }
             | Envelope::ReportAnswer { .. } | Envelope::DeleteThread { .. }
-            | Envelope::RenameThread { .. })
+            | Envelope::RenameThread { .. } | Envelope::ReminderAction { .. })
             && !s.rate.allow(&claims.sub) {
+            // Same for a reminder action: the popup waits for this ack.
+            if let Envelope::ReminderAction { id, .. } = &env {
+                let _ = tx.send(Envelope::ReminderActionAck {
+                    id: id.clone(),
+                    ok: false,
+                    message: "Too many requests just now — wait a moment and try again.".into(),
+                    reminder: None,
+                });
+            }
             // A rejected REPORT still needs its ack, or the client's
             // round-trip waits out the full timeout and then blames a
             // timeout for what was really a rate limit.
@@ -484,10 +511,47 @@ async fn dispatch(
             let facts = s.app.db.list_user_facts(context_peer).await?;
             let _ = tx.send(Envelope::UserFacts { facts });
         }
+        Envelope::ListReminders => {
+            let items = s.app.db.list_reminders(context_peer).await?;
+            let _ = tx.send(Envelope::Reminders { items });
+        }
+        Envelope::ReminderAction {
+            id,
+            action,
+            snooze_minutes,
+        } => {
+            // Never `?` out of here: the popup on the device is waiting
+            // for THIS ack, and a generic Error frame can't be correlated.
+            let (ok, message, reminder) = match s
+                .app
+                .db
+                .apply_reminder_action(context_peer, &id, &action, snooze_minutes)
+                .await
+            {
+                Ok(r) => (true, "Reminder updated.".to_string(), r),
+                Err(e) => {
+                    tracing::warn!(id = %id, "reminder action failed: {e:#}");
+                    (
+                        false,
+                        "That reminder couldn't be updated — it may already be done.".to_string(),
+                        None,
+                    )
+                }
+            };
+            let _ = tx.send(Envelope::ReminderActionAck {
+                id,
+                ok,
+                message,
+                reminder,
+            });
+        }
         // Response envelope — host shouldn't receive this from a client.
         // Silently ignore (better than panicking) since a buggy/old
         // client could conceivably echo it back.
-        Envelope::UserFacts { .. } => {}
+        Envelope::UserFacts { .. }
+        | Envelope::Reminders { .. }
+        | Envelope::ReminderActionAck { .. }
+        | Envelope::Reminder { .. } => {}
         Envelope::SendMessage {
             thread_id,
             content,

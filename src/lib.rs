@@ -14,6 +14,7 @@ pub mod factcheck;
 pub mod hotkey;
 pub mod llm;
 pub mod network;
+pub mod reminders;
 pub mod slash;
 pub mod telegram;
 pub mod tools;
@@ -110,6 +111,9 @@ pub struct HostInfo {
     pub host_reports: bool,
     /// Host applies client-initiated thread delete/rename (0.2.86+).
     pub host_thread_ops: bool,
+    /// Host schedules and delivers reminders (0.2.120+) — gates the
+    /// Calendar entry and the reminder round-trips on the client.
+    pub host_reminders: bool,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -395,6 +399,8 @@ pub fn run() {
             commands::save_user_fact,
             commands::delete_user_fact,
             commands::clear_user_facts,
+            commands::list_reminders,
+            commands::reminder_action,
             commands::set_tts_config,
             commands::tts_supported,
             commands::set_stt_config,
@@ -470,6 +476,10 @@ pub fn run() {
                         tracing::warn!("telegram start: {e:?}");
                     }
                 });
+                // Reminder scheduler — spawned in every mode like the
+                // Telegram loop, and gated on Mode::Host per tick, so a
+                // machine that becomes the host later needs no relaunch.
+                reminders::spawn(st.clone(), app.handle().clone());
 
                 // Window-on-launch policy:
                 //   * Manual launch (user double-clicked, dock click, etc.) →

@@ -413,7 +413,10 @@ without it.",
                         return (call, Outcome::Skipped { note });
                     }
                     // Writers wait their turn; read-only tools run freely.
-                    let _permit = if matches!(call.function.name.as_str(), "remember" | "forget") {
+                    let _permit = if matches!(
+                        call.function.name.as_str(),
+                        "remember" | "forget" | "set_reminder" | "cancel_reminder"
+                    ) {
                         Some(mutation_gate.acquire().await)
                     } else {
                         None

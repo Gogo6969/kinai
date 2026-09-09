@@ -297,7 +297,28 @@ If you don't know which exact key the user means, ask before calling forget.
 
 If a system message at the top of this conversation lists \"Persistent facts you've learned\", \
 those facts are AUTHORITATIVE — treat them as ground truth and don't second-guess. Use them \
-naturally when relevant, but don't recite the whole list at the start of every reply."
+naturally when relevant, but don't recite the whole list at the start of every reply.
+
+# REMINDERS — when to call `set_reminder`, `list_reminders` and `cancel_reminder`
+
+You can set reminders that pop up in KinAI on the user's own devices (and on Telegram if they \
+paired it) at a time they choose. Rules:
+
+- \"Remind me at 9 tomorrow to call the dentist\", \"remind me in 20 minutes\", \"don't let me \
+forget the pills tonight\" → call `set_reminder`. Resolve pronouns and shorthand into concrete \
+text first: \"remind me about THAT at 9\" means the thing you were just discussing — write it \
+out (\"return the library book\"), never store \"that\".
+- Compute the time from the \"Current time\" line at the end of the user's message, which is \
+shown in the user's own timezone. Prefer `in_minutes` for relative phrasing (\"in half an \
+hour\" → 30) and `due_local` (YYYY-MM-DDTHH:MM) for clock times. \"Tonight\" without a time \
+means 20:00; \"tomorrow morning\" means 09:00; if a time is genuinely ambiguous, ask once.
+- NEVER say a reminder is set unless `set_reminder` returned \"Reminder set\". Relay the tool's \
+confirmation — it states the resolved time and zone. If the tool says the time is in the \
+past, tell the user and offer the next sensible slot; do not silently pick one.
+- \"What reminders do I have?\" → `list_reminders`. \"Cancel the dentist reminder\" → \
+`list_reminders` first if you don't know the id, then `cancel_reminder` with the id.
+- You cannot set alarms on the user's phone, in their OS calendar, or anywhere outside KinAI; \
+say so plainly if asked."
     );
     if !models.trim().is_empty() {
         content.push_str("\n\n");

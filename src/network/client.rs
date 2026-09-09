@@ -163,6 +163,8 @@ pub async fn connect(
         token,
         display_name,
         client_version: env!("CARGO_PKG_VERSION").into(),
+        // So the host can schedule "9am" as THIS machine's 9am.
+        tz: iana_time_zone::get_timezone().unwrap_or_default(),
     };
     if let Err(e) = sink
         .send(WsMessage::Text(serde_json::to_string(&hello)?.into()))
@@ -285,6 +287,7 @@ pub async fn connect(
                 host_fact_check,
                 host_reports,
                 host_thread_ops,
+                host_reminders,
             } => {
                 {
                     let mut stats = state.stats.write();
@@ -299,6 +302,7 @@ pub async fn connect(
                         host_fact_check,
                         host_reports,
                         host_thread_ops,
+                        host_reminders,
                     });
                 }
                 let _ = app.emit(
@@ -314,6 +318,7 @@ pub async fn connect(
                         "host_fact_check": host_fact_check,
                         "host_reports": host_reports,
                         "host_thread_ops": host_thread_ops,
+                        "host_reminders": host_reminders,
                     }),
                 );
             }
@@ -368,6 +373,28 @@ pub async fn connect(
                     let _ = tx.send(facts);
                 }
                 drop(net);
+            }
+            Envelope::Reminders { items } => {
+                let mut net = state.net.lock().await;
+                if let Some(tx) = net.reminders_pending.take() {
+                    let _ = tx.send(items);
+                }
+            }
+            Envelope::ReminderActionAck {
+                id,
+                ok,
+                message,
+                reminder,
+            } => {
+                let mut net = state.net.lock().await;
+                if let Some(tx) = net.reminder_action_pending.remove(&id) {
+                    let _ = tx.send((ok, message, reminder));
+                }
+            }
+            Envelope::Reminder { reminder } => {
+                // Same event name the host window uses, so the frontend has
+                // one code path for "a reminder just came due".
+                let _ = app.emit(crate::reminders::EVENT, &reminder);
             }
             Envelope::Error { message } => {
                 // Surface authoritative host-side errors (e.g. "invite revoked",
@@ -513,6 +540,14 @@ pub async fn connect(
                 "Lost the connection to your KinAI host — the change wasn't saved.".to_string(),
             ));
         }
+        for (_, tx) in net.reminder_action_pending.drain() {
+            let _ = tx.send((
+                false,
+                "Lost the connection to your KinAI host — the reminder wasn't updated.".to_string(),
+                None,
+            ));
+        }
+        net.reminders_pending = None;
         for (_, tx) in net.report_pending.drain() {
             let _ = tx.send((
                 false,

@@ -52,6 +52,11 @@ pub enum Envelope {
         token: String,
         display_name: String,
         client_version: String,
+        /// IANA zone of the client machine ("Europe/Berlin"), so reminders
+        /// fire at the member's local time. Empty on older clients or when
+        /// the OS lookup fails; the host validates it before use.
+        #[serde(default)]
+        tz: String,
     },
     Welcome {
         family_name: String,
@@ -101,6 +106,10 @@ pub enum Envelope {
         /// hang until its timeout. Gate the button on this.
         #[serde(default)]
         host_reports: bool,
+        /// Host schedules and delivers reminders (0.2.120+) — gates the
+        /// Calendar entry and the reminder envelopes on the client.
+        #[serde(default)]
+        host_reminders: bool,
     },
     /// Client → Host: please mint a pairing token for me (the requesting
     /// client peer). The host responds with `TelegramPair`. No payload —
@@ -290,5 +299,37 @@ pub enum Envelope {
     ClearUserFacts,
     UserFacts {
         facts: Vec<crate::db::UserFact>,
+    },
+    // ---- Reminders (0.2.120+). Gated on `Welcome.host_reminders`: an
+    // older host answers an unknown variant with a generic Error the
+    // client cannot correlate, so the client never sends these without
+    // the flag. ----
+    /// Client → Host: my reminders, please. Answered with `Reminders`.
+    ListReminders,
+    /// Host → Client: the member's reminders, soonest first.
+    Reminders {
+        items: Vec<crate::db::Reminder>,
+    },
+    /// Client → Host: `action` is "ack", "snooze" or "delete";
+    /// `snooze_minutes` only matters for "snooze" (0 = default 10).
+    ReminderAction {
+        id: String,
+        action: String,
+        #[serde(default)]
+        snooze_minutes: u32,
+    },
+    /// Host → Client: outcome of a `ReminderAction`. `reminder` is the
+    /// updated row, or None after a delete or on failure.
+    ReminderActionAck {
+        id: String,
+        ok: bool,
+        message: String,
+        #[serde(default)]
+        reminder: Option<crate::db::Reminder>,
+    },
+    /// Host → Client, UNSOLICITED: a reminder just came due. The client
+    /// raises the popup and the OS notification from this.
+    Reminder {
+        reminder: crate::db::Reminder,
     },
 }

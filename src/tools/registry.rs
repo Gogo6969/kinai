@@ -110,6 +110,12 @@ pub fn enabled(settings: &ToolSettings) -> Vec<ToolDef> {
     // what's stored, which the Settings UI provides.
     out.push(remember_def());
     out.push(forget_def());
+    // Reminders are always-on for the same reason: the member controls
+    // them through the Calendar, so gating the tool would only stop the
+    // model from setting what they asked for.
+    out.push(set_reminder_def());
+    out.push(list_reminders_def());
+    out.push(cancel_reminder_def());
     out
 }
 
@@ -177,7 +183,207 @@ pub async fn execute(name: &str, args_json: &str, runtime: &ToolRuntime) -> Resu
             let value = super::calculator::eval(expr)?;
             Ok(format!("{} = {}", expr, value))
         }
-        "datetime" => Ok(super::datetime::now_pretty()),
+        "datetime" => {
+            // In the member's zone when the turn knows who is asking.
+            if let (Some(db), Some(peer)) = (runtime.db.as_ref(), runtime.peer_id.as_deref()) {
+                let facts = db.user_facts_for_prompt(peer).await.unwrap_or_default();
+                let tz = super::datetime::resolve_peer_tz(db, peer, &facts).await;
+                Ok(super::datetime::now_pretty_in(tz))
+            } else {
+                Ok(super::datetime::now_pretty())
+            }
+        }
+        "set_reminder" => {
+            let text = args
+                .get("text")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow!("missing text"))?;
+            let db = runtime
+                .db
+                .as_ref()
+                .ok_or_else(|| anyhow!("reminder tools require a DB; tool runtime has none"))?;
+            let peer = runtime
+                .peer_id
+                .as_deref()
+                .ok_or_else(|| anyhow!("reminder tools require peer_id"))?;
+            let facts = db.user_facts_for_prompt(peer).await.unwrap_or_default();
+            let tz = super::datetime::resolve_peer_tz(db, peer, &facts).await;
+            let tz_name = tz
+                .map(|z| z.name().to_string())
+                .unwrap_or_else(super::datetime::host_tz_name);
+            let now = chrono::Utc::now();
+            // Every user-level outcome below is Ok(text): the loop treats an
+            // Err as a failed lookup and tells the family their web search
+            // broke. Only real infrastructure failures are errors.
+            //
+            // Length is checked HERE and not left to the DB, whose `bail!`
+            // would become exactly that misleading Err.
+            if text.chars().count() > crate::db::reminders::MAX_TEXT_CHARS {
+                return Ok(format!(
+                    "That reminder text is too long ({} characters; the limit is {}). Shorten it \
+                     to the essentials and try again — nothing was set.",
+                    text.chars().count(),
+                    crate::db::reminders::MAX_TEXT_CHARS
+                ));
+            }
+            // A model may hand over an absurd `in_minutes`; chrono's Add
+            // PANICS on overflow, which would kill the whole turn instead
+            // of answering. Bound it against the same 366-day rule below.
+            const MAX_MINUTES: i64 = 366 * 24 * 60;
+            let due = if let Some(m) = args.get("in_minutes").and_then(|v| v.as_i64()) {
+                if m < 1 {
+                    return Ok("A reminder needs to be at least one minute away — nothing was set.".into());
+                }
+                if m > MAX_MINUTES {
+                    return Ok("That's more than a year away — nothing was set. Pick a date within \
+                               the next year."
+                        .into());
+                }
+                now + chrono::Duration::minutes(m)
+            } else if let Some(local) = args.get("due_local").and_then(|v| v.as_str()) {
+                match super::datetime::local_to_utc(local, tz) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        return Ok(format!(
+                            "I couldn't read that time ({e}). Give it as YYYY-MM-DDTHH:MM in the \
+                             user's timezone, or say how many minutes from now. Nothing was set."
+                        ))
+                    }
+                }
+            } else {
+                return Ok("Tell me when: pass due_local (YYYY-MM-DDTHH:MM in the user's \
+                           timezone) or in_minutes. Nothing was set."
+                    .into());
+            };
+            if due <= now {
+                return Ok(format!(
+                    "{} ({}) is already in the past — it's {} now. Did you mean tomorrow, or \
+                     another day? Nothing was set.",
+                    pretty_local(&crate::db::reminders::local_display(due, &tz_name)),
+                    tz_name,
+                    pretty_local(&crate::db::reminders::local_display(now, &tz_name)),
+                ));
+            }
+            if due > now + chrono::Duration::days(366) {
+                return Ok("That's more than a year away — nothing was set. Pick a date within \
+                           the next year."
+                    .into());
+            }
+            let r = db
+                .create_reminder(peer, None, text, due, &tz_name, runtime.source_msg_id.as_deref())
+                .await?;
+            Ok(format!(
+                "Reminder set for {} ({}): {}. It will pop up in KinAI on your devices, and on \
+                 Telegram if you're paired. [id {}]",
+                pretty_local(&r.due_local),
+                r.tz,
+                r.text,
+                short_id(&r.id)
+            ))
+        }
+        "list_reminders" => {
+            let db = runtime
+                .db
+                .as_ref()
+                .ok_or_else(|| anyhow!("reminder tools require a DB; tool runtime has none"))?;
+            let peer = runtime
+                .peer_id
+                .as_deref()
+                .ok_or_else(|| anyhow!("reminder tools require peer_id"))?;
+            // Live reminders only, and bounded: finished ones are history
+            // for the Calendar, and an unbounded oldest-first list would
+            // push the upcoming ones past the tool-result cap after a few
+            // months of daily use.
+            const LIST_LIMIT: i64 = 25;
+            let items = db.list_live_reminders(peer, LIST_LIMIT).await?;
+            if items.is_empty() {
+                return Ok("No reminders are set.".into());
+            }
+            let total = db.count_live_reminders(peer).await.unwrap_or(items.len() as i64);
+            let mut out = String::from("Reminders (soonest first):\n");
+            for (i, r) in items.iter().enumerate() {
+                let state = match r.status.as_str() {
+                    "fired" | "firing" => " — due now, not yet acknowledged",
+                    _ => "",
+                };
+                out.push_str(&format!(
+                    "{}. [id {}] {} ({}): {}{}\n",
+                    i + 1,
+                    short_id(&r.id),
+                    pretty_local(&r.due_local),
+                    r.tz,
+                    r.text,
+                    state
+                ));
+            }
+            if total > items.len() as i64 {
+                out.push_str(&format!(
+                    "(showing the {} soonest of {} — the rest are in the Calendar)\n",
+                    items.len(),
+                    total
+                ));
+            }
+            Ok(out)
+        }
+        "cancel_reminder" => {
+            let id = args
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow!("missing id"))?;
+            let db = runtime
+                .db
+                .as_ref()
+                .ok_or_else(|| anyhow!("reminder tools require a DB; tool runtime has none"))?;
+            let peer = runtime
+                .peer_id
+                .as_deref()
+                .ok_or_else(|| anyhow!("reminder tools require peer_id"))?;
+            let hits = match db.find_reminders_by_prefix(peer, id).await {
+                Ok(h) => h,
+                Err(e) => return Ok(format!("{e}. Call list_reminders to see the ids.")),
+            };
+            match hits.as_slice() {
+                [] => {
+                    // Distinguish "already dealt with" from "no such thing":
+                    // the second reads as a bug when the member is looking
+                    // at the reminder in their Calendar.
+                    let finished = db
+                        .find_finished_reminders_by_prefix(peer, id)
+                        .await
+                        .unwrap_or_default();
+                    match finished.first() {
+                        Some(r) if r.status == "done" => Ok(format!(
+                            "That one is already done: {}. Nothing to cancel.",
+                            r.text
+                        )),
+                        Some(r) => Ok(format!("That one was already cancelled: {}.", r.text)),
+                        None => Ok(
+                            "No live reminder matches that id — call list_reminders to see them."
+                                .into(),
+                        ),
+                    }
+                }
+                [one] => {
+                    db.cancel_reminder(peer, &one.id).await?;
+                    Ok(format!(
+                        "Cancelled: {} ({}).",
+                        one.text,
+                        pretty_local(&one.due_local)
+                    ))
+                }
+                many => Ok(format!(
+                    "Several reminders match — give more of the id: {}",
+                    many.iter()
+                        .map(|r| format!("[{}] {}", short_id(&r.id), r.text))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                )),
+            }
+        }
         "remember" => {
             let key = args
                 .get("key")
@@ -369,7 +575,7 @@ fn datetime_def() -> ToolDef {
             "type": "function",
             "function": {
                 "name": "datetime",
-                "description": "Get the current local date and time (host machine's timezone).",
+                "description": "Get the current local date and time (in the user's timezone when known).",
                 "parameters": { "type": "object", "properties": {} }
             }
         }),
@@ -454,5 +660,265 @@ fn image_search_def() -> ToolDef {
                 }
             }
         }),
+    }
+}
+
+// ---- Reminders ----
+
+/// The first eight characters of a reminder id — what the model and the
+/// member see; `cancel_reminder` resolves them back through a prefix
+/// lookup (six or more characters are enough).
+fn short_id(id: &str) -> &str {
+    id.get(..8).unwrap_or(id)
+}
+
+/// "2026-09-10T09:00" → "Wed 10 Sep, 09:00" for confirmations and lists.
+fn pretty_local(due_local: &str) -> String {
+    chrono::NaiveDateTime::parse_from_str(due_local, "%Y-%m-%dT%H:%M")
+        .map(|d| d.format("%a %-d %b, %H:%M").to_string())
+        .unwrap_or_else(|_| due_local.to_string())
+}
+
+fn set_reminder_def() -> ToolDef {
+    ToolDef {
+        name: "set_reminder".into(),
+        description: "Set a reminder that pops up in KinAI at a time the user chooses.".into(),
+        schema: json!({
+            "type": "function",
+            "function": {
+                "name": "set_reminder",
+                "description": "Schedule a reminder for the user. It pops up in KinAI on their own devices \
+                                (and on Telegram if they paired it) at the given time, with acknowledge and \
+                                snooze buttons. Call it when the user asks to be reminded of something \
+                                (\"remind me at 9 tomorrow to …\", \"in 20 minutes remind me …\"). \
+                                `text` must be concrete: resolve \"that\" / \"it\" into what was actually \
+                                discussed. Give EXACTLY ONE of `due_local` (a clock time, YYYY-MM-DDTHH:MM in \
+                                the user's own timezone — compute it from the \"Current time\" line at the \
+                                end of the user's message) or `in_minutes` (relative). The tool answers with \
+                                the confirmation to relay, including the resolved time and zone; it refuses \
+                                times in the past or more than a year away, and then NOTHING is set — say so.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "text": {
+                            "type": "string",
+                            "description": "What to remind the user of, as a short concrete phrase (max 200 characters). Examples: \"return the library book\", \"call the dentist about the appointment\"."
+                        },
+                        "due_local": {
+                            "type": "string",
+                            "description": "Clock time in the user's timezone, format YYYY-MM-DDTHH:MM, e.g. \"2026-09-10T09:00\". Use this for \"at 9\", \"tomorrow at 7\", \"on Friday at noon\"."
+                        },
+                        "in_minutes": {
+                            "type": "integer",
+                            "description": "Minutes from now, e.g. 30 for \"in half an hour\". Use this for relative phrasing instead of due_local."
+                        }
+                    },
+                    "required": ["text"]
+                }
+            }
+        }),
+    }
+}
+
+fn list_reminders_def() -> ToolDef {
+    ToolDef {
+        name: "list_reminders".into(),
+        description: "List the user's reminders.".into(),
+        schema: json!({
+            "type": "function",
+            "function": {
+                "name": "list_reminders",
+                "description": "List the user's reminders, soonest first, with their short ids and local times. \
+                                Call it when the user asks what reminders they have, or before cancelling one \
+                                when you don't know its id.",
+                "parameters": { "type": "object", "properties": {} }
+            }
+        }),
+    }
+}
+
+fn cancel_reminder_def() -> ToolDef {
+    ToolDef {
+        name: "cancel_reminder".into(),
+        description: "Cancel one of the user's reminders.".into(),
+        schema: json!({
+            "type": "function",
+            "function": {
+                "name": "cancel_reminder",
+                "description": "Cancel a reminder by its id (the short id from list_reminders or from the \
+                                set_reminder confirmation; at least 6 characters). Use when the user asks to \
+                                cancel, drop or forget a reminder. If you don't know the id, call \
+                                list_reminders first.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string", "description": "The reminder id or its first 6+ characters." }
+                    },
+                    "required": ["id"]
+                }
+            }
+        }),
+    }
+}
+
+#[cfg(test)]
+mod reminder_tool_tests {
+    use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    /// A ToolRuntime backed by a real, migrated in-memory DB — the same
+    /// shape every chat surface hands the tools.
+    async fn runtime() -> ToolRuntime {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("open in-memory sqlite");
+        crate::db::migrate::run(&pool).await.expect("apply migrations");
+        ToolRuntime::from_tool_settings(&ToolSettings::default())
+            .with_memory(Db { pool }, "ALICE")
+            .with_source_msg("msg-1")
+    }
+
+    #[tokio::test]
+    async fn relative_reminder_is_stored_and_confirmed() {
+        let rt = runtime().await;
+        let out = execute("set_reminder", r#"{"text":"water the plants","in_minutes":30}"#, &rt)
+            .await
+            .unwrap();
+        assert!(out.starts_with("Reminder set for"), "{out}");
+        assert!(out.contains("water the plants"));
+        assert!(out.contains("[id "));
+        let list = execute("list_reminders", "{}", &rt).await.unwrap();
+        assert!(list.contains("water the plants"), "{list}");
+        // Another member sees nothing.
+        let other = ToolRuntime::from_tool_settings(&ToolSettings::default())
+            .with_memory(rt.db.clone().unwrap(), "BOB");
+        assert_eq!(execute("list_reminders", "{}", &other).await.unwrap(), "No reminders are set.");
+    }
+
+    #[tokio::test]
+    async fn user_level_refusals_are_ok_text_not_errors() {
+        // The loop treats Err as a broken web lookup and tells the family
+        // their search failed — so a past time, a bad time, a missing time
+        // and an unknown id must all come back as Ok(text) saying nothing
+        // was set.
+        let rt = runtime().await;
+        for (args, needle) in [
+            (r#"{"text":"too late","due_local":"2001-01-01T09:00"}"#, "in the past"),
+            (r#"{"text":"far","in_minutes":999999}"#, "more than a year"),
+            (r#"{"text":"soon","in_minutes":0}"#, "at least one minute"),
+            (r#"{"text":"when?"}"#, "Tell me when"),
+            (r#"{"text":"garbled","due_local":"nine-ish"}"#, "couldn't read that time"),
+        ] {
+            let out = execute("set_reminder", args, &rt).await.unwrap();
+            assert!(out.contains(needle), "{args} → {out}");
+            assert!(out.contains("Nothing was set") || out.contains("nothing was set"), "{out}");
+        }
+        assert_eq!(execute("list_reminders", "{}", &rt).await.unwrap(), "No reminders are set.");
+        let out = execute("cancel_reminder", r#"{"id":"abcdef01"}"#, &rt).await.unwrap();
+        assert!(out.contains("No live reminder"), "{out}");
+        let out = execute("cancel_reminder", r#"{"id":"abc"}"#, &rt).await.unwrap();
+        assert!(out.contains("at least 6 characters"), "{out}");
+        // Real infrastructure failure stays an Err: no DB attached.
+        let bare = ToolRuntime::from_tool_settings(&ToolSettings::default());
+        assert!(execute("set_reminder", r#"{"text":"x","in_minutes":5}"#, &bare).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn an_absurd_in_minutes_is_refused_not_a_panic() {
+        // chrono's `now + Duration::minutes(m)` PANICS on overflow, which
+        // would take down the member's whole turn — no reply at all — so
+        // the bound must be checked before the arithmetic.
+        let rt = runtime().await;
+        for m in [366i64 * 24 * 60 + 1, 525_600_000_000, 160_000_000_000_000, i64::MAX] {
+            let out = execute("set_reminder", &format!(r#"{{"text":"far off","in_minutes":{m}}}"#), &rt)
+                .await
+                .expect("must be a refusal, never an Err or a panic");
+            assert!(out.contains("more than a year"), "in_minutes={m} → {out}");
+        }
+        assert_eq!(execute("list_reminders", "{}", &rt).await.unwrap(), "No reminders are set.");
+    }
+
+    #[tokio::test]
+    async fn over_long_text_is_a_refusal_not_a_failed_lookup() {
+        // The DB bails above the cap; if that bail reached the loop as an
+        // Err the family would be told every web lookup failed.
+        let rt = runtime().await;
+        let long = "x".repeat(crate::db::reminders::MAX_TEXT_CHARS + 1);
+        let out = execute("set_reminder", &format!(r#"{{"text":"{long}","in_minutes":30}}"#), &rt)
+            .await
+            .expect("must be Ok(text), not Err");
+        assert!(out.contains("too long"), "{out}");
+        assert!(out.contains("nothing was set") || out.contains("Nothing was set"), "{out}");
+        // Exactly at the cap still works.
+        let ok = "y".repeat(crate::db::reminders::MAX_TEXT_CHARS);
+        let out = execute("set_reminder", &format!(r#"{{"text":"{ok}","in_minutes":30}}"#), &rt)
+            .await
+            .unwrap();
+        assert!(out.starts_with("Reminder set for"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn the_list_hides_history_and_cancel_explains_itself() {
+        let rt = runtime().await;
+        let db = rt.db.clone().unwrap();
+        let out = execute("set_reminder", r#"{"text":"pick up the parcel","in_minutes":60}"#, &rt)
+            .await
+            .unwrap();
+        let short = out.rsplit("[id ").next().unwrap().trim_end_matches(']').trim().to_string();
+        // Acknowledge it: it leaves the model's list but stays in the Calendar.
+        let full = db.list_reminders("ALICE").await.unwrap()[0].id.clone();
+        assert!(db.apply_reminder_action("ALICE", &full, "ack", 0).await.unwrap().is_some());
+        assert_eq!(execute("list_reminders", "{}", &rt).await.unwrap(), "No reminders are set.");
+        assert_eq!(db.list_reminders("ALICE").await.unwrap().len(), 1, "Calendar keeps it");
+        // Cancelling it now says so honestly instead of "no such reminder".
+        let out = execute("cancel_reminder", &format!(r#"{{"id":"{short}"}}"#), &rt).await.unwrap();
+        assert!(out.contains("already done"), "{out}");
+        assert!(out.contains("pick up the parcel"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn a_wildcard_id_cannot_cancel_an_arbitrary_reminder() {
+        let rt = runtime().await;
+        execute("set_reminder", r#"{"text":"keep me","in_minutes":30}"#, &rt).await.unwrap();
+        for probe in ["______", "%%%%%%", "%"] {
+            let out = execute("cancel_reminder", &format!(r#"{{"id":"{probe}"}}"#), &rt).await.unwrap();
+            assert!(out.contains("at least 6 characters"), "{probe} → {out}");
+        }
+        assert!(execute("list_reminders", "{}", &rt).await.unwrap().contains("keep me"));
+    }
+
+    #[tokio::test]
+    async fn cancel_by_short_id_from_the_confirmation() {
+        let rt = runtime().await;
+        let out = execute("set_reminder", r#"{"text":"call the dentist","in_minutes":90}"#, &rt)
+            .await
+            .unwrap();
+        let short = out.rsplit("[id ").next().unwrap().trim_end_matches(']').trim().to_string();
+        assert_eq!(short.len(), 8, "confirmation carries the short id: {out}");
+        let out = execute("cancel_reminder", &format!(r#"{{"id":"{short}"}}"#), &rt)
+            .await
+            .unwrap();
+        assert!(out.starts_with("Cancelled: call the dentist"), "{out}");
+        assert_eq!(execute("list_reminders", "{}", &rt).await.unwrap(), "No reminders are set.");
+    }
+
+    #[tokio::test]
+    async fn absolute_time_uses_the_members_zone() {
+        let rt = runtime().await;
+        let db = rt.db.clone().unwrap();
+        // The member's saved fact decides the zone (no device zone in a test).
+        db.save_user_fact("ALICE", "timezone", "Asia/Tokyo", "manual", None)
+            .await
+            .unwrap();
+        let next_year = { use chrono::Datelike; chrono::Utc::now().date_naive().year() + 1 };
+        let args = format!(r#"{{"text":"new year plan","due_local":"{next_year}-01-02T09:00"}}"#);
+        let out = execute("set_reminder", &args, &rt).await.unwrap();
+        assert!(out.contains("(Asia/Tokyo)"), "{out}");
+        let r = &db.list_reminders("ALICE").await.unwrap()[0];
+        assert_eq!(r.due_local, format!("{next_year}-01-02T09:00"));
+        assert_eq!(r.tz, "Asia/Tokyo");
+        assert!(r.due_at.contains(&format!("{next_year}-01-02T00:00")), "09:00 Tokyo = 00:00 UTC: {}", r.due_at);
     }
 }

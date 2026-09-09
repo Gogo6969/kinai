@@ -1,6 +1,13 @@
 # Reminders — per family member, on their own devices
 
-Status: plan (2026-09-09), nothing implemented yet.
+Status: Phase 1 plus the Calendar panel, the due-reminder popup with
+Acknowledge/Snooze, and Telegram text delivery from Phase 2 ship in 0.2.120
+(2026-09-09). Decisions taken while building: reminders live in their own
+Calendar rather than a chat thread (question 1); snooze presets are 10 min,
+1 h and tomorrow 9:00 (question 2); a paired member gets the popup on every
+device and a Telegram message, acknowledged from the app (question 3); no
+Apple Reminders bridge (question 4). Still open from the plan: repeats,
+Telegram inline buttons, offline firing on clients.
 
 ## Why
 

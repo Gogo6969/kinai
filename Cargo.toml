@@ -120,6 +120,8 @@ base64 = "0.22"
 
 # --- Tokenization ---
 tiktoken-rs = "0.5"
+chrono-tz = "0.10.4"
+iana-time-zone = "0.1"
 
 [features]
 default = ["custom-protocol"]

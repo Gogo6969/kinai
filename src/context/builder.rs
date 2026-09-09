@@ -120,9 +120,12 @@ pub async fn build_context(
         note.push_str(&memory::format_memories(&memories));
         note.push('\n');
     }
+    // The clock in the member's own zone (a device's Hello, a saved
+    // "timezone" fact, else the host's) — what "9am" means to THEM.
+    let member_tz = crate::tools::datetime::resolve_peer_tz(db, peer_id, &user_facts).await;
     note.push_str(&format!(
         "Current time: {}",
-        crate::tools::datetime::now_pretty()
+        crate::tools::datetime::now_pretty_in(member_tz)
     ));
     if let ChatMessage::User { content, .. } = &mut tail {
         content.push_str(&format!(

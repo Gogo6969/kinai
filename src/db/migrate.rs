@@ -285,6 +285,44 @@ const STATEMENTS: &[&str] = &[
     CREATE UNIQUE INDEX IF NOT EXISTS reports_peer_msg
         ON reports(peer_id, message_id)
     "#,
+    // Reminders — timed nudges a family member sets by asking KinAI
+    // ("remind me tomorrow at 9 to …") and the host's scheduler delivers
+    // when due. `due_at` is UTC RFC3339 like every other timestamp here;
+    // `tz` + `due_local` keep the wall-clock the member actually said, so
+    // the calendar shows THEIR time and a snooze can be re-rendered in it.
+    // Lifecycle: scheduled → firing (leased by the scheduler with an atomic
+    // UPDATE … RETURNING) → fired (delivered, awaiting acknowledgement) →
+    // done, or cancelled. Deliberately NO foreign key to threads: a deleted
+    // or rotated thread must not silently take a reminder with it.
+    r#"
+    CREATE TABLE IF NOT EXISTS reminders (
+        id            TEXT PRIMARY KEY,
+        peer_id       TEXT NOT NULL,
+        thread_id     TEXT,
+        text          TEXT NOT NULL,
+        due_at        TEXT NOT NULL,
+        tz            TEXT NOT NULL DEFAULT '',
+        due_local     TEXT NOT NULL DEFAULT '',
+        repeat        TEXT NOT NULL DEFAULT '',
+        status        TEXT NOT NULL DEFAULT 'scheduled',
+        fired_at      TEXT,
+        source_msg_id TEXT,
+        created_at    TEXT NOT NULL,
+        updated_at    TEXT NOT NULL
+    )
+    "#,
+    r#"
+    CREATE INDEX IF NOT EXISTS reminders_peer_status
+        ON reminders(peer_id, status, due_at)
+    "#,
+    r#"
+    CREATE INDEX IF NOT EXISTS reminders_due
+        ON reminders(status, due_at)
+    "#,
+    // A device's IANA time zone, learned from its Hello frame. First ever
+    // writer to the `peers` table; reminders use it so "9am" means the
+    // member's 9am, not the host's.
+    r#"ALTER TABLE peers ADD COLUMN tz TEXT"#,
 ];
 
 pub async fn run(pool: &SqlitePool) -> Result<()> {
