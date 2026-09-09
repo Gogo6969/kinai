@@ -5,6 +5,31 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.120] — 2026-09-09
+
+### Added
+
+- **Reminders.** Ask KinAI "remind me tomorrow at 9 to return the library
+  book" or "remind me in twenty minutes about that" and it sets a reminder
+  — in your own time zone, and about the thing you were actually
+  discussing. When it's due, a popup appears in KinAI on your devices with
+  **Acknowledge**, **Snooze 10 min**, **Snooze 1 h** and **Tomorrow 9:00**,
+  a system notification goes out, and a message reaches your Telegram chat
+  if you've paired it. A new **Calendar** entry in the side menu lists every
+  reminder by day with the same buttons and a delete. Each family member has
+  their own calendar; nobody sees anyone else's. A reminder that came due
+  while a device was closed pops up on its next launch. Not in yet: repeats,
+  and acknowledging straight from Telegram. The first reminder asks your
+  system for permission to show notifications.
+
+### Fixed
+
+- **A malformed PDF can no longer take the host down.** The PDF reader had a
+  flaw where a small file with deeply nested contents crashed the process —
+  and KinAI reads PDFs both from your attachments and from pages it opens
+  while researching. Updated to a fixed version, along with security patches
+  to several other libraries the app is built on.
+
 ## [0.2.119] — 2026-09-09
 
 ### Fixed
