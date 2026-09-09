@@ -598,9 +598,16 @@ class AppStore {
   /** Acknowledge, snooze or delete a reminder, then re-sync the list and
    *  drop it from the popup queue. `minutes` only matters for `snooze`. */
   async reminderAction(id: string, action: 'ack' | 'snooze' | 'delete', minutes?: number) {
-    await api.reminderAction(id, action, minutes);
-    await this.loadReminders();
-    this.dueReminders = this.dueReminders.filter((r) => r.id !== id);
+    try {
+      await api.reminderAction(id, action, minutes);
+      this.dueReminders = this.dueReminders.filter((r) => r.id !== id);
+    } finally {
+      // Re-sync even when the call failed. An action can land on the host
+      // and still report an error (a dropped socket, a duplicate request),
+      // and leaving the row showing "due now" would tell the member their
+      // acknowledgement was lost when it was not.
+      await this.loadReminders();
+    }
   }
 
   /** Append to the popup queue, skipping ids already waiting. Returns
@@ -1074,6 +1081,11 @@ class AppStore {
     this.cleanups.push(
       await events.onWelcome((w) => {
         this.hostInfo = w;
+        // Every (re)connect to the host, not just the first: a client that
+        // autostarted before the Wi-Fi was up, or had its lid shut while a
+        // reminder came due, has no other way to learn about it — the
+        // `kinai://reminder` push went out while nothing was listening.
+        if (w?.host_reminders) void this.loadReminders();
       })
     );
     this.cleanups.push(

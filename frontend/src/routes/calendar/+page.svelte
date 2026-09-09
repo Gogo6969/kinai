@@ -10,24 +10,43 @@
     void app.loadReminders();
   });
 
-  /** Reminders bucketed by the day of `due_local`, chronological. */
+  /** Reminders bucketed by the day of `due_local`, chronological.
+   *  Ordered by `due_at` — the real instant — so a member who set
+   *  reminders in two zones still sees them in the order they fire, and
+   *  grouped by day AND zone so a heading is never a claim about the
+   *  wrong day. */
   const days = $derived.by(() => {
-    const byDay = new Map<string, Reminder[]>();
-    const sorted = [...app.reminders].sort((a, b) => a.due_local.localeCompare(b.due_local));
+    const byDay = new Map<string, { key: string; tz: string; items: Reminder[] }>();
+    const sorted = [...app.reminders].sort((a, b) => a.due_at.localeCompare(b.due_at));
     for (const r of sorted) {
       const key = dayOf(r.due_local);
-      const list = byDay.get(key);
-      if (list) list.push(r);
-      else byDay.set(key, [r]);
+      const mapKey = `${key}|${r.tz}`;
+      const group = byDay.get(mapKey);
+      if (group) group.items.push(r);
+      else byDay.set(mapKey, { key, tz: r.tz, items: [r] });
     }
-    return [...byDay].map(([key, items]) => ({ key, label: dayLabel(key), items }));
+    return [...byDay.values()].map((g) => ({
+      key: `${g.key}|${g.tz}`,
+      label: dayLabel(g.key, new Date(), g.tz),
+      items: g.items,
+    }));
   });
+
+  /** The device's own zone, so a row set elsewhere can say where its
+   *  time belongs instead of quietly showing a foreign clock. */
+  const deviceTz = Intl.DateTimeFormat().resolvedOptions().timeZone ?? '';
+
+  /** Ids with an action in flight — their buttons are disabled, so a
+   *  second click cannot cross-cancel the first request. */
+  let pending = $state<string[]>([]);
 
   /** Id of the fired row whose Snooze menu is open (one at a time). */
   let snoozeOpen = $state<string | null>(null);
 
   async function act(id: string, action: 'ack' | 'snooze' | 'delete', minutes?: number) {
     snoozeOpen = null;
+    if (pending.includes(id)) return;
+    pending = [...pending, id];
     try {
       await app.reminderAction(id, action, minutes);
     } catch (e) {
@@ -38,6 +57,8 @@
           detail: { msg: `✗ Couldn't update the reminder: ${msg}`, ms: 5000 },
         })
       );
+    } finally {
+      pending = pending.filter((x) => x !== id);
     }
   }
 
@@ -86,7 +107,15 @@
 
     {#snippet row(r: Reminder)}
       <div class="kin-card !py-3 flex items-center gap-3 {r.status === 'done' ? 'opacity-60' : ''}">
-        <div class="font-mono text-sm text-teal-300 shrink-0 w-12">{timeOf(r.due_local)}</div>
+        <div class="shrink-0 w-12">
+          <div class="font-mono text-sm text-teal-300">{timeOf(r.due_local)}</div>
+          {#if r.tz && deviceTz && r.tz !== deviceTz}
+            <!-- Set in another zone: say so, or the clock reads as local. -->
+            <div class="text-[10px] text-white/40 truncate" title={r.tz}>
+              {r.tz.split('/').pop()?.replace(/_/g, ' ')}
+            </div>
+          {/if}
+        </div>
         <div class="flex-1 min-w-0 text-sm whitespace-pre-wrap break-words">{r.text}</div>
         {#if r.status === 'fired'}
           <span class="kin-badge !bg-amber-400/20 !text-amber-200 shrink-0">due now</span>
@@ -98,6 +127,7 @@
             <button
               class="kin-btn-ghost text-teal-300/80 hover:text-teal-300"
               onclick={() => act(r.id, 'ack')}
+              disabled={pending.includes(r.id)}
               title="Mark as done"
             >
               <Check size={14} /> Done
@@ -106,6 +136,7 @@
               <button
                 class="kin-btn-ghost text-white/60"
                 onclick={() => (snoozeOpen = snoozeOpen === r.id ? null : r.id)}
+                disabled={pending.includes(r.id)}
                 title="Remind me again later"
                 aria-haspopup="menu"
                 aria-expanded={snoozeOpen === r.id}
@@ -120,6 +151,7 @@
                   <button
                     class="kin-btn-ghost justify-start"
                     role="menuitem"
+                    disabled={pending.includes(r.id)}
                     onclick={() => act(r.id, 'snooze', 10)}
                   >
                     10 min
@@ -127,6 +159,7 @@
                   <button
                     class="kin-btn-ghost justify-start"
                     role="menuitem"
+                    disabled={pending.includes(r.id)}
                     onclick={() => act(r.id, 'snooze', 60)}
                   >
                     1 h
@@ -134,6 +167,7 @@
                   <button
                     class="kin-btn-ghost justify-start"
                     role="menuitem"
+                    disabled={pending.includes(r.id)}
                     onclick={() => act(r.id, 'snooze', minutesUntilTomorrowNine())}
                   >
                     Tomorrow 9:00
