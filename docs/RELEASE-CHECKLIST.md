@@ -95,8 +95,17 @@ and "published".
       families: `darwin-aarch64`, `darwin-x86_64`, `windows-x86_64`,
       `linux-x86_64`.
 - [ ] `gh release edit vX.Y.Z --draft=false --latest`.
-- [ ] Public endpoint serves the new version:
-      `curl -sL https://github.com/Gogo6969/kinai/releases/latest/download/latest.json`.
+- [ ] **Primary endpoint** serves the new version. Publishing fires the
+      `Publish update manifest` workflow, which re-validates the manifest and
+      mirrors it to the `updates` branch. Watch that run, then:
+      `curl -sL https://raw.githubusercontent.com/Gogo6969/kinai/updates/latest.json | jq -r .version`
+      A short lag here is raw.githubusercontent's CDN (~5 min TTL), not a
+      failure — the workflow's last step already retries for two minutes. A
+      *failed run* is a real problem: nothing built from 0.2.123 on will see
+      the release until the branch moves.
+- [ ] **Fallback endpoint** serves the new version — installs built before
+      0.2.123 poll this one, and will until every device has rolled over:
+      `curl -sL https://github.com/Gogo6969/kinai/releases/latest/download/latest.json | jq -r .version`
 
 ## 6 — After publish
 
