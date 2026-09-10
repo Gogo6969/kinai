@@ -89,10 +89,18 @@ function trimUrlTail(url: string): string {
 /**
  * Split reminder text into the words to read and the links to tap.
  *
- * The popup shows the prose large and each address on its own tappable
- * row, so a long URL cannot push the sentence off the card. A URL that
- * sits mid-sentence is left where it is — removing it would leave a hole
- * in the reading — while ones that trail the text are lifted out.
+ * EVERY address comes out of the prose, wherever it sat. Leaving one
+ * in-line was the first attempt, on the theory that removing a
+ * mid-sentence URL leaves a hole in the reading — but a real reminder
+ * showed why that is wrong: the model wrote the address into the middle
+ * of the sentence, so it ate three of the card's four visible lines AND
+ * appeared a second time in the tappable row below it. A raw URL is
+ * never the thing a person wants to read.
+ *
+ * The connector that introduced the link ("… report — <url>. Pull the
+ * three points …") goes with it, and the leftover spacing and
+ * punctuation are tidied, so the sentence closes as if the link had
+ * never been written inline.
  */
 export function splitLinks(text: string): { prose: string; links: string[] } {
   const links: string[] = [];
@@ -101,18 +109,19 @@ export function splitLinks(text: string): { prose: string; links: string[] } {
     if (clean && !links.includes(clean)) links.push(clean);
   }
   if (links.length === 0) return { prose: text.trim(), links };
-  // Strip only the trailing run of URLs (and the punctuation or dashes
-  // joining them), so "read X — <url>" reads as "read X".
-  let prose = text;
-  for (;;) {
-    const next = prose.replace(
-      /(?:\s*[–—:-]?\s*)https?:\/\/[^\s<>"']+[.,;:!?)\]}'"]*\s*$/,
-      ''
-    );
-    if (next === prose) break;
-    prose = next;
-  }
-  return { prose: prose.trim(), links };
+  const prose = text
+    // The address, plus any dash or colon that introduced it. The match
+    // has to stop before sentence punctuation, or the full stop that
+    // closes the clause is swallowed along with the link.
+    .replace(/\s*[–—:-]?\s*https?:\/\/[^\s<>"']*[^\s<>"'.,;:!?)\]}]/g, '')
+    // "…implementation) ." → "…implementation)."
+    .replace(/\s+([.,;:!?])/g, '$1')
+    // A clause that ended only because the link did.
+    .replace(/([(,;:—–-])\s*([.;,])/g, '$2')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/^[\s.,;:—–-]+/, '')
+    .trim();
+  return { prose, links };
 }
 
 /**
