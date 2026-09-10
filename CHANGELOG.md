@@ -5,6 +5,26 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.122] — 2026-09-10
+
+### Changed
+
+- **The reminder popup was rebuilt.** The time it was set for now sits at
+  the top next to the bell, with a badge saying how late it is that keeps
+  counting while the popup is open, so a glance answers "when was this
+  for?". The reminder itself is the largest thing on the card. The three
+  snooze choices share one control instead of competing with the main
+  button, which is now simply **Done**.
+- **Reminders can hold a lot more.** The limit went from about thirty
+  words to about a hundred, so you can ask to be reminded of something
+  with the detail attached rather than a keyword. Anything past a few
+  lines folds behind a "Show more" so the popup never grows taller than
+  the window it interrupts.
+- **A web address in a reminder is now a link you can tap.** It gets its
+  own row, shortened in the middle so you can still see which site it
+  goes to and what kind of file it is, and it opens in your normal
+  browser. Reminders with several links show the first two.
+
 ## [0.2.121] — 2026-09-10
 
 ### Fixed
