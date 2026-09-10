@@ -27,6 +27,21 @@ name: Publish update manifest
 # Draft assets are not publicly downloadable. Mirroring at build time would hand
 # clients a manifest pointing at assets they'd get a 404 on. Publishing is the
 # moment the assets become real, so that's the moment the manifest may move.
+#
+# Why `published` is not enough on its own
+# ----------------------------------------
+# GitHub runs a `release` event against the *tag*: for a release, `GITHUB_SHA`
+# is the last commit in the tagged release, and the workflow file is read from
+# there — not from the tip of `main`. A release whose tag commit predates this
+# file therefore cannot start a run, and GitHub reports nothing about it: no
+# run, no failure, no notice. 0.2.122 and 0.2.123 both published that way and
+# left the branch serving 0.2.121.
+#
+# Landing this workflow on `main` only covers tags cut *after* it, and only
+# while every release commit descends from it. So the trigger is a convenience;
+# the load-bearing path is the explicit `gh workflow run publish-manifest.yml`
+# in step 5 of docs/RELEASE-CHECKLIST.md. Every write below is idempotent, so
+# doing both costs nothing.
 
 on:
   release:
