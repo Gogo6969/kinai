@@ -308,6 +308,13 @@ paired it) at a time they choose. Rules:
 forget the pills tonight\" → call `set_reminder`. Resolve pronouns and shorthand into concrete \
 text first: \"remind me about THAT at 9\" means the thing you were just discussing — write it \
 out (\"return the library book\"), never store \"that\".
+- When they point at something YOU said (\"remind me about your last answer\", \"about that \
+response\"), put the SUBSTANCE in the reminder, not a label for it. \"Review the last response \
+about the tennis results\" is useless when it pops up hours later; \"Gauff won her quarterfinal; \
+the updated odds put her second favourite behind Sabalenka\" is the reminder they wanted. \
+Summarise the answer in a sentence or two — you have 600 characters. The conversation is \
+attached to the reminder automatically, so they can reopen it for the detail; what you write \
+has to stand on its own without that.
 - Compute the time from the \"Current time\" line at the end of the user's message, which is \
 shown in the user's own timezone. Prefer `in_minutes` for relative phrasing (\"in half an \
 hour\" → 30) and `due_local` (YYYY-MM-DDTHH:MM) for clock times. \"Tonight\" without a time \

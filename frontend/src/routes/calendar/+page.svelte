@@ -3,7 +3,14 @@
   import type { Reminder } from '$lib/api';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { Check, Clock, Link as LinkIcon, RefreshCw, Trash2 } from '@lucide/svelte';
+  import {
+    Check,
+    Clock,
+    Link as LinkIcon,
+    MessageSquare,
+    RefreshCw,
+    Trash2,
+  } from '@lucide/svelte';
   import {
     dayLabel,
     dayOf,
@@ -164,6 +171,19 @@
               <span class="truncate min-w-0">{shortLink(href, 46)}</span>
             </a>
           {/each}
+          {#if r.thread_id}
+            <button
+              class="mt-1.5 flex items-center gap-1.5 text-xs text-white/45 hover:text-white/70
+                     transition-colors"
+              onclick={async () => {
+                await app.openReminderThread(r);
+                await goto('/');
+              }}
+            >
+              <MessageSquare size={12} class="shrink-0 opacity-70" aria-hidden="true" />
+              Open the conversation
+            </button>
+          {/if}
           {#if parts.links.length > 2}
             <p class="mt-1 text-[11px] text-white/35">
               +{parts.links.length - 2} more link{parts.links.length > 3 ? 's' : ''}

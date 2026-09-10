@@ -618,7 +618,8 @@ back, unless you switch model yourself.",
     let tools = registry::enabled(&cfg.tools);
     let tool_runtime = registry::ToolRuntime::from_tool_settings(&cfg.tools)
         .with_memory(state.db.clone(), peer_id)
-        .with_source_msg(user_msg.id.clone());
+        .with_source_msg(user_msg.id.clone())
+        .with_thread(thread_id.clone());
     let active_llm_settings = route_pick.settings.clone();
     // Route from the routed slot's settings, not the cached state.llm
     // which is always the fast slot. The LLM client itself is built per

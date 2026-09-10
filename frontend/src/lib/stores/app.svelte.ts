@@ -610,6 +610,24 @@ class AppStore {
     }
   }
 
+  /** Open the conversation a reminder was set in, and flash the message
+   *  that prompted it. This is what makes "remind me about your last
+   *  answer" work: the reminder text carries the gist, and this carries
+   *  the member back to the answer itself. Same jump the search results
+   *  use. */
+  async openReminderThread(r: Reminder) {
+    if (!r.thread_id) return;
+    this.activeThreadId = r.thread_id;
+    await this.loadActive();
+    requestAnimationFrame(() => {
+      if (!r.source_msg_id) return;
+      const el = document.getElementById(`msg-${r.source_msg_id}`);
+      el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el?.classList.add('kin-flash');
+      setTimeout(() => el?.classList.remove('kin-flash'), 1600);
+    });
+  }
+
   /** Append to the popup queue, skipping ids already waiting. Returns
    *  the ones that were actually new. */
   private queueDueReminders(rows: Reminder[]): Reminder[] {

@@ -1015,7 +1015,8 @@ async fn run_chat_turn(
     let tools = registry::enabled(&cfg.tools);
     let tool_runtime = registry::ToolRuntime::from_tool_settings(&cfg.tools)
         .with_memory(s.app.db.clone(), context_peer)
-        .with_source_msg(client_msg_id.to_string());
+        .with_source_msg(client_msg_id.to_string())
+        .with_thread(thread_id.to_string());
     // Route from the active slot's settings (fast or deep), NOT the
     // cached `state.llm` — that one always holds the fast slot. The
     // LLM client itself is built per attempt inside

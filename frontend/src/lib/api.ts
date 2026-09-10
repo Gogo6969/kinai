@@ -358,6 +358,10 @@ export interface Reminder {
    *  kept for history and never listed. */
   status: 'scheduled' | 'firing' | 'fired' | 'done' | 'cancelled';
   fired_at: string | null;
+  /** The message that prompted this reminder. With `thread_id` it is how
+   *  "remind me about your last answer" gets the member back to the
+   *  answer rather than just naming it. */
+  source_msg_id: string | null;
   created_at: string;
   updated_at: string;
 }

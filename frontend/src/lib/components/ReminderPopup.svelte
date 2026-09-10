@@ -12,7 +12,14 @@
    * about. Clicking the backdrop does nothing for the same reason.
    */
   import { onMount } from 'svelte';
-  import { BellRing, Check, ExternalLink, Link as LinkIcon } from '@lucide/svelte';
+  import {
+    BellRing,
+    Check,
+    ExternalLink,
+    Link as LinkIcon,
+    MessageSquare,
+  } from '@lucide/svelte';
+  import { goto } from '$app/navigation';
   import { app } from '$lib/stores/app.svelte';
   import {
     dayLabel,
@@ -173,6 +180,23 @@
             <ExternalLink size={14} class="text-white/35 shrink-0 ml-auto" aria-hidden="true" />
           </a>
         {/each}
+        {#if current.thread_id}
+          <button
+            type="button"
+            class="kin-rem-inset mt-3 flex w-full items-center gap-2 rounded-lg px-3 py-2.5"
+            onclick={async () => {
+              const r = current;
+              if (!r) return;
+              await act('snooze', 10);
+              await app.openReminderThread(r);
+              await goto('/');
+            }}
+          >
+            <MessageSquare size={15} class="text-white/40 shrink-0" aria-hidden="true" />
+            <span class="kin-rem-accent text-xs">Open the conversation this came from</span>
+          </button>
+        {/if}
+
         {#if moreLinks > 0}
           <p class="mt-2 text-[11px] text-white/35">+{moreLinks} more link{moreLinks > 1 ? 's' : ''} in this reminder</p>
         {/if}

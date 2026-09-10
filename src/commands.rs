@@ -2242,7 +2242,8 @@ async fn run_assistant_turn(
     let tool_defs = registry::enabled(&cfg.tools);
     let tool_runtime = registry::ToolRuntime::from_tool_settings(&cfg.tools)
         .with_memory(state.db.clone(), db::HOST_PEER)
-        .with_source_msg(client_msg_id.to_string());
+        .with_source_msg(client_msg_id.to_string())
+        .with_thread(thread_id.to_string());
 
     // Route from the routed slot (fast vs deep) rather than the cached
     // state.llm (which is always the fast slot). The LLM client itself

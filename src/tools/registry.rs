@@ -33,6 +33,10 @@ pub struct ToolRuntime {
     /// Source message id for traceability. When a fact is written via
     /// remember(), this is the user message that triggered the call.
     pub source_msg_id: Option<String>,
+    /// The conversation this turn belongs to. A reminder set here keeps
+    /// it, so "remind me about the last response" can offer a way back to
+    /// the answer instead of only naming it.
+    pub thread_id: Option<String>,
 }
 
 impl ToolRuntime {
@@ -46,6 +50,7 @@ impl ToolRuntime {
             db: None,
             peer_id: None,
             source_msg_id: None,
+            thread_id: None,
         }
     }
 
@@ -59,6 +64,13 @@ impl ToolRuntime {
 
     pub fn with_source_msg(mut self, source_msg_id: impl Into<String>) -> Self {
         self.source_msg_id = Some(source_msg_id.into());
+        self
+    }
+
+    /// The thread this turn is happening in — carried onto any reminder
+    /// set during it, so the member can get back to what it was about.
+    pub fn with_thread(mut self, thread_id: impl Into<String>) -> Self {
+        self.thread_id = Some(thread_id.into());
         self
     }
 }
@@ -272,7 +284,14 @@ pub async fn execute(name: &str, args_json: &str, runtime: &ToolRuntime) -> Resu
                     .into());
             }
             let r = db
-                .create_reminder(peer, None, text, due, &tz_name, runtime.source_msg_id.as_deref())
+                .create_reminder(
+                    peer,
+                    runtime.thread_id.as_deref(),
+                    text,
+                    due,
+                    &tz_name,
+                    runtime.source_msg_id.as_deref(),
+                )
                 .await?;
             Ok(format!(
                 "Reminder set for {} ({}): {}. It will pop up in KinAI on your devices, and on \
@@ -702,7 +721,7 @@ fn set_reminder_def() -> ToolDef {
                     "properties": {
                         "text": {
                             "type": "string",
-                            "description": "What to remind the user of, in the user's own terms (up to 600 characters — a sentence or two is ideal, but keep any detail they asked to be reminded OF, including a URL). Examples: \"return the library book\", \"call the dentist about moving the appointment, the number is on the fridge\"."
+                            "description": "What to remind the user of, in the user's own terms (up to 600 characters — a sentence or two is ideal, but keep any detail they asked to be reminded OF, including a URL). When they point at something in the conversation (\"remind me about that\", \"about your last answer\"), write what it actually SAID — the substance, in a sentence or two — not a label like \"the last response\". The conversation is linked to the reminder automatically, so the user can reopen it; your job is to make the reminder make sense on its own when it pops up. Examples: \"return the library book\", \"call the dentist about moving the appointment, the number is on the fridge\", \"Gauff won her US Open quarterfinal; the updated odds put her second favourite behind Sabalenka\"."
                         },
                         "due_local": {
                             "type": "string",
@@ -902,6 +921,29 @@ mod reminder_tool_tests {
             .unwrap();
         assert!(out.starts_with("Cancelled: call the dentist"), "{out}");
         assert_eq!(execute("list_reminders", "{}", &rt).await.unwrap(), "No reminders are set.");
+    }
+
+    #[tokio::test]
+    async fn a_reminder_keeps_the_conversation_it_came_from() {
+        // "remind me about your last answer" is useless if the reminder
+        // cannot get the member back to the answer. The turn's thread and
+        // the message that prompted it ride along on the row.
+        let rt = runtime().await.with_thread("thread-42");
+        execute("set_reminder", r#"{"text":"the gist of what was said","in_minutes":30}"#, &rt)
+            .await
+            .unwrap();
+        let r = &rt.db.clone().unwrap().list_reminders("ALICE").await.unwrap()[0];
+        assert_eq!(r.thread_id.as_deref(), Some("thread-42"));
+        assert_eq!(r.source_msg_id.as_deref(), Some("msg-1"));
+
+        // A runtime with no thread (an isolated pass) still works.
+        let bare = ToolRuntime::from_tool_settings(&ToolSettings::default())
+            .with_memory(rt.db.clone().unwrap(), "BOB");
+        execute("set_reminder", r#"{"text":"no thread here","in_minutes":30}"#, &bare)
+            .await
+            .unwrap();
+        let b = &bare.db.clone().unwrap().list_reminders("BOB").await.unwrap()[0];
+        assert!(b.thread_id.is_none());
     }
 
     #[tokio::test]
