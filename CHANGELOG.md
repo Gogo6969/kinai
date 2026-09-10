@@ -5,6 +5,18 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.123] — 2026-09-10
+
+### Fixed
+
+- **"Remind me about your last answer" now keeps the answer.** It used to
+  save a label — "review the last response about X" — which tells you
+  nothing hours later when it pops up. KinAI now writes what was actually
+  said, and the reminder keeps the conversation it came from: both the
+  popup and the Calendar offer **Open the conversation**, which takes you
+  back to the exact point in the chat. This works for anything you point
+  at rather than spell out, including "remind me about that".
+
 ## [0.2.122] — 2026-09-10
 
 ### Changed
