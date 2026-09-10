@@ -5,6 +5,20 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.121] — 2026-09-10
+
+### Fixed
+
+- **Links sent to Telegram no longer arrive broken.** If a web address
+  contained an underscore — and plenty of PDFs and reports do — KinAI
+  deleted every one of them on the way out, so the link it had just found
+  for you led nowhere. One report's filename lost six. Addresses are now
+  passed through to Telegram exactly as found, including the underscores,
+  and the bold or italic markers a reply wraps around a link are still
+  tidied away, even when the link ends a sentence. The same fix means
+  ordinary words with underscores in them, like file names and settings,
+  arrive intact rather than run together.
+
 ## [0.2.120] — 2026-09-09
 
 ### Added
