@@ -122,7 +122,13 @@
     {#snippet row(r: Reminder)}
       {@const parts = splitLinks(r.text)}
       {@const isOpen = opened.includes(r.id)}
-      <div class="kin-card !py-3 flex items-start gap-3 {r.status === 'done' ? 'opacity-60' : ''}">
+      <!-- The actions wrap BELOW the text when the window is narrow: with
+           everything locked on one line the text column collapsed to a
+           three-word ribbon. `min-w` on the text is what forces the wrap. -->
+      <div
+        class="kin-card !py-3 flex flex-wrap items-start gap-x-3 gap-y-2
+               {r.status === 'done' ? 'opacity-60' : ''}"
+      >
         <div class="shrink-0 w-12 pt-0.5">
           <div class="font-mono text-sm text-teal-300">{timeOf(r.due_local)}</div>
           {#if r.tz && deviceTz && r.tz !== deviceTz}
@@ -132,7 +138,7 @@
             </div>
           {/if}
         </div>
-        <div class="flex-1 min-w-0">
+        <div class="flex-1 min-w-[15rem]">
           <p
             class="text-sm whitespace-pre-wrap break-words {isOpen ? '' : 'kin-row-clamp'}"
           >
@@ -164,12 +170,13 @@
             </p>
           {/if}
         </div>
-        {#if r.status === 'fired'}
-          <span class="kin-badge !bg-amber-400/20 !text-amber-200 shrink-0">due now</span>
-        {:else if r.status === 'done'}
-          <span class="kin-badge shrink-0">done</span>
-        {/if}
-        <div class="flex gap-1 shrink-0">
+        <div class="flex items-center gap-2 shrink-0 ml-auto">
+          {#if r.status === 'fired'}
+            <span class="kin-badge !bg-amber-400/20 !text-amber-200 shrink-0">due now</span>
+          {:else if r.status === 'done'}
+            <span class="kin-badge shrink-0">done</span>
+          {/if}
+          <div class="flex gap-1 shrink-0">
           {#if r.status === 'fired'}
             <button
               class="kin-btn-ghost text-teal-300/80 hover:text-teal-300"
@@ -231,6 +238,7 @@
               <Trash2 size={14} />
             </button>
           {/if}
+          </div>
         </div>
       </div>
     {/snippet}
