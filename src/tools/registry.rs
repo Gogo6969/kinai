@@ -702,7 +702,7 @@ fn set_reminder_def() -> ToolDef {
                     "properties": {
                         "text": {
                             "type": "string",
-                            "description": "What to remind the user of, as a short concrete phrase (max 200 characters). Examples: \"return the library book\", \"call the dentist about the appointment\"."
+                            "description": "What to remind the user of, in the user's own terms (up to 600 characters — a sentence or two is ideal, but keep any detail they asked to be reminded OF, including a URL). Examples: \"return the library book\", \"call the dentist about moving the appointment, the number is on the fridge\"."
                         },
                         "due_local": {
                             "type": "string",

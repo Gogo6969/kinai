@@ -3,8 +3,15 @@
   import type { Reminder } from '$lib/api';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { Check, Clock, RefreshCw, Trash2 } from '@lucide/svelte';
-  import { dayLabel, dayOf, minutesUntilTomorrowNine, timeOf } from '$lib/reminders';
+  import { Check, Clock, Link as LinkIcon, RefreshCw, Trash2 } from '@lucide/svelte';
+  import {
+    dayLabel,
+    dayOf,
+    minutesUntilTomorrowNine,
+    shortLink,
+    splitLinks,
+    timeOf,
+  } from '$lib/reminders';
 
   onMount(() => {
     void app.loadReminders();
@@ -39,6 +46,13 @@
   /** Ids with an action in flight — their buttons are disabled, so a
    *  second click cannot cross-cancel the first request. */
   let pending = $state<string[]>([]);
+
+  /** Ids whose full text is showing. A reminder can now run to about a
+   *  hundred words, and a list where every row is a paragraph is not a
+   *  calendar — so rows clamp to two lines until asked. */
+  let opened = $state<string[]>([]);
+  const toggleOpen = (id: string) =>
+    (opened = opened.includes(id) ? opened.filter((x) => x !== id) : [...opened, id]);
 
   /** Id of the fired row whose Snooze menu is open (one at a time). */
   let snoozeOpen = $state<string | null>(null);
@@ -106,8 +120,10 @@
     {/if}
 
     {#snippet row(r: Reminder)}
-      <div class="kin-card !py-3 flex items-center gap-3 {r.status === 'done' ? 'opacity-60' : ''}">
-        <div class="shrink-0 w-12">
+      {@const parts = splitLinks(r.text)}
+      {@const isOpen = opened.includes(r.id)}
+      <div class="kin-card !py-3 flex items-start gap-3 {r.status === 'done' ? 'opacity-60' : ''}">
+        <div class="shrink-0 w-12 pt-0.5">
           <div class="font-mono text-sm text-teal-300">{timeOf(r.due_local)}</div>
           {#if r.tz && deviceTz && r.tz !== deviceTz}
             <!-- Set in another zone: say so, or the clock reads as local. -->
@@ -116,7 +132,38 @@
             </div>
           {/if}
         </div>
-        <div class="flex-1 min-w-0 text-sm whitespace-pre-wrap break-words">{r.text}</div>
+        <div class="flex-1 min-w-0">
+          <p
+            class="text-sm whitespace-pre-wrap break-words {isOpen ? '' : 'kin-row-clamp'}"
+          >
+            {parts.prose || r.text}
+          </p>
+          {#if (parts.prose || r.text).length > 90}
+            <button
+              class="mt-1 text-xs text-teal-300 hover:text-teal-200 transition-colors"
+              aria-expanded={isOpen}
+              onclick={() => toggleOpen(r.id)}
+            >
+              {isOpen ? 'Show less' : 'Show more'}
+            </button>
+          {/if}
+          {#each parts.links.slice(0, 2) as href (href)}
+            <a
+              {href}
+              class="mt-1.5 flex items-center gap-1.5 text-xs text-teal-300 hover:text-teal-200
+                     transition-colors no-underline max-w-full"
+              title={href}
+            >
+              <LinkIcon size={12} class="shrink-0 opacity-70" aria-hidden="true" />
+              <span class="truncate min-w-0">{shortLink(href, 46)}</span>
+            </a>
+          {/each}
+          {#if parts.links.length > 2}
+            <p class="mt-1 text-[11px] text-white/35">
+              +{parts.links.length - 2} more link{parts.links.length > 3 ? 's' : ''}
+            </p>
+          {/if}
+        </div>
         {#if r.status === 'fired'}
           <span class="kin-badge !bg-amber-400/20 !text-amber-200 shrink-0">due now</span>
         {:else if r.status === 'done'}
@@ -204,3 +251,15 @@
     {/each}
   </div>
 </main>
+
+<style>
+  /* Two lines keeps a list of reminders scannable; the rest is one click
+     away, and the popup shows it in full when the reminder fires. */
+  .kin-row-clamp {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+  }
+</style>

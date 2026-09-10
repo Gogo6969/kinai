@@ -53,9 +53,14 @@ export function dayLabel(key: string, now: Date = new Date(), tz = ''): string {
   if (key === todayKey) return 'Today';
   const [ty, tm, td] = todayKey.split('-').map(Number);
   if (ty && tm && td) {
-    const tomorrow = new Date(Date.UTC(ty, tm - 1, td + 1));
-    const tomorrowKey = `${tomorrow.getUTCFullYear()}-${String(tomorrow.getUTCMonth() + 1).padStart(2, '0')}-${String(tomorrow.getUTCDate()).padStart(2, '0')}`;
-    if (key === tomorrowKey) return 'Tomorrow';
+    const shift = (days: number) => {
+      const d = new Date(Date.UTC(ty, tm - 1, td + days));
+      return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+    };
+    if (key === shift(1)) return 'Tomorrow';
+    // A reminder that fired while the app was closed is usually overdue,
+    // so yesterday is as common a heading as tomorrow.
+    if (key === shift(-1)) return 'Yesterday';
   }
   const [y, m, d] = key.split('-').map(Number);
   if (!y || !m || !d) return key;
@@ -71,4 +76,98 @@ export function dayLabel(key: string, now: Date = new Date(), tz = ''): string {
 export function minutesUntilTomorrowNine(now: Date = new Date()): number {
   const target = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 9, 0, 0, 0);
   return Math.max(1, Math.ceil((target.getTime() - now.getTime()) / 60_000));
+}
+
+/** A URL as it appears in reminder text. */
+const URL_RE = /https?:\/\/[^\s<>"']+/gi;
+
+/** Trailing characters that belong to the sentence, not the address. */
+function trimUrlTail(url: string): string {
+  return url.replace(/[.,;:!?)\]}'"]+$/, '');
+}
+
+/**
+ * Split reminder text into the words to read and the links to tap.
+ *
+ * The popup shows the prose large and each address on its own tappable
+ * row, so a long URL cannot push the sentence off the card. A URL that
+ * sits mid-sentence is left where it is — removing it would leave a hole
+ * in the reading — while ones that trail the text are lifted out.
+ */
+export function splitLinks(text: string): { prose: string; links: string[] } {
+  const links: string[] = [];
+  for (const m of text.matchAll(URL_RE)) {
+    const clean = trimUrlTail(m[0]);
+    if (clean && !links.includes(clean)) links.push(clean);
+  }
+  if (links.length === 0) return { prose: text.trim(), links };
+  // Strip only the trailing run of URLs (and the punctuation or dashes
+  // joining them), so "read X — <url>" reads as "read X".
+  let prose = text;
+  for (;;) {
+    const next = prose.replace(
+      /(?:\s*[–—:-]?\s*)https?:\/\/[^\s<>"']+[.,;:!?)\]}'"]*\s*$/,
+      ''
+    );
+    if (next === prose) break;
+    prose = next;
+  }
+  return { prose: prose.trim(), links };
+}
+
+/**
+ * "merics.org/…/2020-04/report.pdf" — the host and the end of the path,
+ * with the middle elided. The cut snaps to a path separator so the
+ * result never starts mid-word, which reads as a typo rather than a
+ * shortening.
+ */
+export function shortLink(url: string, max = 52): string {
+  const bare = url.replace(/^https?:\/\//i, '').replace(/\/$/, '');
+  if (bare.length <= max) return bare;
+  const slash = bare.indexOf('/');
+  const host = slash === -1 ? bare : bare.slice(0, slash);
+  const path = slash === -1 ? '' : bare.slice(slash);
+  // No path to elide — a bare host is shown whole rather than given a
+  // trailing "/…" that points at nothing.
+  if (!path) return bare;
+  const budget = Math.max(10, max - host.length - 2);
+  // Keep whole path segments from the end until the budget runs out; the
+  // last segment (the file name) is always worth more than the ones
+  // before it, so it is kept even when it alone exceeds the budget.
+  const segments = path.split('/').filter(Boolean);
+  let tail = '';
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const next = `/${segments[i]}${tail}`;
+    if (next.length > budget && tail) break;
+    tail = next;
+    if (tail.length >= budget) break;
+  }
+  if (!tail) tail = path.slice(-budget);
+  // A single file name can still blow the budget on its own. Elide ITS
+  // middle rather than letting the row clip the end, because the end is
+  // where the extension lives and ".pdf" is the most useful character
+  // the reader gets.
+  if (tail.length > budget) {
+    const keepEnd = Math.min(16, Math.max(8, Math.floor(budget / 2)));
+    const keepStart = Math.max(4, budget - keepEnd - 1);
+    tail = `${tail.slice(0, keepStart)}…${tail.slice(-keepEnd)}`;
+  }
+  return `${host}/…${tail}`;
+}
+
+/**
+ * How overdue a reminder is, in words, or null when it is not yet due.
+ * Compares the true instant (`due_at`), never the wall clock, so it stays
+ * right for a member in another zone.
+ */
+export function lateness(dueAt: string, now: Date = new Date()): string | null {
+  const due = new Date(dueAt).getTime();
+  if (Number.isNaN(due)) return null;
+  const mins = Math.floor((now.getTime() - due) / 60000);
+  if (mins < 1) return null;
+  if (mins < 60) return `${mins} min late`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return hours === 1 ? '1 hour late' : `${hours} hours late`;
+  const days = Math.floor(hours / 24);
+  return days === 1 ? '1 day late' : `${days} days late`;
 }

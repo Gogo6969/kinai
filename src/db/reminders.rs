@@ -21,8 +21,12 @@ pub const STATUS_FIRED: &str = "fired";
 pub const STATUS_DONE: &str = "done";
 pub const STATUS_CANCELLED: &str = "cancelled";
 
-/// Longest reminder text accepted, in characters.
-pub const MAX_TEXT_CHARS: usize = 200;
+/// Longest reminder text accepted, in characters. Roughly a hundred
+/// words: enough for "read X, pull out the three points on Y, then send
+/// Z a summary" with a link on the end. The popup collapses anything
+/// past a few lines behind a "Show more", so a long one costs the reader
+/// nothing until they want it.
+pub const MAX_TEXT_CHARS: usize = 600;
 /// Shortest id prefix `find_by_prefix` accepts.
 pub const MIN_PREFIX: usize = 6;
 

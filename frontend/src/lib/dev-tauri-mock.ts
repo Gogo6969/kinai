@@ -216,7 +216,17 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
     list_reports: () => w.__mockReports ?? [],
     // Reminders: an unhandled command would return null and the Calendar
     // page's `.filter` would throw — keep the browser-only flow alive.
-    list_reminders: () => [],
+    // Drive the Calendar and the due-reminder popup without a host.
+    // `localStorage.__mockReminders` is read too, so a fixture survives
+    // the reload a scenario needs to get past setup.
+    list_reminders: () => {
+      if (w.__mockReminders) return w.__mockReminders;
+      try {
+        return JSON.parse(localStorage.getItem('__mockReminders') ?? '[]');
+      } catch {
+        return [];
+      }
+    },
     reminder_action: () => null,
     open_report_count: () => (w.__mockReports ?? []).filter((r: any) => !r.reviewed_at).length,
     set_report_reviewed: (a) => {
