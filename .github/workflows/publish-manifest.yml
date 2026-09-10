@@ -1,0 +1,200 @@
+name: Publish update manifest
+
+# Mirrors a published release's `latest.json` to the `updates` branch, which
+# is what the GitHub-side updater actually polls.
+#
+# Why this exists
+# ---------------
+# The updater used to poll `releases/latest/download/latest.json`. That URL
+# redirects to whichever release is newest, so every poll from every install
+# incremented that release's asset download counter. The result: 2,245 of the
+# repo's 3,334 recorded downloads were update checks, and the release download
+# numbers meant nothing.
+#
+# Polling a static file on a branch keeps those two things apart:
+#
+#   manifest poll  → raw.githubusercontent.com/.../updates/latest.json  (uncounted)
+#   actual update  → the release asset named in that manifest           (counted)
+#
+# The manifest's payload URLs are tag-pinned (`releases/download/v0.2.121/...`),
+# never `/latest/`, so mirroring the file verbatim keeps every download pointing
+# at the same assets it always did. Afterwards an `app.tar.gz` download means one
+# install genuinely updated — a number worth reading.
+#
+# Why it triggers on `published`, not on the build
+# ------------------------------------------------
+# Releases are built as drafts and published by hand later (docs/RELEASE-CHECKLIST.md).
+# Draft assets are not publicly downloadable. Mirroring at build time would hand
+# clients a manifest pointing at assets they'd get a 404 on. Publishing is the
+# moment the assets become real, so that's the moment the manifest may move.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to mirror (default: current latest published release)'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+# Two releases published close together must not race to write the branch.
+concurrency:
+  group: publish-manifest
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve which tag to mirror
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+
+          # The newest published release is both the default target for a
+          # manual run and the guard for an automatic one: draft releases are
+          # published by hand and can go out of order, and an older tag
+          # published after a newer one must not become what everyone
+          # updates to.
+          latest="$(gh api "repos/$REPO/releases/latest" --jq '.tag_name')"
+
+          want="${INPUT_TAG:-$EVENT_TAG}"
+          want="${want:-$latest}"
+          if [ -z "$want" ]; then
+            echo "::error::no tag given, and no published release to fall back to"
+            exit 1
+          fi
+
+          if [ "$want" != "$latest" ]; then
+            echo "::notice::$want is not the latest published release ($latest) — nothing to mirror"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "tag=$want" >> "$GITHUB_OUTPUT"
+          echo "Mirroring $want"
+
+      - name: Download the release manifest
+        if: steps.resolve.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$REPO" --pattern 'latest.json' --output latest.json --clobber
+          echo "--- manifest ---"
+          jq '{version, pub_date, platforms: (.platforms | keys)}' latest.json
+
+      - name: Validate before it becomes what everyone updates to
+        if: steps.resolve.outputs.skip == 'false'
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          # The version has to match the tag, or clients update to something
+          # other than what was released.
+          want="${TAG#v}"
+          got="$(jq -r '.version' latest.json)"
+          if [ "$want" != "$got" ]; then
+            echo "::error::manifest says version $got but the tag is $TAG"
+            exit 1
+          fi
+
+          # All four platform families must be present. A partial manifest is
+          # the failure mode this repo has actually hit (0.2.60, 0.2.64): the
+          # release looks fine, and one platform silently stops updating.
+          missing=""
+          for fam in darwin-aarch64 darwin-x86_64 linux-x86_64 windows-x86_64; do
+            jq -e --arg f "$fam" '.platforms | has($f)' latest.json >/dev/null || missing="$missing $fam"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::manifest is missing platform families:$missing"
+            jq -r '.platforms | keys[]' latest.json
+            exit 1
+          fi
+
+          # Every entry needs a signature and a tag-pinned payload URL. A
+          # `/releases/latest/` URL here would put us right back to counting
+          # update traffic as downloads.
+          bad="$(jq -r '
+            .platforms | to_entries[]
+            | select((.value.signature // "") == "" or (.value.url // "") == "" or (.value.url | contains("/releases/latest/")))
+            | .key' latest.json)"
+          if [ -n "$bad" ]; then
+            echo "::error::these platforms have a missing signature or an unpinned url:"
+            echo "$bad"
+            exit 1
+          fi
+
+          echo "Manifest is whole: $(jq -r '.platforms | length' latest.json) targets, 4 families, all signed."
+
+      - name: Publish to the updates branch
+        if: steps.resolve.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          new="$(base64 -w0 < latest.json)"
+
+          # Updating a file through the Contents API needs the blob sha it is
+          # replacing. Absent means first write.
+          sha="$(gh api "repos/$REPO/contents/latest.json?ref=updates" --jq '.sha' 2>/dev/null || true)"
+
+          if [ -n "$sha" ]; then
+            cur="$(gh api "repos/$REPO/contents/latest.json?ref=updates" --jq '.content' | tr -d '\n' | base64 -d | jq -S -c .)"
+            if [ "$cur" = "$(jq -S -c . latest.json)" ]; then
+              echo "::notice::branch already serves this manifest — nothing to do"
+              exit 0
+            fi
+            gh api -X PUT "repos/$REPO/contents/latest.json" \
+              -f message="chore(updates): serve $TAG" \
+              -f branch=updates \
+              -f content="$new" \
+              -f sha="$sha" >/dev/null
+          else
+            gh api -X PUT "repos/$REPO/contents/latest.json" \
+              -f message="chore(updates): serve $TAG" \
+              -f branch=updates \
+              -f content="$new" >/dev/null
+          fi
+
+          echo "::notice::updates branch now serves $TAG"
+
+      - name: Confirm the endpoint serves it
+        if: steps.resolve.outputs.skip == 'false'
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          url="https://raw.githubusercontent.com/$REPO/updates/latest.json"
+          want="${TAG#v}"
+
+          # raw.githubusercontent sits behind a CDN with a short TTL, so the
+          # first read after a write can still be the previous manifest.
+          for i in 1 2 3 4 5 6; do
+            got="$(curl -fsSL "$url" | jq -r '.version' || echo "")"
+            if [ "$got" = "$want" ]; then
+              echo "$url serves $got"
+              exit 0
+            fi
+            echo "attempt $i: serving '${got:-<unreachable>}', want $want — waiting"
+            sleep 20
+          done
+
+          echo "::warning::$url has not caught up to $want yet. The write succeeded; this is CDN lag. Re-check before assuming a problem."

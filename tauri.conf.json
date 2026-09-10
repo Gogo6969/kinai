@@ -82,6 +82,7 @@
     "updater": {
       "active": true,
       "endpoints": [
+        "https://raw.githubusercontent.com/Gogo6969/kinai/updates/latest.json",
         "https://github.com/Gogo6969/kinai/releases/latest/download/latest.json"
       ],
       "dialog": false,
