@@ -6,6 +6,9 @@ use serde_json::json;
 
 use crate::config::{SearchEngine, ToolSettings};
 use crate::db::Db;
+/// The shared reminder validation. `pretty_local` lives beside it because
+/// the refusal sentences render times too, and one copy beats two.
+use crate::reminders::spec::{self, pretty_local};
 
 /// Runtime context the tool layer needs that isn't in the static schema —
 /// API keys, search-engine selection, plus the DB handle + peer scope for
@@ -225,71 +228,43 @@ pub async fn execute(name: &str, args_json: &str, runtime: &ToolRuntime) -> Resu
             let tz_name = tz
                 .map(|z| z.name().to_string())
                 .unwrap_or_else(super::datetime::host_tz_name);
-            let now = chrono::Utc::now();
-            // Every user-level outcome below is Ok(text): the loop treats an
-            // Err as a failed lookup and tells the family their web search
-            // broke. Only real infrastructure failures are errors.
-            //
-            // Length is checked HERE and not left to the DB, whose `bail!`
-            // would become exactly that misleading Err.
-            if text.chars().count() > crate::db::reminders::MAX_TEXT_CHARS {
-                return Ok(format!(
-                    "That reminder text is too long ({} characters; the limit is {}). Shorten it \
-                     to the essentials and try again — nothing was set.",
-                    text.chars().count(),
-                    crate::db::reminders::MAX_TEXT_CHARS
-                ));
+            // Text is checked BEFORE the "when", because that is the order
+            // 0.2.123 answered in: a long note with no time is told it is
+            // too long, not sent back for a time that would then be
+            // refused for the length anyway. `plan` re-checks it — this is
+            // about which sentence comes first, not a second rule.
+            if let Err(rejected) = spec::check_text(text) {
+                return Ok(rejected.prose());
             }
-            // A model may hand over an absurd `in_minutes`; chrono's Add
-            // PANICS on overflow, which would kill the whole turn instead
-            // of answering. Bound it against the same 366-day rule below.
-            const MAX_MINUTES: i64 = 366 * 24 * 60;
-            let due = if let Some(m) = args.get("in_minutes").and_then(|v| v.as_i64()) {
-                if m < 1 {
-                    return Ok("A reminder needs to be at least one minute away — nothing was set.".into());
-                }
-                if m > MAX_MINUTES {
-                    return Ok("That's more than a year away — nothing was set. Pick a date within \
-                               the next year."
-                        .into());
-                }
-                now + chrono::Duration::minutes(m)
+            // "You gave me neither" stays here rather than in the spec:
+            // `When` makes it unrepresentable there, and each surface
+            // words it for its own caller — this sentence to a model, a
+            // 422 to a program.
+            let when = if let Some(m) = args.get("in_minutes").and_then(|v| v.as_i64()) {
+                spec::When::InMinutes(m)
             } else if let Some(local) = args.get("due_local").and_then(|v| v.as_str()) {
-                match super::datetime::local_to_utc(local, tz) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        return Ok(format!(
-                            "I couldn't read that time ({e}). Give it as YYYY-MM-DDTHH:MM in the \
-                             user's timezone, or say how many minutes from now. Nothing was set."
-                        ))
-                    }
-                }
+                spec::When::DueLocal(local)
             } else {
                 return Ok("Tell me when: pass due_local (YYYY-MM-DDTHH:MM in the user's \
                            timezone) or in_minutes. Nothing was set."
                     .into());
             };
-            if due <= now {
-                return Ok(format!(
-                    "{} ({}) is already in the past — it's {} now. Did you mean tomorrow, or \
-                     another day? Nothing was set.",
-                    pretty_local(&crate::db::reminders::local_display(due, &tz_name)),
-                    tz_name,
-                    pretty_local(&crate::db::reminders::local_display(now, &tz_name)),
-                ));
-            }
-            if due > now + chrono::Duration::days(366) {
-                return Ok("That's more than a year away — nothing was set. Pick a date within \
-                           the next year."
-                    .into());
-            }
+            // Every user-level outcome is Ok(text): the loop treats an Err
+            // as a failed lookup and tells the family their web search
+            // broke. Only real infrastructure failures are errors — which
+            // is also why the length check lives in `plan` and never
+            // reaches the DB's `bail!`.
+            let planned = match spec::plan(text, when, tz, &tz_name, chrono::Utc::now()) {
+                Ok(p) => p,
+                Err(rejected) => return Ok(rejected.prose()),
+            };
             let r = db
                 .create_reminder(
                     peer,
                     runtime.thread_id.as_deref(),
-                    text,
-                    due,
-                    &tz_name,
+                    &planned.text,
+                    planned.due_at,
+                    &planned.tz_name,
                     runtime.source_msg_id.as_deref(),
                 )
                 .await?;
@@ -691,13 +666,6 @@ fn short_id(id: &str) -> &str {
     id.get(..8).unwrap_or(id)
 }
 
-/// "2026-09-10T09:00" → "Wed 10 Sep, 09:00" for confirmations and lists.
-fn pretty_local(due_local: &str) -> String {
-    chrono::NaiveDateTime::parse_from_str(due_local, "%Y-%m-%dT%H:%M")
-        .map(|d| d.format("%a %-d %b, %H:%M").to_string())
-        .unwrap_or_else(|_| due_local.to_string())
-}
-
 fn set_reminder_def() -> ToolDef {
     ToolDef {
         name: "set_reminder".into(),
@@ -876,6 +844,25 @@ mod reminder_tool_tests {
             .await
             .unwrap();
         assert!(out.starts_with("Reminder set for"), "{out}");
+    }
+
+    #[tokio::test]
+    async fn a_long_text_with_no_time_complains_about_the_length_first() {
+        // Two problems at once: too long AND no time. Which sentence comes
+        // back decides whether the model fixes the real problem or spends
+        // a round trip adding a time that is about to be refused anyway.
+        // Moving the guards into `reminders::spec` in 0.2.124 briefly
+        // swapped this order; nothing else covered the combination.
+        let rt = runtime().await;
+        let long = "x".repeat(crate::db::reminders::MAX_TEXT_CHARS + 1);
+        let out = execute("set_reminder", &format!(r#"{{"text":"{long}"}}"#), &rt).await.unwrap();
+        assert!(out.contains("too long"), "{out}");
+        assert!(!out.contains("Tell me when"), "{out}");
+        // A blank text is still an infrastructure Err from argument
+        // extraction, never the spec's Empty refusal.
+        for blank in [r#"{"text":"   ","in_minutes":5}"#, r#"{"in_minutes":5}"#] {
+            assert!(execute("set_reminder", blank, &rt).await.is_err(), "{blank}");
+        }
     }
 
     #[tokio::test]

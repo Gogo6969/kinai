@@ -14,6 +14,11 @@
 //!
 //! Privacy: log lines carry ids and counts, never the reminder text.
 
+/// Validation every caller that creates a reminder goes through. Lives
+/// here rather than in the tool so the chat path is not the only checked
+/// way into the table.
+pub mod spec;
+
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Runtime};
