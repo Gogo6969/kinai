@@ -140,6 +140,28 @@ pub async fn revoke(pool: &SqlitePool, id: &str) -> Result<()> {
     Ok(())
 }
 
+/// Revoke by short code rather than row id.
+///
+/// Manage Family knows a member by their invite's short code (it is also
+/// their `peer_id` on every thread, fact and reminder), not by the row id
+/// the Invites page uses.
+///
+/// Errors when nothing matched. `sqlx::execute` reports `Ok` with zero
+/// rows affected for a key that does not exist, so a silent typo would
+/// otherwise look exactly like a successful revoke — and the caller would
+/// tell the host the member was removed while their code kept working.
+pub async fn revoke_by_short_code(pool: &SqlitePool, short_code: &str) -> Result<()> {
+    let done = sqlx::query("UPDATE invites SET revoked = 1, revoked_at = ?2 WHERE short_code = ?1")
+        .bind(short_code)
+        .bind(Utc::now().to_rfc3339())
+        .execute(pool)
+        .await?;
+    if done.rows_affected() == 0 {
+        return Err(anyhow!("no invite with that code"));
+    }
+    Ok(())
+}
+
 /// Hard-delete invites that have been dead long enough to stop showing.
 /// An invite is "stale" once it has been *revoked* or *expired* for more
 /// than `grace_days`:
@@ -429,6 +451,27 @@ mod cleanup_tests {
         let absent = lookup_by_short_code(&pool, "zzzzzz").await.unwrap_err().to_string();
         assert_eq!(refused, absent, "must be byte-identical to not-found");
         assert_eq!(refused, "invite code not found");
+    }
+
+    /// Revoking by code must report a miss rather than pretending.
+    /// `sqlx::execute` returns Ok with zero rows affected for a key that
+    /// does not exist, so without the rows_affected check a typo would
+    /// look exactly like a successful revoke — and Manage family would
+    /// tell the host someone was removed while their code kept working.
+    #[tokio::test]
+    async fn revoking_a_code_that_is_not_there_is_an_error() {
+        let pool = fresh_pool().await;
+        seed_scoped(&pool, "realco", crate::auth::FAMILY_SCOPE).await;
+
+        revoke_by_short_code(&pool, "realco").await.expect("the real one revokes");
+        assert!(
+            lookup_by_short_code(&pool, "realco").await.is_err(),
+            "revoked codes stop resolving"
+        );
+        assert!(
+            revoke_by_short_code(&pool, "nosuch").await.is_err(),
+            "a code that does not exist must not report success"
+        );
     }
 
     /// Rows written before the scope column existed carry the DEFAULT,

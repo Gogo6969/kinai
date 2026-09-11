@@ -290,8 +290,26 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
         return Err(anyhow::anyhow!("non-family token refused at handshake"));
     }
 
+    // A paused device stays out until the host resumes it. This check is
+    // what makes Pause mean anything: clients auto-retry within seconds,
+    // so cutting the socket alone would be undone by the paused device
+    // itself before the host had let go of the mouse.
+    if s.app.db.peer_is_paused(&claims.sub).await.unwrap_or(false) {
+        let _ = sink
+            .send(WsMessage::Text(
+                serde_json::to_string(&Envelope::Error {
+                    message: "this device is paused — ask the host to resume it".into(),
+                })?
+                .into(),
+            ))
+            .await;
+        return Err(anyhow::anyhow!("paused device refused at handshake"));
+    }
+
     let peer_id = uuid::Uuid::new_v4().to_string();
     let (tx, mut rx) = mpsc::unbounded_channel::<Envelope>();
+    // Cancelled by Pause and by Disconnect; the read loop selects on it.
+    let session_cancel = CancellationToken::new();
 
     {
         let mut net = s.app.net.lock().await;
@@ -337,6 +355,7 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
                 tx: tx.clone(),
                 first_seen: chrono::Utc::now(),
                 last_seen: chrono::Utc::now(),
+                cancel: session_cancel.clone(),
             },
         );
         s.app.stats.write().peers_connected = net.peers.len();
@@ -431,7 +450,21 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
         }
     });
 
-    while let Some(frame) = source.next().await {
+    // Pause and Disconnect both cancel this token. Without the select the
+    // loop parks on `source.next()` until the client happens to send
+    // something, so a removed member kept chatting on an open socket.
+    loop {
+        let frame = tokio::select! {
+            biased;
+            _ = session_cancel.cancelled() => {
+                tracing::info!(peer = %peer_id, "session ended by the host");
+                break;
+            }
+            next = source.next() => match next {
+                Some(f) => f,
+                None => break,
+            },
+        };
         let Ok(frame) = frame else { break };
         if matches!(frame, WsMessage::Close(_)) {
             break;
@@ -1281,41 +1314,171 @@ pub async fn stop(state: SharedState) -> Result<()> {
     Ok(())
 }
 
+/// Everyone who can reach this household, connected or not.
+///
+/// This used to list only `net.peers` — the sockets open at that instant —
+/// which meant a member who had not opened their laptop simply was not
+/// there. A credential issued months ago and never revoked was invisible
+/// on the one page you would go to to look for it, and Disconnect could
+/// not reach an offline device because there was no row to click. The
+/// source of truth is the invites table; a live socket is decoration on
+/// top of it.
+///
+/// Revoked invites are excluded: they cannot get in, so they are not
+/// people who can reach the household. They remain on the Invites page.
 pub async fn list_peers(state: &SharedState) -> Vec<PeerSummary> {
-    let net = state.net.lock().await;
-    net.peers
-        .iter()
-        .map(|(id, info)| PeerSummary {
-            id: id.clone(),
-            display_name: info.display_name.clone(),
-            invite_id: info.invite_id.clone(),
-            first_seen: info.first_seen.to_rfc3339(),
-            last_seen: info.last_seen.to_rfc3339(),
+    let live: std::collections::HashMap<String, (String, String)> = {
+        let net = state.net.lock().await;
+        net.peers
+            .values()
+            .map(|i| {
+                (
+                    i.invite_id.clone(),
+                    (i.display_name.clone(), i.last_seen.to_rfc3339()),
+                )
+            })
+            .collect()
+    };
+
+    let rows = sqlx::query(
+        "SELECT i.short_code    AS invite_id,
+                i.label         AS label,
+                p.display_name  AS device_name,
+                p.first_seen    AS first_seen,
+                p.last_seen     AS last_seen,
+                COALESCE(p.paused, 0) AS paused
+         FROM invites i
+         LEFT JOIN peers p ON p.id = i.short_code
+         WHERE i.revoked = 0
+         ORDER BY i.created_at",
+    )
+    .fetch_all(&state.db.pool)
+    .await
+    .unwrap_or_default();
+
+    rows.into_iter()
+        .map(|r| {
+            use sqlx::Row as _;
+            let invite_id: String = r.get("invite_id");
+            let label: String = r.get("label");
+            let device_name: Option<String> = r.try_get("device_name").ok().flatten();
+            let first_seen: Option<String> = r.try_get("first_seen").ok().flatten();
+            let stored_last: Option<String> = r.try_get("last_seen").ok().flatten();
+            let paused: i64 = r.try_get("paused").unwrap_or(0);
+
+            let connected = live.get(&invite_id);
+            let state_str = if connected.is_some() {
+                "connected"
+            } else if paused != 0 {
+                "paused"
+            } else {
+                "offline"
+            };
+            PeerSummary {
+                display_name: connected
+                    .map(|(n, _)| n.clone())
+                    .or(device_name)
+                    .unwrap_or_else(|| label.clone()),
+                label,
+                state: state_str.to_string(),
+                first_seen,
+                last_seen: connected.map(|(_, s)| s.clone()).or(stored_last),
+                invite_id,
+            }
         })
         .collect()
 }
 
+/// One row on Manage family: a person who can reach this household.
+///
+/// Note there is no per-connection id here any more. This list is keyed on
+/// the invite, because the question the page answers is "who can get in",
+/// not "who happens to have a socket open this second".
 #[derive(Serialize)]
 pub struct PeerSummary {
-    pub id: String,
-    pub display_name: String,
+    /// The invite short code. Stable across reconnects, and what
+    /// pause/resume/disconnect act on. Deliberately NOT rendered by the
+    /// UI: it is a working credential, and a screenshot of this page used
+    /// to publish one per row.
     pub invite_id: String,
-    pub first_seen: String,
-    pub last_seen: String,
+    /// The device's own name when it has ever said Hello, otherwise the
+    /// label the invite was created with.
+    pub display_name: String,
+    /// The invite's label, always — "Quentin", "For Mom's iPad".
+    pub label: String,
+    /// `connected`, `paused`, or `offline`.
+    pub state: String,
+    /// When this device first connected, if it ever has.
+    pub first_seen: Option<String>,
+    /// When it was last seen. `None` for an invite nobody has used, and
+    /// also for devices that last connected before 0.2.120, which is when
+    /// the `peers` table got its first writer.
+    pub last_seen: Option<String>,
 }
 
-pub async fn revoke_peer(state: &SharedState, peer_id: &str) -> Result<()> {
-    let mut net = state.net.lock().await;
-    if let Some(info) = net.peers.remove(peer_id) {
-        let _ = info.tx.send(Envelope::Error {
-            message: "your access has been revoked".into(),
-        });
-        drop(info);
-    }
-    state.stats.write().peers_connected = net.peers.len();
+/// End every live session belonging to one invite, for real.
+///
+/// Removing the map entry was all this used to do, and it disconnected
+/// nobody: `PeerInfo.tx` is a clone, the connection's own task keeps the
+/// original, and the read loop never re-checked membership. A member who
+/// had just been told their access was revoked carried on chatting on the
+/// same open socket. Cancelling the session token is what ends it.
+///
+/// Keyed on the INVITE, not the per-connection id: that is what survives a
+/// reconnect, and "one invite, one live device" means it is the identity
+/// the host actually means when they point at a row.
+async fn end_sessions_for_invite(state: &SharedState, invite_id: &str, why: &str) {
+    let ended: Vec<String> = {
+        let mut net = state.net.lock().await;
+        let ids: Vec<String> = net
+            .peers
+            .iter()
+            .filter(|(_, info)| info.invite_id == invite_id)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &ids {
+            if let Some(info) = net.peers.remove(id) {
+                // Tell them why, then actually cut the session. The send is
+                // best-effort: the writer may already be gone.
+                let _ = info.tx.send(Envelope::Error { message: why.into() });
+                info.cancel.cancel();
+            }
+        }
+        state.stats.write().peers_connected = net.peers.len();
+        ids
+    };
     if let Some(h) = state.handle.read().as_ref() {
-        let _ = h.emit("kinai://peer-left", serde_json::json!({"id": peer_id}));
+        for id in &ended {
+            let _ = h.emit("kinai://peer-left", serde_json::json!({ "id": id }));
+        }
     }
+    tracing::info!(sessions = ended.len(), "ended sessions for an invite");
+}
+
+/// Pause: keep this device out until the host lets it back in. The invite
+/// survives, so resuming needs no new code.
+///
+/// The pause is stored, not just applied to the socket — clients auto-retry
+/// within seconds, so a pause that lived only in memory would be undone by
+/// the paused device itself almost immediately.
+pub async fn pause_peer(state: &SharedState, invite_id: &str) -> Result<()> {
+    state.db.set_peer_paused(invite_id, true).await?;
+    end_sessions_for_invite(state, invite_id, "paused by the host").await;
+    Ok(())
+}
+
+/// Let a paused device back in. It reconnects on its own.
+pub async fn resume_peer(state: &SharedState, invite_id: &str) -> Result<()> {
+    state.db.set_peer_paused(invite_id, false).await
+}
+
+/// Disconnect: end the session AND revoke the code. Coming back needs a
+/// brand-new invite. Irreversible — there is no un-revoke.
+pub async fn disconnect_peer(state: &SharedState, invite_id: &str) -> Result<()> {
+    // Revoke FIRST. If it fails we have not told anyone they were removed,
+    // and the caller gets a real error instead of a half-done removal.
+    invite::revoke_by_short_code(&state.db.pool, invite_id).await?;
+    end_sessions_for_invite(state, invite_id, "your access has been revoked").await;
     Ok(())
 }
 

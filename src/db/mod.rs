@@ -367,4 +367,13 @@ impl Db {
     pub async fn peer_tz(&self, peer_id: &str) -> Result<Option<String>> {
         peers::tz(&self.pool, peer_id).await
     }
+
+    /// Keep a device out until the host lets it back in, or let it back in.
+    pub async fn set_peer_paused(&self, peer_id: &str, paused: bool) -> Result<()> {
+        peers::set_paused(&self.pool, peer_id, paused).await
+    }
+
+    pub async fn peer_is_paused(&self, peer_id: &str) -> Result<bool> {
+        peers::is_paused(&self.pool, peer_id).await
+    }
 }

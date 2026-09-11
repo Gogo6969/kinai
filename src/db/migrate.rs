@@ -331,6 +331,16 @@ const STATEMENTS: &[&str] = &[
     // `Db::open` return Err, which is an `.expect` panic at startup on
     // every device.
     r#"ALTER TABLE invites ADD COLUMN scope TEXT NOT NULL DEFAULT 'family'"#,
+    // Pause: a device kept out until the host lets it back in. Keyed by
+    // `peers.id`, which is the invite short code and therefore survives a
+    // reconnect — unlike the per-connection UUID the Manage Family page
+    // used to pass, which is why a pause could never have persisted.
+    //
+    // Note the older `peers.revoked` column above: it has existed since
+    // the root commit and nothing has ever read or written it. This is
+    // deliberately a new column rather than a reuse, because "revoked"
+    // now unambiguously means the invite, not the device.
+    r#"ALTER TABLE peers ADD COLUMN paused INTEGER NOT NULL DEFAULT 0"#,
 ];
 
 pub async fn run(pool: &SqlitePool) -> Result<()> {

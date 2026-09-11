@@ -281,11 +281,15 @@ export interface ResolvedInvite {
 }
 
 export interface PeerSummary {
-  id: string;
-  display_name: string;
+  /** The invite short code — stable, and what pause/disconnect act on.
+   *  Never render it: it is a working credential, and a screenshot of
+   *  Manage family used to publish one per row. */
   invite_id: string;
-  first_seen: string;
-  last_seen: string;
+  display_name: string;
+  label: string;
+  state: 'connected' | 'paused' | 'offline';
+  first_seen: string | null;
+  last_seen: string | null;
 }
 
 export interface HostInfo {
@@ -615,7 +619,9 @@ export const api = {
     invoke<ResolvedInvite>('redeem_invite_code', { hostUrl, code }),
 
   listPeers: () => invoke<PeerSummary[]>('list_peers'),
-  revokePeer: (peerId: string) => invoke<void>('revoke_peer', { peerId }),
+  pausePeer: (inviteId: string) => invoke<void>('pause_peer', { inviteId }),
+  resumePeer: (inviteId: string) => invoke<void>('resume_peer', { inviteId }),
+  disconnectPeer: (inviteId: string) => invoke<void>('disconnect_peer', { inviteId }),
 
   toggleOverlay: () => invoke<void>('toggle_overlay'),
 

@@ -342,7 +342,36 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
     load_thread: () => cannedMessages,
     thread_active_slot: () => null,
     list_invites: () => [],
-    list_peers: () => [],
+    list_peers: () =>
+      (globalThis as any).__mockPeers ?? [
+        {
+          invite_id: 'aaa111',
+          display_name: 'Kitchen iPad',
+          label: 'Kitchen iPad',
+          state: 'connected',
+          first_seen: new Date(Date.now() - 86_400_000).toISOString(),
+          last_seen: new Date().toISOString(),
+        },
+        {
+          invite_id: 'bbb222',
+          display_name: 'Study laptop',
+          label: 'Study laptop',
+          state: 'paused',
+          first_seen: new Date(Date.now() - 5 * 86_400_000).toISOString(),
+          last_seen: new Date(Date.now() - 3_600_000).toISOString(),
+        },
+        {
+          invite_id: 'ccc333',
+          display_name: 'Spare phone',
+          label: 'Spare phone',
+          state: 'offline',
+          first_seen: null,
+          last_seen: null,
+        },
+      ],
+    pause_peer: () => null,
+    resume_peer: () => null,
+    disconnect_peer: () => null,
     stt_download_progress: () => null,
   };
 

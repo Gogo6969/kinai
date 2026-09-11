@@ -2937,12 +2937,39 @@ pub async fn list_peers(state: tauri::State<'_, SharedState>) -> Result<Vec<Peer
     Ok(network::server::list_peers(&*state).await)
 }
 
+/// Pause a family device: it stays out until resumed, and its invite code
+/// keeps working for when it is.
+///
+/// All three of these take the INVITE id (`PeerSummary.invite_id`), not
+/// `PeerSummary.id`. The latter is a per-connection UUID that is a
+/// different value every time the device reconnects, so keying on it could
+/// never outlive the socket — which is precisely why the old button could
+/// not persist anything.
 #[tauri::command]
-pub async fn revoke_peer(
+pub async fn pause_peer(
     state: tauri::State<'_, SharedState>,
-    peer_id: String,
+    invite_id: String,
 ) -> Result<()> {
-    network::server::revoke_peer(&*state, &peer_id).await.map_err(err)
+    network::server::pause_peer(&*state, &invite_id).await.map_err(err)
+}
+
+/// Let a paused device back in. It reconnects by itself.
+#[tauri::command]
+pub async fn resume_peer(
+    state: tauri::State<'_, SharedState>,
+    invite_id: String,
+) -> Result<()> {
+    network::server::resume_peer(&*state, &invite_id).await.map_err(err)
+}
+
+/// End the session and revoke the code. Irreversible: coming back needs a
+/// brand-new invite.
+#[tauri::command]
+pub async fn disconnect_peer(
+    state: tauri::State<'_, SharedState>,
+    invite_id: String,
+) -> Result<()> {
+    network::server::disconnect_peer(&*state, &invite_id).await.map_err(err)
 }
 
 // ---- Overlay ----

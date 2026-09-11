@@ -130,4 +130,14 @@ pub struct PeerInfo {
     pub tx: mpsc::UnboundedSender<Envelope>,
     pub first_seen: chrono::DateTime<chrono::Utc>,
     pub last_seen: chrono::DateTime<chrono::Utc>,
+    /// Ends this device's session when cancelled.
+    ///
+    /// Removing the map entry is NOT enough to disconnect anyone, and for
+    /// a long time that is all "Disconnect" did. `tx` here is a clone; the
+    /// connection's own task still holds the original, so the writer never
+    /// sees its channel close, the read loop never re-checks membership,
+    /// and the member carried on chatting on the same socket after being
+    /// told their access was revoked. Cancelling this is what actually
+    /// ends it.
+    pub cancel: tokio_util::sync::CancellationToken,
 }
