@@ -295,6 +295,20 @@
   {/if}
 
   <div class="border-t border-white/5 px-2 py-2 space-y-0.5">
+    <!-- Reminders live on the host; a client only gets the entry when its
+         host advertises the feature, so an older host never leaves the
+         page spinning on a call it doesn't understand. -->
+    {#if app.config?.mode === 'host' || app.hostInfo?.host_reminders === true}
+      <button
+        class="w-full kin-btn justify-start {dueReminderCount > 0 ? '!text-amber-300' : ''}"
+        onclick={() => goto('/calendar')}
+      >
+        <CalendarDays size={14} /> Calendar
+        {#if dueReminderCount > 0}
+          <span class="kin-badge ml-auto !bg-amber-400/20 !text-amber-200">{dueReminderCount}</span>
+        {/if}
+      </button>
+    {/if}
     {#if app.config?.mode === 'host'}
       <button class="w-full kin-btn justify-start" onclick={() => goto('/host')}>
         <Cpu size={14} /> Backend & model
@@ -311,20 +325,6 @@
         <Flag size={14} /> Reported answers
         {#if app.openReports > 0}
           <span class="kin-badge ml-auto !bg-amber-400/20 !text-amber-200">{app.openReports}</span>
-        {/if}
-      </button>
-    {/if}
-    <!-- Reminders live on the host; a client only gets the entry when its
-         host advertises the feature, so an older host never leaves the
-         page spinning on a call it doesn't understand. -->
-    {#if app.config?.mode === 'host' || app.hostInfo?.host_reminders === true}
-      <button
-        class="w-full kin-btn justify-start {dueReminderCount > 0 ? '!text-amber-300' : ''}"
-        onclick={() => goto('/calendar')}
-      >
-        <CalendarDays size={14} /> Calendar
-        {#if dueReminderCount > 0}
-          <span class="kin-badge ml-auto !bg-amber-400/20 !text-amber-200">{dueReminderCount}</span>
         {/if}
       </button>
     {/if}
