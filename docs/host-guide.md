@@ -69,7 +69,14 @@ Open the main window to browse conversation history per family member.
 
 ## 7. Managing your family
 
-Tray menu → **Manage Family**: see who's connected, disconnect anyone, click through to revoke their invite if needed. Revoked invites are immediately rejected on the next reconnect.
+Tray menu → **Manage Family** lists everyone who can reach your household — not only the devices switched on at that moment. Each row says whether it is connected, paused, or simply not on right now, so somebody whose laptop has been shut for a month is still there and still actionable.
+
+Two buttons, and they mean different things:
+
+- **Pause** ends the session and keeps that device out until you press Resume. The invite still works, so letting them back in needs no new code. Use it to stop a device for an afternoon.
+- **Disconnect** ends the session *and* revokes the invite code. Coming back needs a brand-new invite. It cannot be undone, and the confirmation says so.
+
+Invite codes are not shown on this page. They are working credentials, and that page tends to get screenshotted — the full list lives on the **Invites** page, which is also where revoked ones stay visible.
 
 ## 8. Things to know
 
@@ -77,3 +84,4 @@ Tray menu → **Manage Family**: see who's connected, disconnect anyone, click t
 - **Encryption:** every connection presents an RS256-signed JWT; the keys live in `~/.kinai/keys/` with `0600` permissions. The transport is plain `ws://` on the local network for performance — put KinAI behind Tailscale or wireguard if you want WAN access.
 - **Updates:** KinAI checks GitHub Releases every 6 hours and shows a notification when a new version is out. Click to install.
 - **Storage:** everything lives in `~/.kinai/`. Backing that folder up = backing up KinAI.
+- **Reminders from a script:** a cron job, a Shortcut or anything else can add reminders to your own calendar without going through a conversation. Create a key on the Invites page — see [the reminder API](reminders-api.md). It cannot open a chat, read anyone's messages, or write to another member's calendar.

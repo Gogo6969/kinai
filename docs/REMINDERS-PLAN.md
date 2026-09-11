@@ -48,6 +48,12 @@ Two things follow:
 - A shared family calendar. One member, one reminder; "remind us all" can
   be three reminders.
 
+**Two of these moved since this was written.** Repeating reminders shipped
+in 0.2.125 — daily, weekdays, weekly, monthly — and so did an HTTP API a
+script can call, documented in `docs/reminders-api.md`. Writing into Apple
+Reminders and a shared family calendar remain non-goals, and the API
+deliberately cannot write to another member's calendar.
+
 ## Architecture
 
 ```
