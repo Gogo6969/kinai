@@ -5,6 +5,27 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.124] — 2026-09-10
+
+### Changed
+
+- **The rules about when a reminder may be set now live in one place.**
+  Asking KinAI was the only checked way into your calendar: the rules that
+  refuse a time already gone, a date more than a year out, or text longer
+  than about a hundred words were written into the chat tool itself, and
+  anything else writing a reminder skipped every one of them. They have
+  moved somewhere every way of adding a reminder has to pass through —
+  which is the groundwork for letting a program set one later without that
+  route being the careless one. Nothing about asking KinAI changes: the
+  same requests work, and the same refusals come back word for word.
+- **KinAI checking for an update no longer counts as a download.** Every
+  install asked the releases page for the update file, and each of those
+  asks was recorded as somebody downloading the release — about two thirds
+  of the downloads this project has ever counted were copies of KinAI
+  checking in with themselves. The check now reads a plain file kept to one
+  side, so a download means an install that genuinely updated. Updates
+  themselves arrive exactly as before.
+
 ## [0.2.123] — 2026-09-10
 
 ### Fixed
