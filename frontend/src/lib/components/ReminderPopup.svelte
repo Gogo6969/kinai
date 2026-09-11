@@ -18,6 +18,7 @@
     ExternalLink,
     Link as LinkIcon,
     MessageSquare,
+    Repeat2,
   } from '@lucide/svelte';
   import { goto } from '$app/navigation';
   import { app } from '$lib/stores/app.svelte';
@@ -44,6 +45,25 @@
 
   /** Words to read, and addresses to tap, kept apart so a long URL can
    *  never push the sentence off the card. At most two rows are shown. */
+  /** How a repeat reads. "" for a one-off. */
+  const repeatWords = $derived(
+    ({
+      daily: 'Repeats every day',
+      weekdays: 'Repeats every weekday',
+      weekly: 'Repeats every week',
+      monthly: 'Repeats every month',
+    } as Record<string, string>)[current?.repeat ?? ''] ?? ''
+  );
+  /** While a repeating reminder is outstanding, `due_local` already
+   *  points at the NEXT occurrence — the member is being poked about the
+   *  one in `occurrence_local`. Showing due_local here would tell them
+   *  tomorrow's time for today's reminder. */
+  const shownClock = $derived(
+    current && repeatWords && current.occurrence_local
+      ? current.occurrence_local
+      : (current?.due_local ?? '')
+  );
+
   const split = $derived(current ? splitLinks(current.text) : { prose: '', links: [] });
   const shownLinks = $derived(split.links.slice(0, 2));
   const moreLinks = $derived(Math.max(0, split.links.length - shownLinks.length));
@@ -79,7 +99,7 @@
     expanded = false;
   });
 
-  async function act(action: 'ack' | 'snooze', minutes?: number) {
+  async function act(action: 'ack' | 'snooze' | 'stop', minutes?: number) {
     const r = current;
     if (!r || busy) return;
     busy = true;
@@ -133,7 +153,7 @@
       <header class="px-5 pt-4 pb-0">
         <div class="flex items-baseline gap-2">
           <BellRing size={15} class="kin-rem-accent self-center shrink-0" aria-hidden="true" />
-          <span class="text-[15px] font-medium tabular-nums">{timeOf(current.due_local)}</span>
+          <span class="text-[15px] font-medium tabular-nums">{timeOf(shownClock)}</span>
           <span class="text-xs text-white/40">{day}</span>
           {#if late}
             <span
@@ -248,6 +268,27 @@
           <Check size={15} /> {busy ? 'Saving…' : 'Done'}
         </button>
       </footer>
+      {#if repeatWords}
+        <!-- Deliberately below the footer and quiet: Done means "this one
+             is handled" and must stay the obvious action. Stopping a
+             series is a different, irreversible intent and should never
+             sit next to it. -->
+        <div class="px-5 pb-4 -mt-1 flex items-center gap-2 text-[11px] text-white/40">
+          <Repeat2 size={12} aria-hidden="true" />
+          <span>{repeatWords} · next {timeOf(current.due_local)}</span>
+          <button
+            type="button"
+            class="ml-auto underline hover:text-white/70 disabled:opacity-50"
+            disabled={busy}
+            onclick={() => {
+              if (confirm(`Stop this repeating reminder?\n\nIt will not come back. Done just handles today's.`))
+                act('stop');
+            }}
+          >
+            Stop repeating
+          </button>
+        </div>
+      {/if}
     </div>
   </div>
 {/if}

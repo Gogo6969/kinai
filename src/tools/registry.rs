@@ -254,7 +254,17 @@ pub async fn execute(name: &str, args_json: &str, runtime: &ToolRuntime) -> Resu
             // broke. Only real infrastructure failures are errors — which
             // is also why the length check lives in `plan` and never
             // reaches the DB's `bail!`.
-            let planned = match spec::plan(text, when, tz, &tz_name, chrono::Utc::now()) {
+            // Unknown repeat words are refused, not silently dropped: a
+            // member who asked for "every other Tuesday" and got a one-off
+            // would only discover it by not being reminded.
+            let repeat_raw = args.get("repeat").and_then(|v| v.as_str()).unwrap_or("");
+            let Some(repeat) = spec::Repeat::parse(repeat_raw) else {
+                return Ok(format!(
+                    "I can repeat a reminder daily, on weekdays, weekly or monthly — not \
+                     {repeat_raw:?}. Nothing was set."
+                ));
+            };
+            let planned = match spec::plan(text, when, repeat, tz, &tz_name, chrono::Utc::now()) {
                 Ok(p) => p,
                 Err(rejected) => return Ok(rejected.prose()),
             };
@@ -266,14 +276,22 @@ pub async fn execute(name: &str, args_json: &str, runtime: &ToolRuntime) -> Resu
                     planned.due_at,
                     &planned.tz_name,
                     runtime.source_msg_id.as_deref(),
+                    planned.repeat.as_str(),
+                    &planned.occurrence_local,
                 )
                 .await?;
             Ok(format!(
-                "Reminder set for {} ({}): {}. It will pop up in KinAI on your devices, and on \
-                 Telegram if you're paired. [id {}]",
+                "Reminder set for {}{} ({}): {}. It will pop up in KinAI on your devices, and on \
+                 Telegram if you're paired.{} [id {}]",
                 pretty_local(&r.due_local),
+                if repeat.repeats() { format!(", {}", repeat.human()) } else { String::new() },
                 r.tz,
                 r.text,
+                if repeat.repeats() {
+                    " It keeps coming back until you stop it."
+                } else {
+                    ""
+                },
                 short_id(&r.id)
             ))
         }
@@ -683,7 +701,9 @@ fn set_reminder_def() -> ToolDef {
                                 the user's own timezone — compute it from the \"Current time\" line at the \
                                 end of the user's message) or `in_minutes` (relative). The tool answers with \
                                 the confirmation to relay, including the resolved time and zone; it refuses \
-                                times in the past or more than a year away, and then NOTHING is set — say so.",
+                                times in the past or more than a year away, and then NOTHING is set — say so. \
+                                Pass `repeat` when the user wants it to come back; a repeating reminder keeps \
+                                going until they stop it, so only set one when they actually asked for it.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -698,6 +718,11 @@ fn set_reminder_def() -> ToolDef {
                         "in_minutes": {
                             "type": "integer",
                             "description": "Minutes from now, e.g. 30 for \"in half an hour\". Use this for relative phrasing instead of due_local."
+                        },
+                        "repeat": {
+                            "type": "string",
+                            "enum": ["daily", "weekdays", "weekly", "monthly"],
+                            "description": "Omit for a one-off, which is the normal case. Set it when the user says the reminder should come back: \"every day\" → daily, \"every weekday\" / \"on work days\" → weekdays, \"every week\" / \"every Tuesday\" → weekly, \"every month\" / \"on the 1st\" → monthly. The time of day comes from due_local or in_minutes as usual, and a repeating reminder keeps that clock time even across a daylight-saving change. If the user asks for something this cannot express (\"every other Tuesday\", \"twice a day\"), do NOT approximate it — set nothing and say what is possible."
                         }
                     },
                     "required": ["text"]

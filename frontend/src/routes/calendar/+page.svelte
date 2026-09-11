@@ -9,6 +9,7 @@
     Link as LinkIcon,
     MessageSquare,
     RefreshCw,
+    Repeat2,
     Trash2,
   } from '@lucide/svelte';
   import {
@@ -64,7 +65,11 @@
   /** Id of the fired row whose Snooze menu is open (one at a time). */
   let snoozeOpen = $state<string | null>(null);
 
-  async function act(id: string, action: 'ack' | 'snooze' | 'delete', minutes?: number) {
+  async function act(
+    id: string,
+    action: 'ack' | 'snooze' | 'delete' | 'stop',
+    minutes?: number
+  ) {
     snoozeOpen = null;
     if (pending.includes(id)) return;
     pending = [...pending, id];
@@ -137,7 +142,16 @@
                {r.status === 'done' ? 'opacity-60' : ''}"
       >
         <div class="shrink-0 w-12 pt-0.5">
-          <div class="font-mono text-sm text-teal-300">{timeOf(r.due_local)}</div>
+          <div class="font-mono text-sm text-teal-300">
+            {timeOf(r.repeat && r.status === 'fired' && r.occurrence_local
+              ? r.occurrence_local
+              : r.due_local)}
+          </div>
+          {#if r.repeat}
+            <div class="text-[10px] text-white/40 flex items-center gap-1" title="Repeats {r.repeat}">
+              <Repeat2 size={10} /> {r.repeat}
+            </div>
+          {/if}
           {#if r.tz && deviceTz && r.tz !== deviceTz}
             <!-- Set in another zone: say so, or the clock reads as local. -->
             <div class="text-[10px] text-white/40 truncate" title={r.tz}>
@@ -193,7 +207,7 @@
         <div class="flex items-center gap-2 shrink-0 ml-auto">
           {#if r.status === 'fired'}
             <span class="kin-badge !bg-amber-400/20 !text-amber-200 shrink-0">due now</span>
-          {:else if r.status === 'done'}
+          {:else if r.status === 'done' && !r.repeat}
             <span class="kin-badge shrink-0">done</span>
           {/if}
           <div class="flex gap-1 shrink-0">
@@ -206,6 +220,19 @@
             >
               <Check size={14} /> Done
             </button>
+            {#if r.repeat}
+              <button
+                class="kin-btn-ghost text-white/50 hover:text-red-300"
+                onclick={() => {
+                  if (confirm('Stop this repeating reminder?\n\nIt will not come back. Done just handles this one.'))
+                    act(r.id, 'stop');
+                }}
+                disabled={pending.includes(r.id)}
+                title="End the series"
+              >
+                Stop
+              </button>
+            {/if}
             <div class="relative" data-snooze>
               <button
                 class="kin-btn-ghost text-white/60"

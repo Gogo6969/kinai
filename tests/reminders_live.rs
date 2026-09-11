@@ -89,7 +89,7 @@ async fn a_family_device_can_list_act_on_and_receive_reminders() {
     // A reminder the scheduler will pick up on its next tick.
     let due = chrono::Utc::now() - chrono::Duration::seconds(5);
     let r = db
-        .create_reminder(&peer, None, "test: water the plants", due, "Europe/Berlin", None)
+        .create_reminder(&peer, None, "test: water the plants", due, "Europe/Berlin", None, "", "")
         .await
         .expect("create reminder");
     println!("\n[created] id={} due_local={} tz={}", &r.id[..8], r.due_local, r.tz);

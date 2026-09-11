@@ -44,6 +44,176 @@ pub const MAX_AHEAD_DAYS: i64 = 366;
 /// genuinely wants their two-hundredth live reminder can finish one first.
 pub const MAX_LIVE_PER_PEER: i64 = 200;
 
+/// How often a reminder comes back.
+///
+/// Deliberately a short, closed vocabulary rather than an RRULE subset.
+/// These are the shapes a household actually asks for out loud, each one
+/// is unambiguous in every time zone, and a model choosing between five
+/// words is far more reliable than one composing a grammar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Repeat {
+    /// Fires once and is finished. The default, and what every row
+    /// written before recurrence existed carries.
+    #[default]
+    Once,
+    Daily,
+    /// Monday to Friday.
+    Weekdays,
+    /// The same weekday, seven days on.
+    Weekly,
+    /// The same day of the month, clamped — the 31st becomes the 28th,
+    /// 29th or 30th where a month is shorter, and does NOT then stay
+    /// clamped for good, because each step is taken from the stored
+    /// wall-clock date.
+    Monthly,
+}
+
+impl Repeat {
+    /// `""` means once; anything unrecognised is refused rather than
+    /// silently treated as once, which would quietly drop the repeat a
+    /// member asked for.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "" | "once" | "none" => Some(Repeat::Once),
+            "daily" | "day" | "every day" => Some(Repeat::Daily),
+            "weekdays" | "weekday" => Some(Repeat::Weekdays),
+            "weekly" | "week" | "every week" => Some(Repeat::Weekly),
+            "monthly" | "month" | "every month" => Some(Repeat::Monthly),
+            _ => None,
+        }
+    }
+
+    /// What goes in the database column.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Repeat::Once => "",
+            Repeat::Daily => "daily",
+            Repeat::Weekdays => "weekdays",
+            Repeat::Weekly => "weekly",
+            Repeat::Monthly => "monthly",
+        }
+    }
+
+    /// What a person reads.
+    pub fn human(self) -> &'static str {
+        match self {
+            Repeat::Once => "once",
+            Repeat::Daily => "every day",
+            Repeat::Weekdays => "every weekday",
+            Repeat::Weekly => "every week",
+            Repeat::Monthly => "every month",
+        }
+    }
+
+    pub fn repeats(self) -> bool {
+        self != Repeat::Once
+    }
+}
+
+/// The next wall-clock occurrence after `current`.
+///
+/// Computed in LOCAL time and only then converted back, which is the
+/// whole trick: "every day at 9am" has to stay 9am through a clock change,
+/// and adding 24 hours of elapsed time would silently make it 8am or 10am
+/// for half the year.
+pub fn next_local(current: chrono::NaiveDateTime, repeat: Repeat) -> Option<chrono::NaiveDateTime> {
+    use chrono::{Datelike, Days, Months, Weekday};
+    let date = current.date();
+    let next = match repeat {
+        Repeat::Once => return None,
+        Repeat::Daily => date.checked_add_days(Days::new(1))?,
+        Repeat::Weekly => date.checked_add_days(Days::new(7))?,
+        Repeat::Weekdays => {
+            let mut d = date.checked_add_days(Days::new(1))?;
+            while matches!(d.weekday(), Weekday::Sat | Weekday::Sun) {
+                d = d.checked_add_days(Days::new(1))?;
+            }
+            d
+        }
+        // chrono clamps a short month for us: 31 Jan + 1 month = 28 Feb.
+        Repeat::Monthly => date.checked_add_months(Months::new(1))?,
+    };
+    Some(next.and_time(current.time()))
+}
+
+/// A local wall clock turned into an instant, which never fails.
+///
+/// `tools::datetime::local_to_utc` refuses a time the clock skips, and for
+/// a one-off that is right — the member picked an hour that does not exist
+/// and can pick another. A SERIES cannot be refused: "02:30 every day"
+/// meets a skipped 02:30 once a year, and returning an error there would
+/// end the series silently, which is the single worst thing this feature
+/// can do. On that one morning it fires at the first moment that does
+/// exist instead, and is back at 02:30 the next day.
+pub fn local_to_utc_forgiving(
+    naive: chrono::NaiveDateTime,
+    tz: Option<chrono_tz::Tz>,
+) -> DateTime<Utc> {
+    use chrono::{LocalResult, TimeZone};
+    let attempt = |n: chrono::NaiveDateTime| -> Option<DateTime<Utc>> {
+        let resolved = match tz {
+            Some(zone) => zone.from_local_datetime(&n).map(|d| d.with_timezone(&Utc)),
+            None => chrono::Local.from_local_datetime(&n).map(|d| d.with_timezone(&Utc)),
+        };
+        match resolved {
+            // The earlier of an ambiguous pair: when the clocks go back,
+            // 02:30 happens twice and the first one is the one the member
+            // is awake for.
+            LocalResult::Single(dt) | LocalResult::Ambiguous(dt, _) => Some(dt),
+            LocalResult::None => None,
+        }
+    };
+    // Walk forward in quarter hours until the clock admits the time
+    // exists. A DST gap is at most two hours anywhere on earth.
+    let mut candidate = naive;
+    for _ in 0..12 {
+        if let Some(dt) = attempt(candidate) {
+            return dt;
+        }
+        candidate += Duration::minutes(15);
+    }
+    // Unreachable in practice; never leave a series without a next time.
+    Utc::now() + Duration::days(1)
+}
+
+/// The first occurrence strictly after `now`.
+///
+/// Returns `(wall clock to store as occurrence_local, the instant to store
+/// as due_at, how many occurrences were stepped over)`.
+///
+/// STEP FROM `occurrence_local`, never from `due_local` and never from
+/// `fired_at`. `due_local` can be anywhere a snooze put it, and `fired_at`
+/// is the moment delivery happened — half a minute late on a good tick,
+/// two minutes after a stuck lease is released, days after an outage.
+/// Stepping the series from either re-phases it permanently.
+///
+/// Never yields an instant at or before `now`: a repeating row whose
+/// `due_at` is in the past is leased again on the very next tick, which is
+/// a notification and a Telegram message every thirty seconds.
+pub fn advance(
+    from_local: chrono::NaiveDateTime,
+    repeat: Repeat,
+    tz: Option<chrono_tz::Tz>,
+    now: DateTime<Utc>,
+) -> Option<(chrono::NaiveDateTime, DateTime<Utc>, u32)> {
+    if !repeat.repeats() {
+        return None;
+    }
+    let mut local = from_local;
+    let mut skipped = 0u32;
+    // Bounded: a daily series resumed after three years is ~1100 steps,
+    // and the bound stops a malformed row spinning forever.
+    for _ in 0..2000 {
+        local = next_local(local, repeat)?;
+        let at = local_to_utc_forgiving(local, tz);
+        if at > now {
+            return Some((local, at, skipped));
+        }
+        skipped += 1;
+    }
+    None
+}
+
 /// How the caller expressed "when". Modelled as an enum so "you gave me
 /// neither" is unrepresentable here and stays a surface-specific message.
 #[derive(Debug, Clone, Copy)]
@@ -72,6 +242,16 @@ pub struct Planned {
     pub text: String,
     pub due_at: DateTime<Utc>,
     pub tz_name: String,
+    pub repeat: Repeat,
+    /// The wall clock of this occurrence, "YYYY-MM-DDTHH:MM".
+    ///
+    /// Usually identical to `local_display(due_at, tz)`. They differ on
+    /// exactly one morning a year: a 02:30 series meets the hour the
+    /// clocks skip, fires at 03:00, and must still step from 02:30
+    /// tomorrow. Storing the instant's rendering instead would move the
+    /// series to 03:00 permanently, and nobody would ever connect that to
+    /// a clock change six months earlier.
+    pub occurrence_local: String,
 }
 
 /// The text rule on its own, returning the trimmed text.
@@ -106,6 +286,7 @@ pub fn check_text(text: &str) -> Result<&str, Rejected> {
 pub fn plan(
     text: &str,
     when: When<'_>,
+    repeat: Repeat,
     tz: Option<chrono_tz::Tz>,
     tz_name: &str,
     now: DateTime<Utc>,
@@ -131,12 +312,34 @@ pub fn plan(
         },
     };
 
+    // The wall clock this occurrence is anchored to. For an absolute time
+    // it is exactly what the member typed; for an offset it is the
+    // rendering of the instant we computed.
+    let mut wall = match when {
+        When::DueLocal(s) => chrono::NaiveDateTime::parse_from_str(s.trim(), "%Y-%m-%dT%H:%M")
+            .unwrap_or_else(|_| naive_of(due, tz_name)),
+        When::InMinutes(_) => naive_of(due, tz_name),
+    };
+    let mut due = due;
+
     if due <= now {
-        return Err(Rejected::InPast {
-            due_local: crate::db::reminders::local_display(due, tz_name),
-            now_local: crate::db::reminders::local_display(now, tz_name),
-            tz: tz_name.to_string(),
-        });
+        // A one-off in the past is a mistake worth telling the member
+        // about. A SERIES in the past is not: "every weekday at 8am" said
+        // at two in the afternoon means starting tomorrow, and refusing it
+        // would be pedantry.
+        match advance(wall, repeat, tz, now) {
+            Some((next_wall, next_at, _)) => {
+                wall = next_wall;
+                due = next_at;
+            }
+            None => {
+                return Err(Rejected::InPast {
+                    due_local: crate::db::reminders::local_display(due, tz_name),
+                    now_local: crate::db::reminders::local_display(now, tz_name),
+                    tz: tz_name.to_string(),
+                })
+            }
+        }
     }
     let ceiling = now
         .checked_add_signed(Duration::days(MAX_AHEAD_DAYS))
@@ -145,7 +348,22 @@ pub fn plan(
         return Err(Rejected::TooFar);
     }
 
-    Ok(Planned { text: text.to_string(), due_at: due, tz_name: tz_name.to_string() })
+    Ok(Planned {
+        text: text.to_string(),
+        due_at: due,
+        tz_name: tz_name.to_string(),
+        repeat,
+        occurrence_local: wall.format("%Y-%m-%dT%H:%M").to_string(),
+    })
+}
+
+/// The naive wall clock of an instant in a named zone.
+fn naive_of(at: DateTime<Utc>, tz_name: &str) -> chrono::NaiveDateTime {
+    chrono::NaiveDateTime::parse_from_str(
+        &crate::db::reminders::local_display(at, tz_name),
+        "%Y-%m-%dT%H:%M",
+    )
+    .unwrap_or_else(|_| at.naive_utc())
 }
 
 impl Rejected {
@@ -224,7 +442,7 @@ mod tests {
 
     #[test]
     fn a_plain_relative_reminder_is_planned() {
-        let p = plan("water the plants", When::InMinutes(30), zone(), TZ, now()).unwrap();
+        let p = plan("water the plants", When::InMinutes(30), Repeat::Once, zone(), TZ, now()).unwrap();
         assert_eq!(p.text, "water the plants");
         assert_eq!(p.due_at, utc(2026, 9, 10, 12, 30));
         assert_eq!(p.tz_name, TZ);
@@ -232,10 +450,10 @@ mod tests {
 
     #[test]
     fn text_is_trimmed_and_emptiness_is_refused() {
-        let p = plan("  spaced  ", When::InMinutes(5), zone(), TZ, now()).unwrap();
+        let p = plan("  spaced  ", When::InMinutes(5), Repeat::Once, zone(), TZ, now()).unwrap();
         assert_eq!(p.text, "spaced");
         for blank in ["", "   ", "\n\t "] {
-            assert_eq!(plan(blank, When::InMinutes(5), zone(), TZ, now()), Err(Rejected::Empty));
+            assert_eq!(plan(blank, When::InMinutes(5), Repeat::Once, zone(), TZ, now()), Err(Rejected::Empty));
         }
     }
 
@@ -249,7 +467,7 @@ mod tests {
             max: MAX_TEXT_CHARS
         });
         assert_eq!(
-            plan(&over, When::InMinutes(30), zone(), TZ, now()).unwrap_err(),
+            plan(&over, When::InMinutes(30), Repeat::Once, zone(), TZ, now()).unwrap_err(),
             check_text(&over).unwrap_err()
         );
         assert_eq!(check_text("  trimmed  ").unwrap(), "trimmed");
@@ -262,10 +480,10 @@ mod tests {
         // multi-byte character proves the count is chars, not bytes — a
         // byte count would refuse this at a third of the real limit.
         let at_cap = "é".repeat(MAX_TEXT_CHARS);
-        assert!(plan(&at_cap, When::InMinutes(5), zone(), TZ, now()).is_ok());
+        assert!(plan(&at_cap, When::InMinutes(5), Repeat::Once, zone(), TZ, now()).is_ok());
 
         let over = "é".repeat(MAX_TEXT_CHARS + 1);
-        let err = plan(&over, When::InMinutes(5), zone(), TZ, now()).unwrap_err();
+        let err = plan(&over, When::InMinutes(5), Repeat::Once, zone(), TZ, now()).unwrap_err();
         assert_eq!(err, Rejected::TooLong { len: MAX_TEXT_CHARS + 1, max: MAX_TEXT_CHARS });
         assert_eq!(err.code(), "text_too_long");
         assert!(err.prose().contains("too long"), "{}", err.prose());
@@ -277,7 +495,7 @@ mod tests {
         // were checked after the add, these would abort the whole turn.
         // The test is the assertion that we return at all.
         for m in [MAX_MINUTES + 1, 525_600_000_000, 160_000_000_000_000, i64::MAX] {
-            let err = plan("far off", When::InMinutes(m), zone(), TZ, now()).unwrap_err();
+            let err = plan("far off", When::InMinutes(m), Repeat::Once, zone(), TZ, now()).unwrap_err();
             assert_eq!(err, Rejected::TooFar, "in_minutes={m}");
             assert!(err.prose().contains("more than a year"), "in_minutes={m}");
         }
@@ -287,19 +505,19 @@ mod tests {
     fn the_offset_floor_is_one_minute() {
         for m in [0i64, -1, i64::MIN] {
             assert_eq!(
-                plan("too soon", When::InMinutes(m), zone(), TZ, now()).unwrap_err(),
+                plan("too soon", When::InMinutes(m), Repeat::Once, zone(), TZ, now()).unwrap_err(),
                 Rejected::TooSoon,
                 "in_minutes={m}"
             );
         }
-        assert!(plan("just enough", When::InMinutes(1), zone(), TZ, now()).is_ok());
+        assert!(plan("just enough", When::InMinutes(1), Repeat::Once, zone(), TZ, now()).is_ok());
     }
 
     #[test]
     fn the_boundaries_of_the_offset_bound_are_inclusive() {
-        assert!(plan("exactly a year", When::InMinutes(MAX_MINUTES), zone(), TZ, now()).is_ok());
+        assert!(plan("exactly a year", When::InMinutes(MAX_MINUTES), Repeat::Once, zone(), TZ, now()).is_ok());
         assert_eq!(
-            plan("a minute past", When::InMinutes(MAX_MINUTES + 1), zone(), TZ, now()).unwrap_err(),
+            plan("a minute past", When::InMinutes(MAX_MINUTES + 1), Repeat::Once, zone(), TZ, now()).unwrap_err(),
             Rejected::TooFar
         );
     }
@@ -307,13 +525,13 @@ mod tests {
     #[test]
     fn an_absolute_time_is_read_in_the_members_zone() {
         // 14:00 Berlin in September is 12:00Z (CEST, UTC+2).
-        let p = plan("call back", When::DueLocal("2026-09-10T14:30"), zone(), TZ, now()).unwrap();
+        let p = plan("call back", When::DueLocal("2026-09-10T14:30"), Repeat::Once, zone(), TZ, now()).unwrap();
         assert_eq!(p.due_at, utc(2026, 9, 10, 12, 30));
     }
 
     #[test]
     fn a_time_in_the_past_is_refused_and_says_both_clocks() {
-        let err = plan("too late", When::DueLocal("2001-01-01T09:00"), zone(), TZ, now())
+        let err = plan("too late", When::DueLocal("2001-01-01T09:00"), Repeat::Once, zone(), TZ, now())
             .unwrap_err();
         assert_eq!(err.code(), "in_past");
         let prose = err.prose();
@@ -329,14 +547,14 @@ mod tests {
     fn now_itself_is_in_the_past() {
         // `due <= now`, not `<`. A reminder for this exact instant has
         // already missed.
-        let err = plan("right now", When::DueLocal("2026-09-10T14:00"), zone(), TZ, now())
+        let err = plan("right now", When::DueLocal("2026-09-10T14:00"), Repeat::Once, zone(), TZ, now())
             .unwrap_err();
         assert_eq!(err.code(), "in_past");
     }
 
     #[test]
     fn an_absolute_time_beyond_the_ceiling_is_refused() {
-        let err = plan("far future", When::DueLocal("2030-01-01T09:00"), zone(), TZ, now())
+        let err = plan("far future", When::DueLocal("2030-01-01T09:00"), Repeat::Once, zone(), TZ, now())
             .unwrap_err();
         assert_eq!(err, Rejected::TooFar);
     }
@@ -344,7 +562,7 @@ mod tests {
     #[test]
     fn an_unreadable_time_is_a_refusal_carrying_the_reason() {
         for bad in ["nine-ish", "", "2026-13-45T99:99", "10/09/2026 14:00"] {
-            let err = plan("garbled", When::DueLocal(bad), zone(), TZ, now()).unwrap_err();
+            let err = plan("garbled", When::DueLocal(bad), Repeat::Once, zone(), TZ, now()).unwrap_err();
             assert_eq!(err.code(), "bad_due_local", "input {bad:?}");
             let prose = err.prose();
             assert!(prose.contains("couldn't read that time"), "{prose}");
@@ -358,13 +576,13 @@ mod tests {
         // 02:30 does not exist. It must resolve or refuse, never panic.
         // (The 2027 gap, not 2026's — the 2026 one is behind `now` and
         // would be refused as in-past before the zone logic is reached.)
-        let out = plan("dst gap", When::DueLocal("2027-03-28T02:30"), zone(), TZ, now());
+        let out = plan("dst gap", When::DueLocal("2027-03-28T02:30"), Repeat::Once, zone(), TZ, now());
         match out {
             Ok(p) => assert!(p.due_at > now(), "resolved forward"),
             Err(e) => assert_eq!(e.code(), "bad_due_local"),
         }
         // And the ambiguous hour when the clocks go back (2026-10-25).
-        let out = plan("dst fold", When::DueLocal("2026-10-25T02:30"), zone(), TZ, now());
+        let out = plan("dst fold", When::DueLocal("2026-10-25T02:30"), Repeat::Once, zone(), TZ, now());
         match out {
             Ok(p) => assert!(p.due_at > now(), "resolved to one of the two"),
             Err(e) => assert_eq!(e.code(), "bad_due_local"),
@@ -375,7 +593,7 @@ mod tests {
     fn an_unknown_zone_still_plans() {
         // `tz: None` is what a member with no zone on file gets; the
         // caller passes the host's zone name for display.
-        let p = plan("no zone", When::InMinutes(10), None, "UTC", now()).unwrap();
+        let p = plan("no zone", When::InMinutes(10), Repeat::Once, None, "UTC", now()).unwrap();
         assert_eq!(p.due_at, utc(2026, 9, 10, 12, 10));
         assert_eq!(p.tz_name, "UTC");
     }
@@ -453,6 +671,120 @@ mod tests {
             .prose(),
             "Mon 1 Jan, 09:00 (Europe/Berlin) is already in the past — it's Thu 10 Sep, 14:00 now. Did you mean tomorrow, or another day? Nothing was set."
         );
+    }
+
+    fn naive(s: &str) -> chrono::NaiveDateTime {
+        chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M").unwrap()
+    }
+
+    #[test]
+    fn repeat_words_round_trip_and_nonsense_is_refused() {
+        for (input, want) in [
+            ("", Repeat::Once),
+            ("daily", Repeat::Daily),
+            ("Every Day", Repeat::Daily),
+            ("weekdays", Repeat::Weekdays),
+            ("weekly", Repeat::Weekly),
+            ("monthly", Repeat::Monthly),
+        ] {
+            assert_eq!(Repeat::parse(input), Some(want), "input {input:?}");
+        }
+        // Refused, not silently downgraded to Once — dropping a repeat the
+        // member asked for is worse than saying no.
+        for bad in ["fortnightly", "every other tuesday", "yearly", "0 9 * * *"] {
+            assert_eq!(Repeat::parse(bad), None, "input {bad:?}");
+        }
+        assert_eq!(Repeat::Daily.as_str(), "daily");
+        assert_eq!(Repeat::Once.as_str(), "", "Once is the empty column value");
+        assert!(!Repeat::Once.repeats());
+        assert!(Repeat::Weekdays.repeats());
+    }
+
+    #[test]
+    fn the_next_occurrence_keeps_the_time_of_day() {
+        assert_eq!(next_local(naive("2026-09-11T09:00"), Repeat::Daily), Some(naive("2026-09-12T09:00")));
+        assert_eq!(next_local(naive("2026-09-11T09:00"), Repeat::Weekly), Some(naive("2026-09-18T09:00")));
+        assert_eq!(next_local(naive("2026-09-11T09:00"), Repeat::Monthly), Some(naive("2026-10-11T09:00")));
+        assert_eq!(next_local(naive("2026-09-11T09:00"), Repeat::Once), None);
+    }
+
+    #[test]
+    fn weekdays_steps_over_the_weekend() {
+        // 2026-09-11 is a Friday.
+        assert_eq!(
+            next_local(naive("2026-09-11T08:00"), Repeat::Weekdays),
+            Some(naive("2026-09-14T08:00")),
+            "Friday's next weekday is Monday"
+        );
+        // And an ordinary midweek step is just tomorrow.
+        assert_eq!(
+            next_local(naive("2026-09-14T08:00"), Repeat::Weekdays),
+            Some(naive("2026-09-15T08:00"))
+        );
+    }
+
+    #[test]
+    fn monthly_clamps_a_short_month_without_getting_stuck_there() {
+        // 31 Jan + 1 month has no 31 Feb; chrono clamps to the 28th.
+        assert_eq!(next_local(naive("2027-01-31T07:00"), Repeat::Monthly), Some(naive("2027-02-28T07:00")));
+        // 2028 is a leap year, so the clamp lands on the 29th.
+        assert_eq!(next_local(naive("2028-01-31T07:00"), Repeat::Monthly), Some(naive("2028-02-29T07:00")));
+    }
+
+    #[test]
+    fn a_daily_nine_am_stays_nine_am_across_both_clock_changes() {
+        // THE test for this feature. Adding 24 hours of elapsed time
+        // instead of a local day would make this 08:00 or 10:00 for half
+        // the year, on every repeating reminder the household has.
+        let berlin: chrono_tz::Tz = "Europe/Berlin".parse().unwrap();
+        use chrono::TimeZone;
+
+        // Spring forward: 2027-03-28, clocks go 02:00 -> 03:00.
+        let before = naive("2027-03-27T09:00");
+        let after = next_local(before, Repeat::Daily).unwrap();
+        assert_eq!(after, naive("2027-03-28T09:00"));
+        let as_utc = local_to_utc_forgiving(after, Some(berlin));
+        assert_eq!(as_utc.with_timezone(&berlin).format("%H:%M").to_string(), "09:00");
+
+        // Autumn back: 2026-10-25, clocks go 03:00 -> 02:00.
+        let before = naive("2026-10-24T09:00");
+        let after = next_local(before, Repeat::Daily).unwrap();
+        let as_utc = local_to_utc_forgiving(after, Some(berlin));
+        assert_eq!(as_utc.with_timezone(&berlin).format("%H:%M").to_string(), "09:00");
+
+        // And the UTC offsets really did differ across the boundary,
+        // otherwise the assertions above prove nothing.
+        let a = berlin.from_utc_datetime(&local_to_utc_forgiving(naive("2026-10-24T09:00"), Some(berlin)).naive_utc());
+        let b = berlin.from_utc_datetime(&local_to_utc_forgiving(naive("2026-10-26T09:00"), Some(berlin)).naive_utc());
+        assert_ne!(a.offset().to_string(), b.offset().to_string(), "the clocks did change");
+    }
+
+    #[test]
+    fn a_series_survives_the_hour_the_clock_skips() {
+        // 02:30 daily in Berlin meets 2027-03-28, when 02:30 does not
+        // exist. A one-off is refused there and the member picks again; a
+        // series cannot be, because refusing ends it silently. It fires at
+        // the first moment that does exist instead.
+        let berlin: chrono_tz::Tz = "Europe/Berlin".parse().unwrap();
+        let gap = naive("2027-03-28T02:30");
+        let dt = local_to_utc_forgiving(gap, Some(berlin));
+        let local = dt.with_timezone(&berlin);
+        assert_eq!(local.format("%Y-%m-%d").to_string(), "2027-03-28");
+        assert_eq!(local.format("%H:%M").to_string(), "03:00", "shifted to the first real minute");
+
+        // The very next day is back to normal.
+        let next = next_local(gap, Repeat::Daily).unwrap();
+        let back = local_to_utc_forgiving(next, Some(berlin)).with_timezone(&berlin);
+        assert_eq!(back.format("%H:%M").to_string(), "02:30", "and the series is not dragged along");
+    }
+
+    #[test]
+    fn the_ambiguous_hour_picks_the_first_one() {
+        // When the clocks go back, 02:30 happens twice. The member is
+        // awake for the first.
+        let berlin: chrono_tz::Tz = "Europe/Berlin".parse().unwrap();
+        let dt = local_to_utc_forgiving(naive("2026-10-25T02:30"), Some(berlin));
+        assert_eq!(dt.with_timezone(&berlin).format("%H:%M %z").to_string(), "02:30 +0200");
     }
 
     #[test]

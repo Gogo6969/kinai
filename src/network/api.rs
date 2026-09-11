@@ -120,6 +120,9 @@ pub struct CreateBody {
     /// `YYYY-MM-DDTHH:MM` in the caller's own zone.
     #[serde(default)]
     due_local: Option<String>,
+    /// `daily`, `weekdays`, `weekly`, `monthly`. Omit for a one-off.
+    #[serde(default)]
+    repeat: Option<String>,
 }
 
 /// `POST /v1/reminders`
@@ -153,7 +156,18 @@ pub async fn create(
         }
     };
 
-    let planned = spec::plan(&body.text, when, tz, &tz_name, chrono::Utc::now())
+    let repeat = match spec::Repeat::parse(body.repeat.as_deref().unwrap_or("")) {
+        Some(r) => r,
+        None => {
+            return Err(err(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "bad_repeat",
+                "repeat must be daily, weekdays, weekly or monthly",
+            ))
+        }
+    };
+
+    let planned = spec::plan(&body.text, when, repeat, tz, &tz_name, chrono::Utc::now())
         .map_err(|r| err(StatusCode::UNPROCESSABLE_ENTITY, r.code(), r.prose()))?;
 
     // A runaway guard, and the reason it lives on THIS route rather than
@@ -179,7 +193,16 @@ pub async fn create(
     let saved = s
         .app
         .db
-        .create_reminder(&peer, None, &planned.text, planned.due_at, &planned.tz_name, None)
+        .create_reminder(
+            &peer,
+            None,
+            &planned.text,
+            planned.due_at,
+            &planned.tz_name,
+            None,
+            planned.repeat.as_str(),
+            &planned.occurrence_local,
+        )
         .await
         .map_err(|e| {
             tracing::error!("reminder api: create failed: {e}");
@@ -230,11 +253,11 @@ pub async fn action(
     // Reject unknown verbs here rather than letting the store's catch-all
     // surface as a 500. Note "cancel" is NOT one of them, however natural
     // it sounds — the store calls that "delete".
-    if !matches!(body.action.as_str(), "ack" | "snooze" | "delete") {
+    if !matches!(body.action.as_str(), "ack" | "snooze" | "delete" | "stop") {
         return Err(err(
             StatusCode::UNPROCESSABLE_ENTITY,
             "unknown_action",
-            "action must be ack, snooze or delete",
+            "action must be ack, snooze, stop or delete",
         ));
     }
 

@@ -356,7 +356,13 @@ export interface Reminder {
   /** "YYYY-MM-DDTHH:MM" in `tz` — the value to display. */
   due_local: string;
   /** "" for now. */
+  /** "" for a one-off, else "daily" | "weekdays" | "weekly" | "monthly". */
   repeat: string;
+  /** Wall clock of the occurrence currently outstanding, "" on one-offs.
+   *  Differs from due_local on the morning the clocks skip the hour a
+   *  series is set for — show THIS one while a repeating reminder is
+   *  outstanding, because due_local already points at the next one. */
+  occurrence_local: string;
   /** `fired` = delivered, waiting to be acknowledged (popup + "due now");
    *  `firing` is the scheduler's transient lease; `cancelled` rows are
    *  kept for history and never listed. */
@@ -657,7 +663,11 @@ export const api = {
   listReminders: () => invoke<Reminder[]>('list_reminders'),
   /** `ack` → done; `snooze` → due again in `snoozeMinutes` (≥ 1);
    *  `delete` → row removed (resolves null). */
-  reminderAction: (id: string, action: 'ack' | 'snooze' | 'delete', snoozeMinutes?: number) =>
+  reminderAction: (
+    id: string,
+    action: 'ack' | 'snooze' | 'delete' | 'stop',
+    snoozeMinutes?: number
+  ) =>
     invoke<Reminder | null>('reminder_action', { id, action, snoozeMinutes: snoozeMinutes ?? 0 }),
 
   runtimeStats: () => invoke<RuntimeStats>('runtime_stats'),

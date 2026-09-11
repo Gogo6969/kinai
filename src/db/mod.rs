@@ -274,8 +274,14 @@ impl Db {
         due_at: chrono::DateTime<chrono::Utc>,
         tz: &str,
         source_msg_id: Option<&str>,
+        repeat: &str,
+        occurrence_local: &str,
     ) -> Result<Reminder> {
-        reminders::create(&self.pool, peer_id, thread_id, text, due_at, tz, source_msg_id).await
+        reminders::create(
+            &self.pool, peer_id, thread_id, text, due_at, tz, source_msg_id, repeat,
+            occurrence_local,
+        )
+        .await
     }
 
     /// A member's reminders, soonest first, cancelled ones excluded.
@@ -332,6 +338,23 @@ impl Db {
         older_than: chrono::DateTime<chrono::Utc>,
     ) -> Result<u64> {
         reminders::release_stuck(&self.pool, older_than).await
+    }
+
+    /// Repeating sibling of `mark_reminder_fired`: records the occurrence
+    /// delivered and arms the row for the next one in one guarded write.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn mark_reminder_fired_advanced(
+        &self,
+        peer_id: &str,
+        id: &str,
+        occurrence_local: &str,
+        next_due_at: chrono::DateTime<chrono::Utc>,
+        next_due_local: &str,
+    ) -> Result<bool> {
+        reminders::mark_fired_advanced(
+            &self.pool, peer_id, id, occurrence_local, next_due_at, next_due_local,
+        )
+        .await
     }
 
     pub async fn mark_reminder_fired(&self, peer_id: &str, id: &str) -> Result<bool> {

@@ -597,7 +597,11 @@ class AppStore {
 
   /** Acknowledge, snooze or delete a reminder, then re-sync the list and
    *  drop it from the popup queue. `minutes` only matters for `snooze`. */
-  async reminderAction(id: string, action: 'ack' | 'snooze' | 'delete', minutes?: number) {
+  async reminderAction(
+    id: string,
+    action: 'ack' | 'snooze' | 'delete' | 'stop',
+    minutes?: number
+  ) {
     try {
       await api.reminderAction(id, action, minutes);
       this.dueReminders = this.dueReminders.filter((r) => r.id !== id);

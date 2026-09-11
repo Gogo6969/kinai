@@ -46,7 +46,20 @@ pub struct Reminder {
     /// "YYYY-MM-DDTHH:MM" in `tz`. What every surface DISPLAYS; recomputed
     /// on snooze so it never drifts from `due_at`.
     pub due_local: String,
+    /// "", "daily", "weekdays", "weekly" or "monthly" — see
+    /// `reminders::spec::Repeat`.
     pub repeat: String,
+    /// The wall clock of the occurrence currently outstanding, or of the
+    /// last one delivered. `""` on one-offs and on every row written
+    /// before recurrence shipped.
+    ///
+    /// The series steps from HERE, never from `due_local` (which a snooze
+    /// can move anywhere) and never from `fired_at` (which is when
+    /// delivery happened: seconds late on a good tick, days late after an
+    /// outage). On the morning the clocks skip 02:30 the reminder fires at
+    /// 03:00 — `due_local` says 03:00, this still says 02:30, and that is
+    /// the only reason the series is back at 02:30 the next day.
+    pub occurrence_local: String,
     pub status: String,
     pub fired_at: Option<String>,
     pub source_msg_id: Option<String>,
@@ -54,8 +67,8 @@ pub struct Reminder {
     pub updated_at: String,
 }
 
-const COLS: &str = "id, peer_id, thread_id, text, due_at, tz, due_local, repeat, status, \
-                    fired_at, source_msg_id, created_at, updated_at";
+const COLS: &str = "id, peer_id, thread_id, text, due_at, tz, due_local, repeat, \
+                    occurrence_local, status, fired_at, source_msg_id, created_at, updated_at";
 
 /// Render a UTC instant as the member's wall-clock. Falls back to the
 /// host's own zone when `tz` is empty or unknown, which is also what the
@@ -77,6 +90,8 @@ pub async fn create(
     due_at: DateTime<Utc>,
     tz: &str,
     source_msg_id: Option<&str>,
+    repeat: &str,
+    occurrence_local: &str,
 ) -> Result<Reminder> {
     let text = text.trim();
     if text.is_empty() {
@@ -91,8 +106,9 @@ pub async fn create(
     let due_local = local_display(due_at, tz);
     sqlx::query(
         "INSERT INTO reminders (id, peer_id, thread_id, text, due_at, tz, due_local, repeat,
-                                status, fired_at, source_msg_id, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, '', 'scheduled', NULL, ?8, ?9, ?9)",
+                                occurrence_local, status, fired_at, source_msg_id,
+                                created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?10, ?11, 'scheduled', NULL, ?8, ?9, ?9)",
     )
     .bind(&id)
     .bind(peer_id)
@@ -103,6 +119,8 @@ pub async fn create(
     .bind(&due_local)
     .bind(source_msg_id)
     .bind(&now)
+    .bind(repeat)
+    .bind(occurrence_local)
     .execute(pool)
     .await?;
     Ok(Reminder {
@@ -113,7 +131,8 @@ pub async fn create(
         due_at: due,
         tz: tz.into(),
         due_local,
-        repeat: String::new(),
+        repeat: repeat.into(),
+        occurrence_local: occurrence_local.into(),
         status: STATUS_SCHEDULED.into(),
         fired_at: None,
         source_msg_id: source_msg_id.map(|s| s.into()),
@@ -256,7 +275,8 @@ pub async fn lease_due(pool: &SqlitePool, now: DateTime<Utc>) -> Result<Vec<Remi
     let stamp = Utc::now().to_rfc3339();
     let rows = sqlx::query(&format!(
         "UPDATE reminders SET status = 'firing', updated_at = ?1
-         WHERE status = 'scheduled' AND datetime(due_at) <= datetime(?2)
+         WHERE datetime(due_at) <= datetime(?2)
+           AND (status = 'scheduled' OR (status = 'fired' AND repeat != ''))
          RETURNING {COLS}"
     ))
     .bind(&stamp)
@@ -297,6 +317,45 @@ pub async fn mark_fired(pool: &SqlitePool, peer_id: &str, id: &str) -> Result<bo
     Ok(r.rows_affected() > 0)
 }
 
+/// Delivery happened for a REPEATING reminder: record the occurrence that
+/// went out and arm the row for the next one, in a single guarded UPDATE.
+///
+/// The advance happens on DELIVERY, not on acknowledgement. Waiting for an
+/// ack would be the silent stop this whole feature must not have: a
+/// Telegram-only member has no ack button at all (the message is plain
+/// text telling them to open the Calendar), and `lease_due` would never
+/// see the row again anyway once it rested in `fired`.
+///
+/// `occurrence_local` is the wall clock `next_local` produced, passed in
+/// verbatim. It is NOT `local_display(due_at, tz)` and NOT derived from
+/// `fired_at` — see the field's own documentation for why that is wrong
+/// exactly once a year and then permanently.
+pub async fn mark_fired_advanced(
+    pool: &SqlitePool,
+    peer_id: &str,
+    id: &str,
+    occurrence_local: &str,
+    next_due_at: DateTime<Utc>,
+    next_due_local: &str,
+) -> Result<bool> {
+    let now = Utc::now().to_rfc3339();
+    let r = sqlx::query(
+        "UPDATE reminders
+         SET status = 'fired', fired_at = ?1, updated_at = ?1,
+             occurrence_local = ?4, due_at = ?5, due_local = ?6
+         WHERE id = ?2 AND peer_id = ?3 AND status = 'firing'",
+    )
+    .bind(&now)
+    .bind(id)
+    .bind(peer_id)
+    .bind(occurrence_local)
+    .bind(next_due_at.to_rfc3339())
+    .bind(next_due_local)
+    .execute(pool)
+    .await?;
+    Ok(r.rows_affected() > 0)
+}
+
 /// Push a reminder `minutes` into the future and back to `scheduled`,
 /// re-rendering `due_local` in the member's zone. `None` when the id is not
 /// this member's or the row is already done/cancelled.
@@ -319,11 +378,40 @@ pub async fn snooze(
         return Ok(None);
     }
     let now = Utc::now();
-    let new_due = now + Duration::minutes(minutes);
+    let mut new_due = now + Duration::minutes(minutes);
+    let repeat = crate::reminders::spec::Repeat::parse(&current.repeat).unwrap_or_default();
+
+    // Snoozing must never move the series. It writes due_at and nothing
+    // else that matters: `occurrence_local` is untouched here and in every
+    // other member-facing verb, so the next occurrence is always
+    // next_local(occurrence_local) no matter how many times the member
+    // hits the button. That is a structural guarantee rather than an
+    // arithmetic one — there is no accumulating offset to get wrong.
+    if repeat.repeats() && !current.occurrence_local.is_empty() {
+        // A snooze past the next occurrence would skip a day. Fold it back.
+        if let Some(anchor) = parse_wall(&current.occurrence_local) {
+            let tz = current.tz.parse::<chrono_tz::Tz>().ok();
+            if let Some((_, next_at, _)) =
+                crate::reminders::spec::advance(anchor, repeat, tz, now)
+            {
+                if new_due >= next_at {
+                    new_due = next_at;
+                }
+            }
+        }
+    }
+
     let due_local = local_display(new_due, &current.tz);
+    // A repeating row stays `fired` while its occurrence is outstanding —
+    // the member asked to be poked again about THIS one, not to have it
+    // marked handled.
+    let (next_status, keep_fired) =
+        if repeat.repeats() { ("fired", true) } else { ("scheduled", false) };
     let row = sqlx::query(&format!(
         "UPDATE reminders
-         SET due_at = ?1, due_local = ?2, status = 'scheduled', fired_at = NULL, updated_at = ?3
+         SET due_at = ?1, due_local = ?2, status = ?6,
+             fired_at = CASE WHEN ?7 THEN fired_at ELSE NULL END,
+             updated_at = ?3
          WHERE id = ?4 AND peer_id = ?5 AND status IN ('scheduled', 'firing', 'fired')
          RETURNING {COLS}"
     ))
@@ -332,14 +420,101 @@ pub async fn snooze(
     .bind(now.to_rfc3339())
     .bind(id)
     .bind(peer_id)
+    .bind(next_status)
+    .bind(keep_fired)
     .fetch_optional(pool)
     .await?;
     Ok(row.map(row_to_reminder))
 }
 
+/// Is this delivery a fresh occurrence, or a snooze coming back round?
+///
+/// Compared as INSTANTS, not as wall-clock strings. The obvious version —
+/// `due_local == next_local(anchor)` — is wrong on precisely the morning
+/// this whole feature is careful about: a 02:30 daily meets the skipped
+/// hour, `local_to_utc_forgiving` lands it at 03:00, and the strings then
+/// disagree even though the row is exactly on its grid. It would be
+/// classified a re-poke, the anchor would stop advancing, and the series
+/// would re-deliver the same occurrence every day from then on.
+///
+/// Deliberately NOT "is `fired_at` set": a crash between lease and mark
+/// leaves a stale `fired_at`, and that rule would re-poke every thirty
+/// seconds forever.
+pub(crate) fn is_new_occurrence(
+    r: &Reminder,
+    repeat: crate::reminders::spec::Repeat,
+    anchor: Option<chrono::NaiveDateTime>,
+    tz: Option<chrono_tz::Tz>,
+) -> bool {
+    if !repeat.repeats() {
+        return true;
+    }
+    let Some(a) = anchor else { return true };
+    let Some(next) = crate::reminders::spec::next_local(a, repeat) else {
+        return true;
+    };
+    let expected = crate::reminders::spec::local_to_utc_forgiving(next, tz);
+    match chrono::DateTime::parse_from_rfc3339(&r.due_at) {
+        Ok(due) => due.with_timezone(&Utc) == expected,
+        Err(_) => true,
+    }
+}
+
+/// "YYYY-MM-DDTHH:MM" -> naive wall clock.
+fn parse_wall(s: &str) -> Option<chrono::NaiveDateTime> {
+    chrono::NaiveDateTime::parse_from_str(s.trim(), "%Y-%m-%dT%H:%M").ok()
+}
+
 /// The member says "got it". Allowed from any live state — acknowledging
 /// something early is a fine way to be done with it.
 pub async fn acknowledge(pool: &SqlitePool, peer_id: &str, id: &str) -> Result<bool> {
+    let Some(current) = get(pool, peer_id, id).await? else {
+        return Ok(false);
+    };
+    let repeat = crate::reminders::spec::Repeat::parse(&current.repeat).unwrap_or_default();
+
+    // Done on a repeating reminder means "this one is handled", never
+    // "stop reminding me" — that is Stop, on its own control. So the row
+    // goes back to `scheduled` on its own grid, re-derived from the anchor
+    // rather than left wherever a snooze put due_at.
+    //
+    // Idempotent by construction: a second Done, from a second device,
+    // recomputes the same values and changes nothing. That is why this
+    // needs no occurrence token on the wire.
+    if repeat.repeats() {
+        if let Some(anchor) = parse_wall(&current.occurrence_local) {
+            let tz = current.tz.parse::<chrono_tz::Tz>().ok();
+            if let Some((_, next_at, _)) =
+                crate::reminders::spec::advance(anchor, repeat, tz, Utc::now())
+            {
+                // `occurrence_local` is deliberately NOT written here. The
+                // scheduler already stepped it when it delivered this
+                // occurrence, and stepping it again would mean a second
+                // Done — from a second device, or a double tap — quietly
+                // ate a day. Leaving it alone is what makes this
+                // idempotent, and is why no occurrence token is needed on
+                // the wire.
+                let r = sqlx::query(
+                    "UPDATE reminders
+                     SET status = 'scheduled', fired_at = NULL, updated_at = ?1,
+                         due_at = ?4, due_local = ?5
+                     WHERE id = ?2 AND peer_id = ?3
+                       AND status IN ('scheduled', 'firing', 'fired')",
+                )
+                .bind(Utc::now().to_rfc3339())
+                .bind(id)
+                .bind(peer_id)
+                .bind(next_at.to_rfc3339())
+                .bind(local_display(next_at, &current.tz))
+                .execute(pool)
+                .await?;
+                return Ok(r.rows_affected() > 0);
+            }
+        }
+        // The calendar ran out, or the row predates the anchor column.
+        // Fall through and finish it rather than leave it stuck.
+    }
+
     let r = sqlx::query(
         "UPDATE reminders SET status = 'done', updated_at = ?1
          WHERE id = ?2 AND peer_id = ?3 AND status IN ('scheduled', 'firing', 'fired')",
@@ -394,6 +569,17 @@ pub async fn apply_action(
             }
             get(pool, peer_id, id).await
         }
+        // Ending a series, as opposed to finishing one occurrence. Kept
+        // as a separate verb because Done on a repeating reminder
+        // deliberately does NOT stop it, and a member who wants it gone
+        // needs a word for that which is not "delete" (a hard row
+        // removal) and not "ack".
+        "stop" => {
+            if !cancel(pool, peer_id, id).await? {
+                return Err(anyhow!("that reminder is not yours to act on, or it is already done"));
+            }
+            get(pool, peer_id, id).await
+        }
         "snooze" => {
             let minutes = if snooze_minutes == 0 { 10 } else { snooze_minutes as i64 };
             snooze(pool, peer_id, id, minutes)
@@ -428,6 +614,7 @@ fn row_to_reminder(r: sqlx::sqlite::SqliteRow) -> Reminder {
         tz: r.get("tz"),
         due_local: r.get("due_local"),
         repeat: r.get("repeat"),
+        occurrence_local: r.get("occurrence_local"),
         status: r.get("status"),
         fired_at: opt("fired_at"),
         source_msg_id: opt("source_msg_id"),
@@ -441,6 +628,187 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
     use sqlx::sqlite::SqlitePoolOptions;
+
+    const BERLIN: &str = "Europe/Berlin";
+
+    fn wall(s: &str) -> chrono::NaiveDateTime {
+        chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M").unwrap()
+    }
+
+    /// Seed a repeating row directly, the way `create` would.
+    async fn seed_daily(pool: &SqlitePool, peer: &str, first_local: &str) -> Reminder {
+        let tz: chrono_tz::Tz = BERLIN.parse().unwrap();
+        let due = crate::reminders::spec::local_to_utc_forgiving(wall(first_local), Some(tz));
+        create(pool, peer, None, "take the pills", due, BERLIN, None, "daily", first_local)
+            .await
+            .expect("seed")
+    }
+
+    /// Walk one delivery the way the scheduler does: lease, work out the
+    /// occurrence, advance.
+    async fn fire_once(pool: &SqlitePool, peer: &str, now: DateTime<Utc>) -> Reminder {
+        let leased = lease_due(pool, now).await.expect("lease");
+        assert_eq!(leased.len(), 1, "exactly one row leased at {now}");
+        let r = &leased[0];
+        let repeat = crate::reminders::spec::Repeat::parse(&r.repeat).unwrap();
+        let tz = r.tz.parse::<chrono_tz::Tz>().ok();
+        let anchor = parse_wall(&r.occurrence_local);
+        let due_wall = parse_wall(&r.due_local).unwrap();
+        let is_new = is_new_occurrence(r, repeat, anchor, tz);
+        let occurrence = match (anchor, is_new) {
+            (None, _) => due_wall,
+            (Some(a), true) => crate::reminders::spec::next_local(a, repeat).unwrap_or(a),
+            (Some(a), false) => a,
+        };
+        let (_, next_at, _) =
+            crate::reminders::spec::advance(occurrence, repeat, tz, now).expect("advance");
+        mark_fired_advanced(
+            pool,
+            peer,
+            &r.id,
+            &occurrence.format("%Y-%m-%dT%H:%M").to_string(),
+            next_at,
+            &local_display(next_at, &r.tz),
+        )
+        .await
+        .expect("mark");
+        get(pool, peer, &r.id).await.unwrap().unwrap()
+    }
+
+    fn utc(y: i32, mo: u32, d: u32, h: u32, mi: u32) -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(y, mo, d, h, mi, 0).single().unwrap()
+    }
+
+    /// A daily reminder nobody ever acknowledges must keep coming. This is
+    /// the failure the whole design is built to avoid: advance-on-ack
+    /// would leave it parked in `fired`, where `lease_due` never looks
+    /// again, and it would silently stop forever.
+    #[tokio::test]
+    async fn a_daily_reminder_keeps_firing_without_a_single_ack() {
+        let pool = fresh_pool().await;
+        seed_daily(&pool, "ALICE", "2026-11-10T09:00").await;
+
+        // 09:00 Berlin in November is 08:00 UTC.
+        let day1 = fire_once(&pool, "ALICE", utc(2026, 11, 10, 8, 0)).await;
+        assert_eq!(day1.occurrence_local, "2026-11-10T09:00");
+        assert_eq!(day1.due_local, "2026-11-11T09:00", "armed for tomorrow already");
+        assert_eq!(day1.status, "fired", "and still outstanding for the member");
+
+        let day2 = fire_once(&pool, "ALICE", utc(2026, 11, 11, 8, 0)).await;
+        assert_eq!(day2.occurrence_local, "2026-11-11T09:00", "the grid stepped");
+        assert_eq!(day2.due_local, "2026-11-12T09:00");
+
+        let day3 = fire_once(&pool, "ALICE", utc(2026, 11, 12, 8, 0)).await;
+        assert_eq!(day3.occurrence_local, "2026-11-12T09:00");
+        assert_eq!(day3.due_local, "2026-11-13T09:00");
+    }
+
+    /// Snoozing moves this poke and nothing else. The guarantee is
+    /// structural: no member-facing verb writes `occurrence_local`.
+    #[tokio::test]
+    async fn snoozing_a_daily_reminder_never_drifts_the_series() {
+        let pool = fresh_pool().await;
+        let seeded = seed_daily(&pool, "ALICE", "2026-11-10T09:00").await;
+        let fired = fire_once(&pool, "ALICE", utc(2026, 11, 10, 8, 0)).await;
+        assert_eq!(fired.occurrence_local, "2026-11-10T09:00");
+
+        for _ in 0..5 {
+            let s = snooze(&pool, "ALICE", &seeded.id, 10).await.unwrap().unwrap();
+            assert_eq!(
+                s.occurrence_local, "2026-11-10T09:00",
+                "snooze must never touch the anchor"
+            );
+            assert_eq!(s.status, "fired", "still outstanding, not quietly handled");
+            assert!(s.fired_at.is_some(), "and still flagged as delivered");
+        }
+
+        // Tomorrow is still 09:00, not 09:50.
+        let after = get(&pool, "ALICE", &seeded.id).await.unwrap().unwrap();
+        let next = crate::reminders::spec::next_local(
+            parse_wall(&after.occurrence_local).unwrap(),
+            crate::reminders::spec::Repeat::Daily,
+        )
+        .unwrap();
+        assert_eq!(next.format("%Y-%m-%dT%H:%M").to_string(), "2026-11-11T09:00");
+    }
+
+    /// Done finishes the occurrence and re-arms on the grid — it does not
+    /// end the series, and it repairs a snoozed due_at.
+    #[tokio::test]
+    async fn done_handles_one_occurrence_and_stop_ends_the_series() {
+        let pool = fresh_pool().await;
+        let seeded = seed_daily(&pool, "ALICE", "2026-11-10T09:00").await;
+        fire_once(&pool, "ALICE", utc(2026, 11, 10, 8, 0)).await;
+        snooze(&pool, "ALICE", &seeded.id, 30).await.unwrap();
+
+        assert!(acknowledge(&pool, "ALICE", &seeded.id).await.unwrap());
+        let after = get(&pool, "ALICE", &seeded.id).await.unwrap().unwrap();
+        assert_eq!(after.status, "scheduled", "a repeating row is never 'done'");
+        assert!(after.fired_at.is_none(), "this occurrence is handled");
+        assert_eq!(after.due_local, "2026-11-11T09:00", "back on the grid, not 09:30");
+
+        // A second Done from another device changes nothing.
+        acknowledge(&pool, "ALICE", &seeded.id).await.unwrap();
+        let again = get(&pool, "ALICE", &seeded.id).await.unwrap().unwrap();
+        assert_eq!(again.due_local, "2026-11-11T09:00", "idempotent");
+
+        // Stop is the way out, and it is a different verb from Done.
+        apply_action(&pool, "ALICE", &seeded.id, "stop", 0).await.unwrap();
+        let stopped = get(&pool, "ALICE", &seeded.id).await.unwrap().unwrap();
+        assert_eq!(stopped.status, "cancelled");
+        assert!(
+            lease_due(&pool, utc(2027, 1, 1, 0, 0)).await.unwrap().is_empty(),
+            "a stopped series is never leased again"
+        );
+    }
+
+    /// THE trap. A 02:30 daily meets the morning the clocks skip 02:00 to
+    /// 03:00. It fires at 03:00 that day — and the anchor must still say
+    /// 02:30, or the series moves to 03:00 permanently and nobody ever
+    /// connects the shift to a clock change six months earlier.
+    #[tokio::test]
+    async fn the_skipped_hour_does_not_move_the_series_forever() {
+        let pool = fresh_pool().await;
+        seed_daily(&pool, "ALICE", "2027-03-27T02:30").await;
+
+        // The day before the change: an ordinary 02:30.
+        let d1 = fire_once(&pool, "ALICE", utc(2027, 3, 27, 1, 30)).await;
+        assert_eq!(d1.occurrence_local, "2027-03-27T02:30");
+        assert_eq!(d1.due_local, "2027-03-28T03:00", "02:30 does not exist that morning");
+
+        // The gap morning: delivered at 03:00, anchored at 02:30.
+        let d2 = fire_once(&pool, "ALICE", utc(2027, 3, 28, 1, 0)).await;
+        assert_eq!(
+            d2.occurrence_local, "2027-03-28T02:30",
+            "the anchor is the wall clock next_local produced, NOT the instant that fired"
+        );
+        assert_eq!(d2.due_local, "2027-03-29T02:30", "and the next one is back to 02:30");
+
+        // And it stays there.
+        let d3 = fire_once(&pool, "ALICE", utc(2027, 3, 29, 0, 30)).await;
+        assert_eq!(d3.occurrence_local, "2027-03-29T02:30");
+        assert_eq!(d3.due_local, "2027-03-30T02:30");
+    }
+
+    /// The host was off for three days. One notification, not three —
+    /// there is one row, and the advance walks past everything missed.
+    #[tokio::test]
+    async fn an_outage_collapses_to_a_single_delivery() {
+        let pool = fresh_pool().await;
+        seed_daily(&pool, "ALICE", "2026-11-10T09:00").await;
+
+        // Nothing ran until the 13th.
+        let back = fire_once(&pool, "ALICE", utc(2026, 11, 13, 10, 0)).await;
+        assert_eq!(back.occurrence_local, "2026-11-10T09:00", "the one it was due for");
+        assert_eq!(back.due_local, "2026-11-14T09:00", "and it lands in the future");
+
+        // Critically: nothing is left due, so the next tick is quiet
+        // rather than firing again thirty seconds later.
+        assert!(
+            lease_due(&pool, utc(2026, 11, 13, 10, 1)).await.unwrap().is_empty(),
+            "a repeating row must never come to rest in the past"
+        );
+    }
 
     /// In-memory DB with the REAL migrations applied, so the DDL in
     /// migrate.rs is exercised. One connection: each connection to
@@ -460,7 +828,7 @@ mod tests {
     }
 
     async fn seed(pool: &SqlitePool, peer: &str, text: &str, due: DateTime<Utc>) -> Reminder {
-        create(pool, peer, Some("thread-1"), text, due, "Europe/Berlin", None)
+        create(pool, peer, Some("thread-1"), text, due, "Europe/Berlin", None, "", "")
             .await
             .unwrap()
     }
@@ -486,9 +854,9 @@ mod tests {
         assert_eq!(r.due_local, "2030-07-01T09:00");
         assert!(r.due_at.ends_with("+00:00"), "stored as UTC: {}", r.due_at);
         // Validation.
-        assert!(create(&pool, "ALICE", None, "   ", due, "Europe/Berlin", None).await.is_err());
+        assert!(create(&pool, "ALICE", None, "   ", due, "Europe/Berlin", None, "", "").await.is_err());
         let long = "x".repeat(MAX_TEXT_CHARS + 1);
-        assert!(create(&pool, "ALICE", None, &long, due, "Europe/Berlin", None).await.is_err());
+        assert!(create(&pool, "ALICE", None, &long, due, "Europe/Berlin", None, "", "").await.is_err());
     }
 
     #[tokio::test]

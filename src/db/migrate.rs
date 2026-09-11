@@ -341,6 +341,15 @@ const STATEMENTS: &[&str] = &[
     // deliberately a new column rather than a reuse, because "revoked"
     // now unambiguously means the invite, not the device.
     r#"ALTER TABLE peers ADD COLUMN paused INTEGER NOT NULL DEFAULT 0"#,
+    // The wall clock of the occurrence a repeating reminder is currently
+    // on. `''` for one-offs and for every row written before recurrence,
+    // so there is no backfill. Only the scheduler writes it.
+    //
+    // Ships in the same commit as `COLS` gaining the column, because
+    // `lease_due` and `snooze` both select through `RETURNING {COLS}` and
+    // `row_to_reminder` does a plain `get` — the query landing first is a
+    // "no such column" error, which `run` does not swallow.
+    r#"ALTER TABLE reminders ADD COLUMN occurrence_local TEXT NOT NULL DEFAULT ''"#,
 ];
 
 pub async fn run(pool: &SqlitePool) -> Result<()> {
