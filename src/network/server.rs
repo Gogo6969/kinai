@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
-use axum::extract::{Query, State};
+use axum::extract::{ConnectInfo, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{any, get};
@@ -27,11 +27,24 @@ use super::protocol::Envelope;
 use super::PeerInfo;
 use crate::SharedState;
 
+/// Guesses per minute, per source IP, allowed against `/v1/invite/redeem`.
+///
+/// Deliberately its own constant and its own limiter instance rather than
+/// the configurable `rate_limit_rpm` one: that is user-settable and
+/// `RateLimiter::allow` returns true unconditionally when it is 0, so a
+/// household that turned chat throttling off would also have turned off
+/// the only thing standing between a 6-character code and a brute force.
+/// A person types a code once; ten a minute is generous.
+const REDEEM_RPM: u32 = 10;
+
 #[derive(Clone)]
 pub(crate) struct AxumState {
     pub(crate) app: SharedState,
     pub(crate) tauri: AppHandle,
     pub(crate) rate: Arc<RateLimiter>,
+    /// Keyed on client IP, not on a JWT subject — redeem is the one route
+    /// that runs before there is any identity to key on.
+    pub(crate) redeem_rate: Arc<RateLimiter>,
 }
 
 pub async fn start(state: SharedState, app: AppHandle) -> Result<()> {
@@ -46,6 +59,7 @@ pub async fn start(state: SharedState, app: AppHandle) -> Result<()> {
         app: state.clone(),
         tauri: app.clone(),
         rate: Arc::new(RateLimiter::new(rpm)),
+        redeem_rate: Arc::new(RateLimiter::new(REDEEM_RPM)),
     };
 
     let router = Router::new()
@@ -86,7 +100,15 @@ pub async fn start(state: SharedState, app: AppHandle) -> Result<()> {
         serde_json::json!({"running": true, "addr": listen.to_string()}),
     );
 
-    axum::serve(listener, router).await?;
+    // `.into_make_service_with_connect_info` is what makes the
+    // `ConnectInfo<SocketAddr>` extractor on `redeem_invite` resolve.
+    // Without it that handler compiles and then 500s on every redeem,
+    // and the family member sees the raw error text.
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -140,10 +162,28 @@ struct RedeemResp {
 /// is the one stored on the invite at creation time — clients should
 /// connect to that (NOT the IP they used to reach this endpoint, which may
 /// differ if the host has multiple interfaces).
+/// This route is unauthenticated by necessity — it is how a device with
+/// nothing but a code gets its first credential — so it is throttled per
+/// source IP and every rejection is logged. Without both, it answered as a
+/// clean oracle (404 wrong, 200 plus the JWT right) as fast as the network
+/// allowed, and left no trace that anyone had been guessing.
+///
+/// Note the `Query<RedeemQuery>` extractor runs BEFORE this body, so a
+/// request with no `code` at all is rejected by axum and never reaches the
+/// limiter. Every request that names a code does.
 async fn redeem_invite(
     State(s): State<AxumState>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Query(q): Query<RedeemQuery>,
 ) -> Result<Json<RedeemResp>, (StatusCode, String)> {
+    let ip = addr.ip().to_string();
+    if !s.redeem_rate.allow(&ip) {
+        tracing::warn!(peer = %ip, "invite redeem throttled");
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many attempts; wait a minute and try again".into(),
+        ));
+    }
     let code = q.code.trim().to_lowercase();
     if code.len() != 6 {
         return Err((
@@ -157,7 +197,12 @@ async fn redeem_invite(
             token: r.token,
             label: r.label,
         })),
-        Err(e) => Err((StatusCode::NOT_FOUND, e.to_string())),
+        Err(e) => {
+            // The code and the token are both credentials; only ever the
+            // source and the reason.
+            tracing::warn!(peer = %ip, "invite redeem rejected: {e}");
+            Err((StatusCode::NOT_FOUND, e.to_string()))
+        }
     }
 }
 
