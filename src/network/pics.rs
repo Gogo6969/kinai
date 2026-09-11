@@ -37,9 +37,16 @@ pub async fn serve_pic(AxPath(filename): AxPath<String>) -> Result<Response, (St
 }
 
 async fn serve_file(path: &Path) -> Result<Response, (StatusCode, String)> {
-    let bytes = tokio::fs::read(path)
-        .await
-        .map_err(|e| (StatusCode::NOT_FOUND, format!("missing: {}: {e}", path.display())))?;
+    // The body used to interpolate `path.display()`, which handed any
+    // unauthenticated caller on the LAN the host account's home directory
+    // on a plain 404. Filename only in the log; nothing in the response.
+    let bytes = tokio::fs::read(path).await.map_err(|e| {
+        tracing::debug!(
+            file = %path.file_name().and_then(|f| f.to_str()).unwrap_or("?"),
+            "pic not found: {e}"
+        );
+        (StatusCode::NOT_FOUND, "no such picture".to_string())
+    })?;
     let mime = match path.extension().and_then(|e| e.to_str()) {
         Some("png") => "image/png",
         Some("jpg" | "jpeg") => "image/jpeg",

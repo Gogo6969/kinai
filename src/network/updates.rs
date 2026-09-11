@@ -37,7 +37,6 @@ use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::{Deserialize, Serialize};
-use tokio::io::AsyncReadExt;
 
 use super::server::AxumState;
 
@@ -392,18 +391,60 @@ pub(crate) async fn signature_legacy(
     serve_target(host_target_id(), /* signature */ true).await
 }
 
+/// Stream the bundle instead of buffering it.
+///
+/// This used to `read_to_end` into a `Vec`, which the response then copied
+/// again — roughly twice the file size of resident memory per in-flight
+/// request. The Linux AppImage is ~92 MB, and these routes are
+/// unauthenticated and outside the rate limiter (which only guards
+/// WebSocket envelopes, keyed on a JWT subject these requests do not
+/// have), so a handful of concurrent fetches moved the host from 56 MB to
+/// about a gigabyte and roughly thirty would have taken the family's
+/// service down. Streaming keeps it flat regardless of file size.
+///
+/// CONTENT_LENGTH is set BY HAND and must stay that way. A streamed body
+/// has no `size_hint`, so hyper falls back to chunked encoding and drops
+/// the header the buffered `Vec` used to get for free — and
+/// `tauri-plugin-updater` then reports `content_length: None`, which
+/// `src/updater.rs` turns into a progress bar stuck at 0% for the whole
+/// download, with no error anywhere to explain it.
+///
+/// The error bodies are deliberately generic. They used to interpolate
+/// `path.display()`, which handed any unauthenticated caller on the LAN
+/// the host account's home directory.
 async fn serve_file(path: &Path, content_type: &str) -> Result<Response, (StatusCode, String)> {
-    let mut file = tokio::fs::File::open(path)
+    let file = tokio::fs::File::open(path).await.map_err(|e| {
+        // Filename only: the directory above it names the host's user.
+        tracing::debug!(
+            file = %path.file_name().and_then(|f| f.to_str()).unwrap_or("?"),
+            "update file not found: {e}"
+        );
+        (StatusCode::NOT_FOUND, "no such update file".to_string())
+    })?;
+    let len = file
+        .metadata()
         .await
-        .map_err(|e| (StatusCode::NOT_FOUND, format!("missing: {}: {e}", path.display())))?;
-    let mut buf = Vec::new();
-    file.read_to_end(&mut buf)
-        .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("read failed: {e}")))?;
+        .map_err(|e| {
+            tracing::warn!("update file stat failed: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, "cannot read update file".to_string())
+        })?
+        .len();
+    tracing::info!(
+        file = %path.file_name().and_then(|f| f.to_str()).unwrap_or("?"),
+        bytes = len,
+        "serving update file"
+    );
+    let body = axum::body::Body::from_stream(tokio_util::io::ReaderStream::with_capacity(
+        file,
+        64 * 1024,
+    ));
     Ok((
         StatusCode::OK,
-        [(header::CONTENT_TYPE, content_type.to_string())],
-        buf,
+        [
+            (header::CONTENT_TYPE, content_type.to_string()),
+            (header::CONTENT_LENGTH, len.to_string()),
+        ],
+        body,
     )
         .into_response())
 }
@@ -414,6 +455,52 @@ fn http_base_for(s: &AxumState) -> Option<String> {
         .map(|ip| ip.to_string())
         .unwrap_or_else(|_| cfg.host.bind_addr.clone());
     Some(format!("http://{host}:{}", cfg.host.port))
+}
+
+#[cfg(test)]
+mod serve_file_tests {
+    use super::*;
+
+    /// A streamed body has no `size_hint`, so hyper falls back to chunked
+    /// encoding and silently drops Content-Length — which the buffered
+    /// `Vec` used to get for free. `tauri-plugin-updater` then reports
+    /// `content_length: None` and every family install bar sits at 0% for
+    /// the whole download with nothing in the logs to explain it. The
+    /// header is set by hand precisely so that cannot happen; this test is
+    /// what stops someone tidying it away.
+    #[tokio::test]
+    async fn a_streamed_bundle_still_declares_its_length() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("KinAI.AppImage");
+        let payload = vec![7u8; 300_000];
+        std::fs::write(&path, &payload).unwrap();
+
+        let res = serve_file(&path, "application/gzip").await.expect("serves");
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(
+            res.headers().get(header::CONTENT_LENGTH).unwrap(),
+            &payload.len().to_string()
+        );
+        assert_eq!(res.headers().get(header::CONTENT_TYPE).unwrap(), "application/gzip");
+        // Never chunked: that is the failure mode this guards.
+        assert!(res.headers().get(header::TRANSFER_ENCODING).is_none());
+    }
+
+    /// A miss must not hand an unauthenticated LAN caller the host
+    /// account's home directory, which `path.display()` in the body did.
+    #[tokio::test]
+    async fn a_missing_file_reveals_nothing_about_the_host() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("nope.AppImage");
+        let (status, body) = serve_file(&missing, "application/gzip").await.unwrap_err();
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        assert_eq!(body, "no such update file");
+        assert!(!body.contains('/'), "no path fragments: {body}");
+        assert!(
+            !body.contains(dir.path().to_str().unwrap()),
+            "the temp path leaked into the body: {body}"
+        );
+    }
 }
 
 #[cfg(test)]
