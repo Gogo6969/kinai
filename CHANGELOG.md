@@ -5,6 +5,29 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.126] — 2026-09-11
+
+### Fixed
+
+- **KinAI no longer writes your words into its own log.** Every time it
+  used a tool it recorded the first part of what it was given — so the log
+  file on the host had been quietly collecting the text of reminders you
+  set and questions you asked it to look up, in plain text, for as long as
+  those files are kept. It now records only that a tool ran, which one, and
+  how long it took. Older log files still contain what was already written;
+  this stops new ones. They live in `~/.kinai/logs` if you want to clear
+  them out.
+- **Calendar sits at the top of the menu**, above the host's own settings
+  pages. It is the entry every family member has, and the only one that
+  tells you something is waiting.
+
+### Changed
+
+- The reminder API added in 0.2.125 is now documented — how to create a
+  key, what it can and cannot reach, and what each refusal means. The host
+  guide's section on managing your family also describes Pause and
+  Disconnect properly, rather than the single button it used to have.
+
 ## [0.2.125] — 2026-09-11
 
 ### Added
