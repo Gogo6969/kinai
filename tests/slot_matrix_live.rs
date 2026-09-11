@@ -20,6 +20,16 @@
 //!
 //!   cargo test --test slot_matrix_live -- --ignored --nocapture
 //!
+//! ONE THREAD PER SLOT. Sending all eight questions into a single
+//! conversation makes every later turn re-process every earlier question
+//! and answer — including the long search results the live-data question
+//! produces — with no cache. On a slot that is merely slow per token that
+//! turns a one-word reply into minutes: measured here at 342 SECONDS for
+//! "what colour is a ripe lime?" on `deep`, against 0.73s when the same
+//! server is asked directly. The matrix then reports a silence it cannot
+//! tell apart from a fault. A fresh thread per slot keeps every prompt
+//! small and measures the slot rather than the transcript.
+//!
 //! It PRINTS the matrix and asserts only that every configured slot
 //! answered something. Judge the answers yourself — in particular do not
 //! read `online` saying a ripe lime is "Yellow" as a regression. A fully
@@ -36,8 +46,16 @@ const SLOTS: [&str; 4] = ["fast", "balanced", "deep", "online"];
 const CONTROL: &str = "Answer with one word: what colour is a ripe lime?";
 const LIVE_DATA: &str = "Which stock is the largest holding of the SPY fund today?";
 /// Balanced on a cold Minisforum server has taken ~3 minutes for one
-/// forced-search round. Slow is not broken; give it room.
-const TURN_TIMEOUT_SECS: u64 = 300;
+/// forced-search round, and deep has taken twelve. Slow is not broken;
+/// give it room. Override with KINAI_TURN_TIMEOUT when a slot is known to
+/// be crawling and you want the matrix to wait it out rather than report
+/// a silence it cannot distinguish from a fault.
+fn turn_timeout_secs() -> u64 {
+    std::env::var("KINAI_TURN_TIMEOUT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300)
+}
 
 struct Answer {
     slot: String,
@@ -95,7 +113,6 @@ async fn every_configured_slot_answers_a_control_and_a_live_data_question() {
         .await
         .expect("create invite");
     let peer = invite.short_code.clone();
-    let thread = db.create_thread(&peer, Some("slot matrix")).await.expect("create thread");
 
     let url = invite.host_url.replace("kinai://", "");
     let (ws, _) = tokio_tungstenite::connect_async(&url)
@@ -128,7 +145,16 @@ async fn every_configured_slot_answers_a_control_and_a_live_data_question() {
     let mut rows: Vec<(String, String, String, String, u64)> = Vec::new();
     let mut silent: Vec<String> = Vec::new();
 
+    let mut threads: Vec<String> = Vec::new();
     for slot in SLOTS {
+        // Fresh conversation per slot — see the note at the top of this
+        // file. This is what keeps the prompt small enough that the
+        // number below measures the slot and not the backlog.
+        let thread = db
+            .create_thread(&peer, Some(&format!("slot matrix {slot}")))
+            .await
+            .expect("create thread");
+        threads.push(thread.id.clone());
         for (kind, question) in [("control", CONTROL), ("live-data", LIVE_DATA)] {
             let id = format!("matrix-{slot}-{kind}");
             let content = format!("/{slot} {question}");
@@ -147,7 +173,7 @@ async fn every_configured_slot_answers_a_control_and_a_live_data_question() {
             .await
             .expect("send message");
 
-            match wait_done(&mut source, &id, TURN_TIMEOUT_SECS).await {
+            match wait_done(&mut source, &id, turn_timeout_secs()).await {
                 Some(a) => {
                     let one_line: String =
                         a.content.trim().replace('\n', " ").chars().take(110).collect();
@@ -165,7 +191,7 @@ async fn every_configured_slot_answers_a_control_and_a_live_data_question() {
                     ));
                 }
                 None => {
-                    println!("  NO ANSWER within {TURN_TIMEOUT_SECS}s");
+                    println!("  NO ANSWER within {}s", turn_timeout_secs());
                     silent.push(format!("/{slot} [{kind}]"));
                 }
             }
@@ -183,7 +209,9 @@ async fn every_configured_slot_answers_a_control_and_a_live_data_question() {
 
     // Clean up before asserting, so a failure still leaves the family's
     // database tidy.
-    db.delete_thread(&peer, &thread.id).await.ok();
+    for t in &threads {
+        db.delete_thread(&peer, t).await.ok();
+    }
     kinai::network::invite::revoke(&pool, &invite.id).await.ok();
 
     assert!(
