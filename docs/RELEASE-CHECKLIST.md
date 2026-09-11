@@ -95,16 +95,34 @@ and "published".
       families: `darwin-aarch64`, `darwin-x86_64`, `windows-x86_64`,
       `linux-x86_64`.
 - [ ] `gh release edit vX.Y.Z --draft=false --latest`.
-- [ ] **Primary endpoint** serves the new version. Publishing fires the
-      `Publish update manifest` workflow, which re-validates the manifest and
-      mirrors it to the `updates` branch. Watch that run, then:
+- [ ] **Mirror the manifest to the `updates` branch — by hand, every time.**
+      Do not assume publishing did it for you:
+      ```
+      gh workflow run publish-manifest.yml
+      ```
+      Safe to run unconditionally: it defaults to the latest published
+      release, refuses to roll backwards, and stops with "branch already
+      serves this manifest" if there is nothing to do. So run it even when
+      the `release: published` trigger looks like it fired.
+
+      *Why by hand.* A `release` event runs the workflow file **as it exists
+      at the tagged commit** — for a release, `GITHUB_SHA` is the last commit
+      in the tagged release, not the tip of `main`. A release cut from a
+      commit that does not contain `.github/workflows/publish-manifest.yml`
+      therefore cannot start that run, and GitHub says nothing about it: no
+      run, no failure, no notice. That is exactly how 0.2.122 and 0.2.123
+      published with the branch still serving 0.2.121. Landing a workflow on
+      `main` does **not** put it on a tag that branched earlier.
+- [ ] **Primary endpoint** serves the new version. Watch the dispatched run
+      to `success`, then:
       `curl -sL https://raw.githubusercontent.com/Gogo6969/kinai/updates/latest.json | jq -r .version`
-      A short lag here is raw.githubusercontent's CDN (~5 min TTL), not a
-      failure — the workflow's last step already retries for two minutes. A
-      *failed run* is a real problem: nothing built from 0.2.123 on will see
-      the release until the branch moves.
+      It must print the version you just published. A short lag here is
+      raw.githubusercontent's CDN (~5 min TTL), not a failure — the
+      workflow's last step already retries for two minutes. A version that
+      never moves is a real problem: nothing built from 0.2.124 on will see
+      the release until the branch does.
 - [ ] **Fallback endpoint** serves the new version — installs built before
-      0.2.123 poll this one, and will until every device has rolled over:
+      0.2.124 poll this one, and will until every device has rolled over:
       `curl -sL https://github.com/Gogo6969/kinai/releases/latest/download/latest.json | jq -r .version`
 
 ## 6 — After publish
