@@ -41,7 +41,31 @@ pub struct ResolvedInvite {
     pub label: String,
 }
 
+/// Create a normal family invite: may open a WebSocket and chat.
+///
+/// Signature deliberately unchanged — five live tests and the Tauri
+/// command call it, and this is overwhelmingly the common case.
 pub async fn create(pool: &SqlitePool, cfg: &AppConfig, label: &str, ttl_days: i64) -> Result<Invite> {
+    create_scoped(pool, cfg, label, ttl_days, auth::FAMILY_SCOPE, "").await
+}
+
+/// Create an invite with an explicit scope.
+///
+/// `scope = "automation"` with `act_as = "host"` is the API-key case: a
+/// token that may call the HTTP reminder API writing into the host's own
+/// bucket, and may NOT open a WebSocket. Such a row is also refused by
+/// `lookup_by_short_code`, so its 6-character code is never redeemable
+/// over the network — the token has to be copied out of the host UI by
+/// hand. Without that refusal a guessed code would hand out a credential
+/// strictly more powerful than any family invite.
+pub async fn create_scoped(
+    pool: &SqlitePool,
+    cfg: &AppConfig,
+    label: &str,
+    ttl_days: i64,
+    scope: &str,
+    act_as: &str,
+) -> Result<Invite> {
     let id = Uuid::new_v4().to_string();
     let short_code = random_short_code(6);
     let host_url = guess_host_url(cfg);
@@ -54,7 +78,7 @@ pub async fn create(pool: &SqlitePool, cfg: &AppConfig, label: &str, ttl_days: i
     // JWT spec-conformant — `exp` is a Unix second count and some
     // libraries reject extreme values.
     let effective_ttl = if ttl_days <= 0 { 36500 } else { ttl_days };
-    let jwt = auth::issue_token(&short_code, &host_url, label, effective_ttl)?;
+    let jwt = auth::issue_scoped_token(&short_code, &host_url, label, effective_ttl, scope, act_as)?;
     let now = Utc::now();
     let exp = now + Duration::days(effective_ttl);
 
@@ -66,8 +90,8 @@ pub async fn create(pool: &SqlitePool, cfg: &AppConfig, label: &str, ttl_days: i
     );
 
     sqlx::query(
-        "INSERT INTO invites (id, short_code, jwt, host_url, label, created_at, expires_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO invites (id, short_code, jwt, host_url, label, created_at, expires_at, scope)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
     )
     .bind(&id)
     .bind(&short_code)
@@ -76,6 +100,7 @@ pub async fn create(pool: &SqlitePool, cfg: &AppConfig, label: &str, ttl_days: i
     .bind(label)
     .bind(now.to_rfc3339())
     .bind(exp.to_rfc3339())
+    .bind(scope)
     .execute(pool)
     .await?;
 
@@ -168,7 +193,7 @@ pub async fn validate_jwt_for_host(
 pub async fn lookup_by_short_code(pool: &SqlitePool, code: &str) -> Result<ResolvedInvite> {
     use chrono::Utc;
     let row = sqlx::query(
-        "SELECT jwt, host_url, label, expires_at, revoked
+        "SELECT jwt, host_url, label, expires_at, revoked, scope
          FROM invites WHERE short_code = ?1",
     )
     .bind(code)
@@ -177,6 +202,17 @@ pub async fn lookup_by_short_code(pool: &SqlitePool, code: &str) -> Result<Resol
     let Some(row) = row else {
         return Err(anyhow!("invite code not found"));
     };
+    // Only a family invite is redeemable over the network. An automation
+    // key lives in the same table so the existing Revoke UI covers it, but
+    // its token is strictly more powerful than a family one — it can carry
+    // `act_as: "host"` — and it is never typed by a person, so there is no
+    // reason for a code to resolve to it. The error is byte-identical to
+    // the not-found case on purpose: a distinguishable message would turn
+    // this into an oracle for which codes exist.
+    let scope: String = row.get("scope");
+    if !scope.is_empty() && scope != auth::FAMILY_SCOPE {
+        return Err(anyhow!("invite code not found"));
+    }
     let revoked: i64 = row.get("revoked");
     if revoked != 0 {
         return Err(anyhow!("invite has been revoked"));
@@ -352,6 +388,59 @@ mod cleanup_tests {
         .execute(pool)
         .await
         .expect("seed invite");
+    }
+
+    /// Same, with an explicit scope.
+    async fn seed_scoped(pool: &SqlitePool, id: &str, scope: &str) {
+        sqlx::query(
+            "INSERT INTO invites
+               (id, short_code, jwt, host_url, label, created_at, expires_at, revoked, scope)
+             VALUES (?1, ?2, 'jwt', 'ws://h/kin', 'L', ?3, ?4, 0, ?5)",
+        )
+        .bind(id)
+        .bind(id)
+        .bind(days_ago(1))
+        .bind(days_ahead(30))
+        .bind(scope)
+        .execute(pool)
+        .await
+        .expect("seed scoped invite");
+    }
+
+    /// An automation key lives in `invites` so the Revoke UI covers it,
+    /// but its code must never resolve over the network: the token it
+    /// holds can carry `act_as: "host"`, which is strictly more than any
+    /// family invite grants. A guessed code that returned one would be an
+    /// escalation, not merely a breach of one member.
+    #[tokio::test]
+    async fn a_code_never_resolves_to_an_automation_key() {
+        let pool = fresh_pool().await;
+        seed_scoped(&pool, "autoxx", crate::auth::AUTOMATION_SCOPE).await;
+        seed_scoped(&pool, "family", crate::auth::FAMILY_SCOPE).await;
+
+        // A family invite still works, scope column and all.
+        let ok = lookup_by_short_code(&pool, "family").await.expect("family resolves");
+        assert_eq!(ok.token, "jwt");
+
+        // The automation one is refused, and refused INDISTINGUISHABLY
+        // from a code that does not exist — a different message would
+        // turn this into an oracle for which codes are real.
+        let refused = lookup_by_short_code(&pool, "autoxx").await.unwrap_err().to_string();
+        let absent = lookup_by_short_code(&pool, "zzzzzz").await.unwrap_err().to_string();
+        assert_eq!(refused, absent, "must be byte-identical to not-found");
+        assert_eq!(refused, "invite code not found");
+    }
+
+    /// Rows written before the scope column existed carry the DEFAULT,
+    /// and must keep working.
+    #[tokio::test]
+    async fn a_row_from_before_the_scope_column_still_redeems() {
+        let pool = fresh_pool().await;
+        // `seed` does not mention scope at all — exactly like every row
+        // already in a household's database.
+        seed(&pool, "legacy", &days_ago(2), &days_ahead(30), 0, None).await;
+        let r = lookup_by_short_code(&pool, "legacy").await.expect("legacy row resolves");
+        assert_eq!(r.token, "jwt");
     }
 
     async fn ids(pool: &SqlitePool) -> Vec<String> {

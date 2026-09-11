@@ -28,10 +28,75 @@ pub struct Claims {
     pub exp: i64,
     /// Human label for this invite ("For Mom's iPad").
     pub label: String,
+    /// What this token is allowed to be used for. `""` or `"family"` is a
+    /// normal family invite that may open a WebSocket and chat;
+    /// `"automation"` may only call the HTTP reminder API.
+    ///
+    /// `#[serde(default)]` is load-bearing. Every token already in
+    /// `invites.jwt` and on every family device was minted before this
+    /// field existed, and serde would otherwise refuse them with "missing
+    /// field" — locking the whole household out at the Hello frame. The
+    /// signature itself is unaffected: jsonwebtoken verifies over the raw
+    /// payload bytes before deserializing.
+    #[serde(default)]
+    pub scope: String,
+    /// The peer this token writes as, when that is not its own `sub`.
+    /// Only `"host"` is meaningful, and only on an automation token: it
+    /// lets a script on the host machine write into the bucket the
+    /// Calendar actually reads (`db::HOST_PEER`). `""` means "act as
+    /// `sub`", which is what every family token does.
+    #[serde(default)]
+    pub act_as: String,
 }
 
-/// Issue a JWT for a new invite. Returns the encoded token.
+impl Claims {
+    /// May this token open a WebSocket and act as a family member?
+    ///
+    /// The ONE place the scope rule is written down. Do not compare
+    /// `scope` inline anywhere else: an obvious-looking
+    /// `claims.scope == "family"` rejects every JWT the household already
+    /// holds, because `#[serde(default)]` gives those `""`.
+    pub fn is_family(&self) -> bool {
+        (self.scope.is_empty() || self.scope == FAMILY_SCOPE) && self.act_as.is_empty()
+    }
+
+    /// The peer id this token writes as.
+    pub fn writes_as(&self) -> &str {
+        if self.act_as.is_empty() {
+            &self.sub
+        } else {
+            &self.act_as
+        }
+    }
+}
+
+/// Scope of a normal family invite. Stored explicitly on new rows; older
+/// rows and older tokens carry `""` and mean the same thing.
+pub const FAMILY_SCOPE: &str = "family";
+/// Scope of a token that may only reach the HTTP reminder API.
+pub const AUTOMATION_SCOPE: &str = "automation";
+
+/// Issue a JWT for a new family invite. Returns the encoded token.
+///
+/// Kept at its original four arguments: five live tests and a unit test
+/// call it, and a family invite is overwhelmingly the common case.
 pub fn issue_token(short_code: &str, host_url: &str, label: &str, ttl_days: i64) -> Result<String> {
+    issue_scoped_token(short_code, host_url, label, ttl_days, FAMILY_SCOPE, "")
+}
+
+/// Issue a JWT with an explicit scope, and optionally a peer to act as.
+///
+/// `act_as` is only honoured for non-family scopes — see
+/// `Claims::is_family`, which refuses a WebSocket handshake for anything
+/// carrying it.
+pub fn issue_scoped_token(
+    short_code: &str,
+    host_url: &str,
+    label: &str,
+    ttl_days: i64,
+    scope: &str,
+    act_as: &str,
+) -> Result<String> {
     let (private_pem, _) = ensure_keys()?;
     let now = Utc::now();
     let claims = Claims {
@@ -41,6 +106,8 @@ pub fn issue_token(short_code: &str, host_url: &str, label: &str, ttl_days: i64)
         iat: now.timestamp(),
         exp: (now + Duration::days(ttl_days)).timestamp(),
         label: label.into(),
+        scope: scope.into(),
+        act_as: act_as.into(),
     };
     let header = Header::new(Algorithm::RS256);
     let key = EncodingKey::from_rsa_pem(private_pem.as_bytes())?;
@@ -85,6 +152,60 @@ pub fn peek_token(token: &str) -> Result<Claims> {
 mod tests {
     use super::*;
 
+    /// THE regression net for every token the household already holds.
+    ///
+    /// Every JWT in `invites.jwt`, and the one saved on every family
+    /// device, was minted before `scope` and `act_as` existed. Without
+    /// `#[serde(default)]` serde refuses them with "missing field" and
+    /// every Windows and Linux client — which auto-update after the host
+    /// — is locked out at the Hello frame with "invite rejected". No
+    /// crypto needed to prove it: the failure is in deserialization.
+    #[test]
+    fn a_token_minted_before_scope_existed_is_still_a_family_token() {
+        let legacy = r#"{
+            "sub":"ab23cd","iss":"kinai","aud":"ws://192.0.2.10:4847/kin",
+            "iat":1778880000,"exp":1810416000,"label":"For the iPad"
+        }"#;
+        let claims: Claims = serde_json::from_str(legacy).expect("legacy claims must decode");
+        assert_eq!(claims.scope, "", "absent field defaults to empty, NOT \"family\"");
+        assert_eq!(claims.act_as, "");
+        assert!(claims.is_family(), "an empty scope is a family invite");
+        assert_eq!(claims.writes_as(), "ab23cd", "and it writes as itself");
+    }
+
+    #[test]
+    fn scope_decides_what_a_token_may_do() {
+        let family = Claims {
+            sub: "ab23cd".into(),
+            iss: "kinai".into(),
+            aud: "ws://h/kin".into(),
+            iat: 0,
+            exp: 0,
+            label: "l".into(),
+            scope: FAMILY_SCOPE.into(),
+            act_as: String::new(),
+        };
+        assert!(family.is_family());
+        assert_eq!(family.writes_as(), "ab23cd");
+
+        let automation = Claims {
+            scope: AUTOMATION_SCOPE.into(),
+            act_as: "host".into(),
+            ..family.clone()
+        };
+        assert!(!automation.is_family(), "automation may not open a socket");
+        assert_eq!(automation.writes_as(), "host");
+
+        // A family scope carrying act_as is still refused — otherwise a
+        // family token could nominate itself into the host's bucket.
+        let smuggled = Claims { act_as: "host".into(), ..family.clone() };
+        assert!(!smuggled.is_family(), "act_as is never allowed on a family token");
+
+        // And an unknown scope is not family either.
+        let odd = Claims { scope: "something-new".into(), ..family };
+        assert!(!odd.is_family());
+    }
+
     /// Smoke test that the JWT subsystem actually works end-to-end —
     /// issue → validate → peek round-trip. Exists specifically to catch
     /// silent breakage like the v0.2.36 → v0.2.39 regression: a
@@ -110,7 +231,7 @@ mod tests {
         // tests run in the same process and the cache is fine because
         // the tempdir keys persist for the test lifetime.
 
-        let host_url = "ws://192.168.1.1:4847/kin";
+        let host_url = "ws://192.0.2.10:4847/kin";
         let token = issue_token("ABC123", host_url, "test-label", 30)
             .expect("issue_token must succeed (CryptoProvider feature flag check)");
         assert!(!token.is_empty(), "issued token should be non-empty");

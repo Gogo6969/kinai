@@ -269,6 +269,27 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
         }
     };
 
+    // An automation key may call the HTTP reminder API and nothing else.
+    // This check has to be HERE, before anything downstream treats the
+    // token as a member: a few lines below, `claims.sub` starts evicting
+    // live peers, then goes into `net.peers` and the `peers` table, and
+    // by dispatch it is `context_peer` — the identity every thread,
+    // message and user-fact query is scoped to. A token carrying
+    // `act_as: "host"` that reached that far would read the host's own
+    // conversations.
+    if !claims.is_family() {
+        let _ = sink
+            .send(WsMessage::Text(
+                serde_json::to_string(&Envelope::Error {
+                    message: "this key is for the reminders API, not for chat".into(),
+                })?
+                .into(),
+            ))
+            .await;
+        tracing::warn!(scope = %claims.scope, "refused a non-family token at the handshake");
+        return Err(anyhow::anyhow!("non-family token refused at handshake"));
+    }
+
     let peer_id = uuid::Uuid::new_v4().to_string();
     let (tx, mut rx) = mpsc::unbounded_channel::<Envelope>();
 

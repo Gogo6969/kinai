@@ -323,6 +323,14 @@ const STATEMENTS: &[&str] = &[
     // writer to the `peers` table; reminders use it so "9am" means the
     // member's 9am, not the host's.
     r#"ALTER TABLE peers ADD COLUMN tz TEXT"#,
+    // What a token minted from this row may be used for. Every existing
+    // row is a family invite, which is what the DEFAULT backfills.
+    // `lookup_by_short_code` selects this column, so this statement and
+    // that query have to ship together: without the ALTER the SELECT is a
+    // "no such column" error, which `run` does NOT swallow, which makes
+    // `Db::open` return Err, which is an `.expect` panic at startup on
+    // every device.
+    r#"ALTER TABLE invites ADD COLUMN scope TEXT NOT NULL DEFAULT 'family'"#,
 ];
 
 pub async fn run(pool: &SqlitePool) -> Result<()> {
