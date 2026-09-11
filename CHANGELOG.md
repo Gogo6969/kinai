@@ -5,6 +5,67 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.125] — 2026-09-11
+
+### Added
+
+- **Reminders can repeat.** "Remind me every weekday at eight to take the
+  pills." Daily, every weekday, weekly or monthly — ask in your own words.
+  A repeating reminder keeps its clock time even when the clocks change,
+  so nine in the morning stays nine in the morning through spring and
+  autumn. **Done** handles the one in front of you and the next one is
+  already waiting; **Stop repeating** is a separate button, because
+  finishing today's is not the same as never wanting it again. Snoozing
+  moves only the one you snoozed — tomorrow's stays where it was. If KinAI
+  was switched off for three days you get one reminder, not three.
+- **A way for a program to add a reminder.** Until now the only way in was
+  to ask, which means KinAI had to understand you first. A script, a
+  scheduled job on the Mac, or a phone Shortcut can now add one directly.
+  Create a key on the Invites page; it can write reminders to your own
+  calendar and nothing else — it cannot open a chat, read anyone's
+  messages, or write to another family member's calendar.
+- **Pause, next to Disconnect.** Two buttons instead of one, because
+  stopping a device for the afternoon and removing someone are different
+  things. **Pause** keeps a device out until you let it back in, and the
+  invite still works when you do. **Disconnect** ends the session and
+  revokes the code, so coming back needs a new invite — the confirmation
+  now says so, because it cannot be undone.
+
+### Fixed
+
+- **Disconnect now actually disconnects.** It told the device its access
+  had been revoked, removed it from Manage family, and stopped its
+  reminders — but left the connection open, so the person could carry on
+  chatting.
+- **Manage family shows everyone who can reach your household**, not only
+  the devices switched on at that moment. Someone whose laptop is shut used
+  to be missing from the one page you would go to to look for them, and
+  Disconnect could not reach them at all. Each row now says whether it is
+  connected, paused, or simply not on right now. Invite codes are no longer
+  printed on that page: they are working keys, and that page gets
+  photographed.
+- **The progress bar during an update was stuck near zero.** It was
+  measuring each piece of the download against the whole file instead of
+  adding them up, so it never climbed.
+- **Downloading an update no longer uses a gigabyte of memory on the
+  host.** Files were being held in memory whole; several devices updating
+  at once could have taken the household's KinAI down.
+
+### Security
+
+- **Invite codes can no longer be guessed at speed, or in silence.** The
+  address that turns a six-character code into a key was unlimited and left
+  no trace, so a device already on your network could try codes for as long
+  as it liked and nobody would know. It is now limited per device and every
+  refusal is written to the log.
+- **KinAI no longer tells the network who is home.** Anything on your
+  network could ask how many family devices were connected, over and over,
+  and read the household's comings and goings from the answer. It also kept
+  giving out the family name after you had turned off the setting that
+  advertises it.
+- **An invite with an unreadable expiry date is now refused** rather than
+  treated as never expiring.
+
 ## [0.2.124] — 2026-09-10
 
 ### Changed
