@@ -444,7 +444,7 @@ without it.",
                         Ok(r) => {
                             tracing::info!(
                                 tool = %call.function.name,
-                                args = %truncate_for_log(&call.function.arguments),
+                                args = %redact_args_for_log(&call.function.arguments),
                                 ms = started.elapsed().as_millis() as u64,
                                 result_chars = r.len(),
                                 "tool call ok"
@@ -455,7 +455,7 @@ without it.",
                             let chain = format!("{e:#}");
                             tracing::warn!(
                                 tool = %call.function.name,
-                                args = %truncate_for_log(&call.function.arguments),
+                                args = %redact_args_for_log(&call.function.arguments),
                                 ms = started.elapsed().as_millis() as u64,
                                 error = %chain,
                                 "TOOL CALL FAILED"
@@ -1077,35 +1077,100 @@ pub(crate) fn correction_for_history(messages: &[ChatMessage]) -> Option<String>
 /// Arguments are model-authored and can be long (an image prompt, a pasted
 /// paragraph). Keep log lines readable and bounded — and slice on a char
 /// boundary, since a query can be any language.
-fn truncate_for_log(s: &str) -> String {
-    const MAX: usize = 160;
-    if s.chars().count() <= MAX {
-        return s.replace('\n', " ");
+/// The SHAPE of a tool call's arguments, never their values.
+///
+/// These lines used to carry the first 160 characters of the raw JSON,
+/// which meant the household's log accumulated the text of every reminder
+/// they set and every question they searched for — in plain text, on disk,
+/// under `~/.kinai/logs/`, for as long as the files are kept. The log is
+/// for answering "did that tool run, with what shape, how fast", and none
+/// of those questions need the content.
+///
+/// Keys and value types survive because they are what makes a log line
+/// worth having: `{text=<24 chars>, in_minutes=45}` still says the model
+/// passed a relative offset rather than an absolute one. Numbers are kept
+/// — no tool takes a personal one — and every string is reduced to its
+/// length.
+fn redact_args_for_log(raw: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(raw) {
+        Ok(serde_json::Value::Object(map)) => {
+            let inner: Vec<String> =
+                map.iter().map(|(k, v)| format!("{k}={}", shape_of(v))).collect();
+            format!("{{{}}}", inner.join(", "))
+        }
+        // Not an object: say how much there was and nothing else. Never
+        // fall back to printing it.
+        _ => format!("<{} chars, unparsed>", raw.chars().count()),
     }
-    let cut: String = s.chars().take(MAX).collect();
-    format!("{}…", cut.replace('\n', " "))
+}
+
+fn shape_of(v: &serde_json::Value) -> String {
+    use serde_json::Value;
+    match v {
+        Value::String(s) => format!("<{} chars>", s.chars().count()),
+        Value::Number(n) => n.to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Null => "null".into(),
+        Value::Array(a) => format!("[{} items]", a.len()),
+        Value::Object(o) => format!("{{{} keys}}", o.len()),
+    }
 }
 
 #[cfg(test)]
 mod log_tests {
-    use super::truncate_for_log;
+    use super::redact_args_for_log;
 
+    /// The household's log must never accumulate what they asked for.
     #[test]
-    fn short_args_pass_through_with_newlines_flattened() {
-        assert_eq!(truncate_for_log(r#"{"query":"a b"}"#), r#"{"query":"a b"}"#);
-        assert_eq!(truncate_for_log("line1\nline2"), "line1 line2");
+    fn arguments_are_logged_as_shape_never_as_content() {
+        let out = redact_args_for_log(
+            r#"{"text":"Call the surgery about moving the check-up","in_minutes":45}"#,
+        );
+        assert!(!out.contains("surgery"), "{out}");
+        assert!(!out.contains("check-up"), "{out}");
+        // But the line is still worth having.
+        assert!(out.contains("text=<42 chars>"), "{out}");
+        assert!(out.contains("in_minutes=45"), "{out}");
+
+        let q = redact_args_for_log(r#"{"query":"how much does a divorce cost"}"#);
+        assert!(!q.contains("divorce"), "{q}");
+        assert_eq!(q, "{query=<28 chars>}");
+    }
+
+    /// Anything that is not a JSON object gets a length and nothing more —
+    /// never a fallback that prints it.
+    #[test]
+    fn unparseable_arguments_are_not_printed() {
+        for raw in [r#""just a string""#, "not json at all", "[1,2,3]", ""] {
+            let out = redact_args_for_log(raw);
+            assert!(out.starts_with('<') && out.ends_with("unparsed>"), "{raw:?} -> {out}");
+        }
     }
 
     #[test]
-    fn long_args_are_cut_on_a_char_boundary() {
-        // A query can be in any language; slicing by byte would panic here.
-        let cyrillic = "я".repeat(400);
-        let out = truncate_for_log(&cyrillic);
-        assert!(out.ends_with('…'));
-        assert_eq!(out.chars().count(), 161, "160 chars + ellipsis");
+    fn nested_values_do_not_leak_through() {
+        let out = redact_args_for_log(
+            r#"{"attachments":[{"data":"secret"}],"opts":{"a":"b"},"on":true,"n":null}"#,
+        );
+        assert!(!out.contains("secret"), "{out}");
+        assert!(out.contains("attachments=[1 items]"), "{out}");
+        assert!(out.contains("opts={1 keys}"), "{out}");
+        assert!(out.contains("on=true"), "{out}");
+        assert!(out.contains("n=null"), "{out}");
+    }
 
-        let emoji = "🇩🇪".repeat(300);
-        assert!(truncate_for_log(&emoji).ends_with('…'));
+
+    /// The old helper truncated at 160 chars and needed care not to slice
+    /// a multibyte character in half. Redaction removed that hazard along
+    /// with the content: nothing from the argument reaches the line, so
+    /// there is nothing to slice. Kept as a test because "any language"
+    /// is exactly where a content-printing regression would show up.
+    #[test]
+    fn non_latin_content_leaks_no_more_than_latin_does() {
+        let out = redact_args_for_log(r#"{"query":"сколько стоит развод"}"#);
+        assert_eq!(out, "{query=<20 chars>}", "counted in chars, not the 38 bytes");
+        let flags = redact_args_for_log(r#"{"q":"🇩🇪🇩🇪🇩🇪"}"#);
+        assert!(!flags.contains('🇩'), "{flags}");
     }
 }
 
