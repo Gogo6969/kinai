@@ -342,6 +342,19 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
     load_thread: () => cannedMessages,
     thread_active_slot: () => null,
     list_invites: () => [],
+    create_api_key: (a: any) => ({
+      id: 'key-1',
+      short_code: 'qqq999',
+      // Invented, and obviously not a real JWT — three dots, no payload.
+      jwt: 'eyJ.MOCK-API-KEY-NOT-A-REAL-TOKEN.eyJ',
+      host_url: 'ws://192.0.2.10:4847/kin',
+      label: a?.args?.label ?? 'Automation',
+      join_url: '',
+      qr_payload: '',
+      created_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 36500 * 86_400_000).toISOString(),
+      revoked: false,
+    }),
     list_peers: () =>
       (globalThis as any).__mockPeers ?? [
         {

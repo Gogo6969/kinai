@@ -8,7 +8,7 @@ use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{ConnectInfo, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::{any, get};
+use axum::routing::{any, get, post};
 use axum::{Json, Router};
 use futures_util::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
@@ -77,6 +77,12 @@ pub async fn start(state: SharedState, app: AppHandle) -> Result<()> {
         // Generated images from /pic + /picHQ slash commands.
         // Axum 0.7 path-parameter syntax is `:name` (Axum 0.8+ uses {name}).
         .route("/v1/pic/:filename", get(super::pics::serve_pic))
+        // The reminder API: the one way in that is not a chat turn.
+        .route(
+            "/v1/reminders",
+            post(super::api::create).get(super::api::list),
+        )
+        .route("/v1/reminders/:id/action", post(super::api::action))
         .route("/kin", any(ws_upgrade))
         .with_state(axum_state);
 
@@ -130,17 +136,31 @@ struct InfoResp {
     family_name: String,
     host_version: &'static str,
     model: String,
-    peers: usize,
 }
 
+/// Unauthenticated, so it says as little as it can while still letting a
+/// device confirm it has found the right household before pairing.
+///
+/// It used to include a live count of connected devices. That is a
+/// presence signal, not a capability one: polled once a second by anything
+/// on the subnet it draws an at-home/away timeline for the household, from
+/// a route with no authentication and no throttle. Nothing needs it — the
+/// count reaches the host's own UI through Tauri, never over HTTP.
+///
+/// `family_name` now follows the mDNS setting. With advertising on it is
+/// already being broadcast subnet-wide, so serving it here costs nothing;
+/// with advertising deliberately turned off, continuing to hand it to any
+/// caller quietly undid the toggle the household had just set.
 async fn info(State(s): State<AxumState>) -> Json<InfoResp> {
     let cfg = s.app.config.read().clone();
-    let peers = s.app.net.lock().await.peers.len();
     Json(InfoResp {
-        family_name: cfg.host.family_name,
+        family_name: if cfg.host.mdns_enabled {
+            cfg.host.family_name
+        } else {
+            String::new()
+        },
         host_version: env!("CARGO_PKG_VERSION"),
         model: cfg.llm.model,
-        peers,
     })
 }
 

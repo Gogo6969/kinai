@@ -239,9 +239,21 @@ pub async fn lookup_by_short_code(pool: &SqlitePool, code: &str) -> Result<Resol
     if revoked != 0 {
         return Err(anyhow!("invite has been revoked"));
     }
+    // Fail CLOSED on a timestamp we cannot read. This used to be a bare
+    // `if let Ok(dt) = …` with no else, so a row whose `expires_at` did
+    // not parse skipped the expiry check altogether — the one column
+    // deciding whether a code still works was also the one whose
+    // unreadability made it stop mattering.
+    //
+    // Safe for existing households: every stored `expires_at` is written
+    // by `create_scoped` as RFC3339, including the ~100-year "never"
+    // sentinel, so nothing legitimate lands here.
     let expires_at: String = row.get("expires_at");
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&expires_at) {
-        if dt < Utc::now() {
+    match chrono::DateTime::parse_from_rfc3339(&expires_at) {
+        Ok(dt) if dt < Utc::now() => return Err(anyhow!("invite has expired")),
+        Ok(_) => {}
+        Err(e) => {
+            tracing::warn!("invite has an unreadable expiry, refusing it: {e}");
             return Err(anyhow!("invite has expired"));
         }
     }

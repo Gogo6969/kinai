@@ -423,6 +423,7 @@ pub fn run() {
             commands::reconnect_client,
             commands::generate_invite,
             commands::list_invites,
+            commands::create_api_key,
             commands::revoke_invite,
             commands::consume_invite,
             commands::redeem_invite_code,

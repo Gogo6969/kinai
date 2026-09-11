@@ -32,6 +32,43 @@
     return d.getFullYear() - new Date().getFullYear() > 50;
   }
 
+  // ---- Reminder API key ----
+  // A different kind of credential in the same table: it cannot open a
+  // chat socket, and its short code is never redeemable, so the token
+  // itself is the only way to use it — copied from here by hand.
+  let keyLabel = $state('Automation');
+  let keyBusy = $state(false);
+  let keyError = $state('');
+  let newKey = $state<Invite | null>(null);
+  let copiedKey = $state(false);
+
+  async function createKey() {
+    if (keyBusy) return;
+    const label = keyLabel.trim();
+    if (!label) {
+      keyError = 'Give the key a name so you can tell them apart later.';
+      return;
+    }
+    keyBusy = true;
+    keyError = '';
+    try {
+      // 0 = never expires, matching the invite form's sentinel.
+      newKey = await api.createApiKey({ label, ttl_days: 0 });
+      await refresh();
+    } catch (e) {
+      keyError = `Could not create the key: ${e}`;
+    } finally {
+      keyBusy = false;
+    }
+  }
+
+  function copyKey() {
+    if (!newKey) return;
+    navigator.clipboard.writeText(newKey.jwt);
+    copiedKey = true;
+    setTimeout(() => (copiedKey = false), 1500);
+  }
+
   onMount(refresh);
 
   async function refresh() {
@@ -133,6 +170,59 @@
       {#if createError}
         <div class="rounded-lg border border-red-400/30 bg-red-400/10 text-red-200 px-3 py-2 text-sm">
           {createError}
+        </div>
+      {/if}
+    </div>
+
+    <div class="kin-card space-y-4">
+      <div>
+        <h2 class="font-semibold">Reminder API key</h2>
+        <p class="text-sm text-white/50 mt-1">
+          For a script, a cron job or a Shortcut that should add reminders to
+          <em>your</em> calendar without going through a conversation. It cannot
+          open a chat, read anyone's messages, or write to another family
+          member's calendar. Revoke it from the list below like any invite.
+        </p>
+      </div>
+      <div class="flex flex-wrap items-end gap-3">
+        <label class="text-sm">
+          <div class="text-white/60 mb-1">What is it for?</div>
+          <input class="kin-field mt-1" bind:value={keyLabel} placeholder="Automation" />
+        </label>
+        <button
+          class="kin-btn-primary disabled:opacity-60"
+          onclick={createKey}
+          disabled={keyBusy}
+        >
+          {keyBusy ? 'Creating…' : 'Create API key'}
+        </button>
+      </div>
+
+      {#if keyError}
+        <div class="rounded-lg border border-red-400/30 bg-red-400/10 text-red-200 px-3 py-2 text-sm">
+          {keyError}
+        </div>
+      {/if}
+
+      {#if newKey}
+        <div class="space-y-2">
+          <div class="text-sm text-white/60">
+            Copy this now and keep it somewhere private — it is the key itself,
+            not a code someone types.
+          </div>
+          <div class="flex gap-2">
+            <input class="kin-field font-mono text-xs flex-1" readonly value={newKey.jwt} />
+            <button class="kin-btn" onclick={copyKey}>
+              <Copy size={14} /> {copiedKey ? 'Copied' : 'Copy'}
+            </button>
+          </div>
+          <details class="text-xs text-white/50">
+            <summary class="cursor-pointer hover:text-white/70">How to use it</summary>
+            <pre class="mt-2 whitespace-pre-wrap break-all bg-black/30 rounded p-2">curl -X POST {newKey.host_url.replace('ws://', 'http://').replace('/kin', '')}/v1/reminders \
+  -H "Authorization: Bearer YOUR_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{'{'}"text":"Bins out","in_minutes":540{'}'}'</pre>
+          </details>
         </div>
       {/if}
     </div>

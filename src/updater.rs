@@ -219,11 +219,20 @@ pub async fn download_and_install<R: Runtime>(app: AppHandle<R>) -> Result<(), S
         return Err("Already on the latest version.".into());
     };
     let app_for_event = app.clone();
+    // The callback reports the size of THIS chunk, not the running total.
+    // Dividing a chunk by the whole file gave a percentage that jittered
+    // around zero for the entire download and never approached 100 — so
+    // the bar looked frozen on every family member's update. Accumulate.
+    let downloaded = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     update
         .download_and_install(
             move |chunk_len, total_len| {
+                let so_far = downloaded
+                    .fetch_add(chunk_len as u64, std::sync::atomic::Ordering::Relaxed)
+                    + chunk_len as u64;
                 let progress = total_len
-                    .map(|t| (chunk_len as f64 / t as f64) * 100.0)
+                    .filter(|t| *t > 0)
+                    .map(|t| ((so_far as f64 / t as f64) * 100.0).min(100.0))
                     .unwrap_or(0.0);
                 let _ = app_for_event.emit(
                     "kinai://update-progress",

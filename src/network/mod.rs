@@ -1,5 +1,6 @@
 //! Host (Axum HTTP+WS server) and Client (WS dialer).
 
+pub mod api;
 pub mod client;
 pub mod invite;
 pub mod pics;

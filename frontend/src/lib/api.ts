@@ -612,6 +612,12 @@ export const api = {
 
   generateInvite: (args: { label: string; ttl_days?: number }) =>
     invoke<Invite>('generate_invite', { args }),
+
+  /** Mint a key for the reminder API. Same table as an invite, so the
+   *  Revoke button covers it, but it cannot open a chat socket and its
+   *  code is never redeemable — the token is copied from the screen. */
+  createApiKey: (args: { label: string; ttl_days?: number }) =>
+    invoke<Invite>('create_api_key', { args }),
   listInvites: () => invoke<Invite[]>('list_invites'),
   revokeInvite: (inviteId: string) => invoke<void>('revoke_invite', { inviteId }),
   consumeInvite: (code: string) => invoke<ResolvedInvite>('consume_invite', { code }),

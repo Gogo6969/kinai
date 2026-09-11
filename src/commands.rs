@@ -2832,6 +2832,34 @@ pub async fn generate_invite(
         .map_err(err)
 }
 
+/// Mint a key for the reminder API.
+///
+/// It lands in the same `invites` table so the existing Revoke control
+/// covers it, but it is a different kind of credential: scoped to
+/// `automation`, acting as the host, and refused at the WebSocket
+/// handshake. Its 6-character code is never redeemable over the network
+/// either — `lookup_by_short_code` will not return it — so the token has
+/// to be copied from this screen by hand. That is deliberate: a code that
+/// resolved to this token would be an escalation, because it can write
+/// the host's own calendar.
+#[tauri::command]
+pub async fn create_api_key(
+    state: tauri::State<'_, SharedState>,
+    args: GenerateInviteArgs,
+) -> Result<invite::Invite> {
+    let cfg = state.config.read().clone();
+    invite::create_scoped(
+        &state.db.pool,
+        &cfg,
+        &args.label,
+        args.ttl_days,
+        crate::auth::AUTOMATION_SCOPE,
+        crate::db::HOST_PEER,
+    )
+    .await
+    .map_err(err)
+}
+
 /// Invites stay visible (greyed out) for this many days after they're
 /// revoked or expire, then `list_invites` purges them. Long enough to be a
 /// useful "yes, that code is dead" record; short enough that the list

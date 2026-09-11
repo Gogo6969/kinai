@@ -35,6 +35,14 @@ pub const MAX_TEXT_CHARS: usize = crate::db::reminders::MAX_TEXT_CHARS;
 pub const MAX_MINUTES: i64 = 366 * 24 * 60;
 /// The furthest ahead any due time may land.
 pub const MAX_AHEAD_DAYS: i64 = 366;
+/// How many unfinished reminders one member may hold at once.
+///
+/// This is a runaway guard, not a quota. Every reminder that fires is a
+/// notification on the member's devices AND a Telegram message, so a
+/// script that loops — a cron that misfires, a retry that never settles —
+/// spends the household's attention rather than just disk. A person who
+/// genuinely wants their two-hundredth live reminder can finish one first.
+pub const MAX_LIVE_PER_PEER: i64 = 200;
 
 /// How the caller expressed "when". Modelled as an enum so "you gave me
 /// neither" is unrepresentable here and stays a surface-specific message.
