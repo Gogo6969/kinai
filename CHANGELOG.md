@@ -5,6 +5,29 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.127] — 2026-09-12
+
+### Fixed
+
+- **A long video is read to the end.** Ask KinAI about a YouTube video and
+  it fetched the whole transcript — then passed the model only the first
+  8,000 characters of it, roughly nine minutes of talking, and dropped the
+  rest. It said so honestly ("I could only analyse the first ten minutes"),
+  which is why this went unnoticed for a week: the answers were labelled,
+  just thin. A transcript now travels whole, up to the same length the
+  transcript reader itself allows. Nothing was ever wrong with the video,
+  the captions, or the model.
+- **The log now says when an answer was built on a shortened result**, and
+  which limit shortened it. That warning existed but had never once fired
+  on this host: a result cut by a tool's own ceiling reported itself as
+  untouched, so the one line that would have shown the problem above was
+  silent by construction.
+- **A shortened result no longer blames the conversation's length when the
+  conversation is short.** Both the log and the note handed to the model
+  said "to fit the model's context" whatever the reason — so with the
+  window nearly empty the model could still tell you the conversation had
+  got too long, and suggest you start a new one for no reason.
+
 ## [0.2.126] — 2026-09-11
 
 ### Fixed

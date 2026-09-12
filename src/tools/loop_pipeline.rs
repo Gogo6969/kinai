@@ -595,15 +595,20 @@ actually asked.)\n<<<FETCHED PAGE>>>\n{result}\n<<<END FETCHED PAGE>>>"
             } else {
                 result
             };
-            let (result, truncated) =
+            let (result, cut) =
                 fit_tool_result(result, tool_tokens_left, cap_for_tool(&call.function.name));
             let cost = crate::context::token_guard::count_tokens(&result);
             tool_tokens_left = tool_tokens_left.saturating_sub(cost);
-            if truncated {
+            if cut.happened() {
+                // Sizes only — what the tool returned is the family's
+                // business, and this line is the one an operator reads
+                // when an answer looks thin.
                 tracing::warn!(
                     tool = %call.function.name,
+                    reason = cut.reason(),
+                    kept_chars = result.chars().count(),
                     tokens_left = tool_tokens_left,
-                    "tool result truncated to fit the model's context"
+                    "tool result shortened"
                 );
             }
             messages.push(ChatMessage::Tool {
@@ -927,10 +932,65 @@ const MAX_CHARS_PER_TOOL_RESULT: usize = 8_000;
 /// real constraint on small windows, so a fat thread trims further.
 const MAX_CHARS_FETCH_PAGE: usize = 48_000;
 
+/// A transcript is `fetch_page`'s case again: someone asked what one
+/// specific video SAYS, and the tool's own ceiling
+/// (`video_transcript::MAX_CHARS`, 40k) is already the real limit.
+///
+/// At the 8k default it was not. On 2026-09-12 a 26,630-char transcript
+/// of a 30m26s talk reached the model as its first 8,000 characters —
+/// nine minutes of thirty — while roughly 40,000 tokens of that turn's
+/// budget went unused. KinAI read the note, believed it, and correctly
+/// told the family it had only seen the opening. Nothing was broken
+/// except this number.
+///
+/// A little above the tool's own cap on purpose: `video_transcript`
+/// appends its truncation note AFTER the text, so at exactly 40k that
+/// note — the one carrying the true length — would be the first thing
+/// cut back off.
+const MAX_CHARS_VIDEO_TRANSCRIPT: usize = 41_000;
+
 fn cap_for_tool(name: &str) -> usize {
     match name {
         "fetch_page" => MAX_CHARS_FETCH_PAGE,
+        "video_transcript" => MAX_CHARS_VIDEO_TRANSCRIPT,
         _ => MAX_CHARS_PER_TOOL_RESULT,
+    }
+}
+
+/// What shortened a tool result, when something did.
+///
+/// This was a `bool`, and the bool could not tell the two apart: the
+/// hard-cap path returned `false` whenever the shortened result then fit
+/// the budget, so the ceiling cut results in silence — the warning below
+/// had never once fired in any log on this host. Worse, the single note
+/// the model was handed blamed "the model's context" either way, so on a
+/// nearly empty window it was told the conversation was full.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Cut {
+    /// Nothing was removed.
+    None,
+    /// The per-tool ceiling, whatever the window had left.
+    Cap,
+    /// This turn's remaining token budget.
+    Budget,
+    /// Budget exhausted — the result was replaced by a note.
+    Omitted,
+}
+
+impl Cut {
+    fn happened(self) -> bool {
+        !matches!(self, Cut::None)
+    }
+
+    /// For the log line. Says which limit bound, so an operator does not
+    /// go looking for context pressure that was never there.
+    fn reason(self) -> &'static str {
+        match self {
+            Cut::None => "none",
+            Cut::Cap => "per-tool ceiling",
+            Cut::Budget => "context budget",
+            Cut::Omitted => "context full",
+        }
     }
 }
 
@@ -977,12 +1037,19 @@ fn tool_output_budget(window: usize, prompt_tokens: usize, max_tokens: Option<us
 /// Shrink one tool result to `budget` tokens, on a char boundary, with a
 /// marker so the model knows it is reading a fragment and does not report
 /// a partial list as complete.
-fn fit_tool_result(result: String, budget_tokens: usize, max_chars: usize) -> (String, bool) {
+fn fit_tool_result(result: String, budget_tokens: usize, max_chars: usize) -> (String, Cut) {
     const NOTE: &str = "\n\n[… truncated to fit the model's context. This result is INCOMPLETE — \
 say so if the answer depends on what was cut.]";
+    // The ceiling is not the context. Telling the model otherwise makes
+    // it tell the family the conversation is too long when the window is
+    // nearly empty — which is what the one note used to do.
+    const CAP_NOTE: &str = "\n\n[… cut here — this result is longer than this tool may return \
+in one go. It is INCOMPLETE; say so if the answer depends on the rest.]";
+    let mut cut = Cut::None;
     let capped = if result.chars().count() > max_chars {
+        cut = Cut::Cap;
         let head: String = result.chars().take(max_chars).collect();
-        format!("{head}{NOTE}")
+        format!("{head}{CAP_NOTE}")
     } else {
         result
     };
@@ -991,11 +1058,11 @@ say so if the answer depends on what was cut.]";
             "[tool result omitted — the conversation has filled this model's context. \
 Tell the user the lookup succeeded but could not be included, and suggest a narrower question.]"
                 .to_string(),
-            true,
+            Cut::Omitted,
         );
     }
     if crate::context::token_guard::count_tokens(&capped) <= budget_tokens {
-        return (capped, false);
+        return (capped, cut);
     }
     // Cut by characters using the observed chars-per-token ratio, then
     // shrink until it really fits — the ratio varies with the content
@@ -1007,7 +1074,7 @@ Tell the user the lookup succeeded but could not be included, and suggest a narr
         let head: String = capped.chars().take(take).collect();
         let candidate = format!("{head}{NOTE}");
         if crate::context::token_guard::count_tokens(&candidate) <= budget_tokens || take < 200 {
-            return (candidate, true);
+            return (candidate, Cut::Budget);
         }
         take = take * 3 / 4;
     }
@@ -1474,17 +1541,17 @@ mod tool_budget_tests {
     #[test]
     fn a_result_that_fits_is_untouched() {
         let small = "1. Some search hit\n   https://example.com".to_string();
-        let (out, truncated) = fit_tool_result(small.clone(), 4_000, MAX_CHARS_PER_TOOL_RESULT);
+        let (out, cut) = fit_tool_result(small.clone(), 4_000, MAX_CHARS_PER_TOOL_RESULT);
         assert_eq!(out, small);
-        assert!(!truncated);
+        assert_eq!(cut, Cut::None);
     }
 
     #[test]
     fn an_oversized_result_is_cut_to_the_budget() {
         // The real case: ~4.8k chars per search, 13 of them, tiny budget left.
         let big = "lorem ipsum dolor sit amet ".repeat(2_000); // ~54k chars
-        let (out, truncated) = fit_tool_result(big, 500, MAX_CHARS_PER_TOOL_RESULT);
-        assert!(truncated);
+        let (out, cut) = fit_tool_result(big, 500, MAX_CHARS_PER_TOOL_RESULT);
+        assert_eq!(cut, Cut::Budget, "the budget bound here, not the ceiling");
         assert!(count_tokens(&out) <= 500, "still {} tokens", count_tokens(&out));
         assert!(out.contains("INCOMPLETE"), "model must be told it is a fragment");
     }
@@ -1492,14 +1559,67 @@ mod tool_budget_tests {
     #[test]
     fn a_single_monster_result_is_capped_even_with_budget_to_spare() {
         let huge = "x".repeat(400_000);
-        let (out, _) = fit_tool_result(huge, 1_000_000, MAX_CHARS_PER_TOOL_RESULT);
+        let (out, cut) = fit_tool_result(huge, 1_000_000, MAX_CHARS_PER_TOOL_RESULT);
         assert!(out.chars().count() <= MAX_CHARS_PER_TOOL_RESULT + 200);
+        // The ceiling did this, and the log has to say so: with a
+        // million tokens free, "to fit the model's context" is a lie
+        // that sends whoever reads it after the wrong problem.
+        assert_eq!(cut, Cut::Cap);
+        assert!(
+            !out.contains("model's context"),
+            "the note must not blame the window when the window is empty"
+        );
+        assert!(out.contains("INCOMPLETE"), "the model must still know it is a fragment");
+    }
+
+    /// 2026-09-12, straight from the host's log: `tool=video_transcript
+    /// result_chars=26630`, on a slot with a 49,152-token window. The
+    /// captions of a 30m26s talk reached the model as their first 8,000
+    /// characters — nine minutes of thirty — because `cap_for_tool` had
+    /// an arm for `fetch_page` and nothing else, and roughly 40,000
+    /// tokens of that turn's budget were never used. The family got a
+    /// summary of the opening third, correctly labelled as partial.
+    #[test]
+    fn a_whole_transcript_reaches_the_model() {
+        // The size of the real one; the words are invented.
+        let transcript = "and then the speaker said something worth hearing ".repeat(533);
+        assert!(
+            (26_000..27_000).contains(&transcript.chars().count()),
+            "sized like the incident, got {}",
+            transcript.chars().count()
+        );
+        let budget = tool_output_budget(49_152, 6_000, Some(1_024));
+        let (out, cut) =
+            fit_tool_result(transcript.clone(), budget, cap_for_tool("video_transcript"));
+        assert_eq!(cut, Cut::None, "nothing here needed cutting");
+        assert_eq!(out, transcript, "the model reads the whole half hour");
+    }
+
+    /// The ceiling has not gone away — a transcript longer than the tool
+    /// itself may return is still cut, and the reason is the ceiling.
+    #[test]
+    fn a_transcript_past_the_ceiling_is_cut_by_the_ceiling() {
+        let monster = "x".repeat(MAX_CHARS_VIDEO_TRANSCRIPT * 2);
+        let (out, cut) = fit_tool_result(monster, 1_000_000, cap_for_tool("video_transcript"));
+        assert_eq!(cut, Cut::Cap);
+        assert!(out.chars().count() <= MAX_CHARS_VIDEO_TRANSCRIPT + 200);
+    }
+
+    /// A bigger ceiling is opt-in per tool, and that is precisely how
+    /// this bug happened: `video_transcript` was written three days
+    /// after the `fetch_page` exception and inherited the default in
+    /// silence. Anything added next will too.
+    #[test]
+    fn only_named_tools_get_a_bigger_ceiling() {
+        assert_eq!(cap_for_tool("web_search"), MAX_CHARS_PER_TOOL_RESULT);
+        assert_eq!(cap_for_tool("fetch_page"), MAX_CHARS_FETCH_PAGE);
+        assert_eq!(cap_for_tool("video_transcript"), MAX_CHARS_VIDEO_TRANSCRIPT);
     }
 
     #[test]
     fn an_exhausted_budget_omits_rather_than_lies() {
-        let (out, truncated) = fit_tool_result("real results here".into(), 0, MAX_CHARS_PER_TOOL_RESULT);
-        assert!(truncated);
+        let (out, cut) = fit_tool_result("real results here".into(), 0, MAX_CHARS_PER_TOOL_RESULT);
+        assert_eq!(cut, Cut::Omitted);
         assert!(out.contains("omitted"));
         assert!(out.contains("lookup succeeded"), "must not read as a failed lookup");
     }
