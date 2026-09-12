@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-09-09T14:20:42+00:00",
-  "version": "0.2.119",
+  "generated_at": "2026-09-12T00:57:09+00:00",
+  "version": "0.2.126",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 307,
-    "head": "f6f1917"
+    "commits": 344,
+    "head": "bbc7908"
   },
   "totals": {
-    "rust_files": 63,
-    "rust_lines": 28711,
-    "frontend_files": 34,
-    "frontend_lines": 12218,
-    "unit_tests": 259,
-    "integration_test_files": 13,
-    "releases": 111,
-    "tags": 106
+    "rust_files": 68,
+    "rust_lines": 33376,
+    "frontend_files": 37,
+    "frontend_lines": 13575,
+    "unit_tests": 337,
+    "integration_test_files": 19,
+    "releases": 118,
+    "tags": 113
   },
   "areas": [
     {
@@ -94,9 +94,9 @@
     {
       "path": "src/auth/mod.rs",
       "area": "auth",
-      "lines": 138,
+      "lines": 259,
       "doc": "JWT (RS256) issuance and validation.",
-      "tests": 1
+      "tests": 3
     },
     {
       "path": "src/changelog.rs",
@@ -115,7 +115,7 @@
     {
       "path": "src/commands.rs",
       "area": "entry",
-      "lines": 3267,
+      "lines": 3460,
       "doc": "Tauri command surface — every IPC entrypoint the frontend can call.",
       "tests": 0
     },
@@ -129,7 +129,7 @@
     {
       "path": "src/context/builder.rs",
       "area": "context",
-      "lines": 759,
+      "lines": 762,
       "doc": "Build the per-request message list from system prompt + memory + history.",
       "tests": 17
     },
@@ -150,7 +150,7 @@
     {
       "path": "src/context/mod.rs",
       "area": "context",
-      "lines": 560,
+      "lines": 588,
       "doc": "The never-lose-context system.",
       "tests": 5
     },
@@ -185,16 +185,30 @@
     {
       "path": "src/db/migrate.rs",
       "area": "db",
-      "lines": 366,
+      "lines": 431,
       "doc": "Hand-rolled migrations — kept inline so a fresh user just runs `pnpm tauri dev`.",
       "tests": 0
     },
     {
       "path": "src/db/mod.rs",
       "area": "db",
-      "lines": 264,
+      "lines": 403,
       "doc": "SQLx-backed SQLite layer.",
       "tests": 0
+    },
+    {
+      "path": "src/db/peers.rs",
+      "area": "db",
+      "lines": 137,
+      "doc": "The `peers` table — one row per family device identity (the invite short code that is also `threads.peer_id`, `user_facts.peer_id` and `telegram_links.peer_id`). Written when a device says Hello. Today it carries the member's IANA time…",
+      "tests": 3
+    },
+    {
+      "path": "src/db/reminders.rs",
+      "area": "db",
+      "lines": 1014,
+      "doc": "Reminders — per-member timed nudges. A family member sets one by asking KinAI (\"remind me tomorrow at 9 to …\"); the host's scheduler delivers it when due to the member's own devices and Telegram; the member acknowledges or snoozes it…",
+      "tests": 17
     },
     {
       "path": "src/db/reports.rs",
@@ -241,7 +255,7 @@
     {
       "path": "src/lib.rs",
       "area": "entry",
-      "lines": 573,
+      "lines": 586,
       "doc": "KinAI library entrypoint — wires Tauri shell, Axum HTTP/WS server, tray, global hotkey, LLM client, and the never-lose-context pipeline.",
       "tests": 0
     },
@@ -274,60 +288,67 @@
       "tests": 0
     },
     {
+      "path": "src/network/api.rs",
+      "area": "network",
+      "lines": 284,
+      "doc": "The reminder HTTP API — the one way in that is not a chat turn.",
+      "tests": 0
+    },
+    {
       "path": "src/network/client.rs",
       "area": "network",
-      "lines": 542,
+      "lines": 577,
       "doc": "Client-side WebSocket dialer.",
       "tests": 0
     },
     {
       "path": "src/network/invite.rs",
       "area": "network",
-      "lines": 399,
+      "lines": 543,
       "doc": "Invite issuance & validation.",
-      "tests": 2
+      "tests": 5
     },
     {
       "path": "src/network/mod.rs",
       "area": "network",
-      "lines": 125,
+      "lines": 145,
       "doc": "Host (Axum HTTP+WS server) and Client (WS dialer).",
       "tests": 0
     },
     {
       "path": "src/network/pics.rs",
       "area": "network",
-      "lines": 62,
+      "lines": 69,
       "doc": "Serve generated images from `~/.kinai/pics/`.",
       "tests": 0
     },
     {
       "path": "src/network/protocol.rs",
       "area": "network",
-      "lines": 295,
+      "lines": 336,
       "doc": "Envelope shared between Host and Client over WebSocket.",
       "tests": 0
     },
     {
       "path": "src/network/ratelimit.rs",
       "area": "network",
-      "lines": 50,
+      "lines": 105,
       "doc": "Token-bucket rate limiter — one bucket per peer id.",
-      "tests": 0
+      "tests": 4
     },
     {
       "path": "src/network/server.rs",
       "area": "network",
-      "lines": 1197,
+      "lines": 1511,
       "doc": "Host-side Axum HTTP+WebSocket server.",
       "tests": 0
     },
     {
       "path": "src/network/updates.rs",
       "area": "network",
-      "lines": 476,
+      "lines": 563,
       "doc": "Host-side update distribution.",
-      "tests": 2
+      "tests": 4
     },
     {
       "path": "src/network/vpn_hint.rs",
@@ -335,6 +356,20 @@
       "lines": 571,
       "doc": "\"Your VPN is eating the connection\" detection.",
       "tests": 13
+    },
+    {
+      "path": "src/reminders/spec.rs",
+      "area": "other",
+      "lines": 796,
+      "doc": "The one place a reminder's text and due-time are checked.",
+      "tests": 25
+    },
+    {
+      "path": "src/reminders.rs",
+      "area": "other",
+      "lines": 243,
+      "doc": "Reminder scheduler — the host-side loop that turns a stored reminder into a popup on the member's devices and a message in their Telegram chat when its time comes.",
+      "tests": 0
     },
     {
       "path": "src/slash.rs",
@@ -367,9 +402,9 @@
     {
       "path": "src/telegram/format.rs",
       "area": "telegram",
-      "lines": 206,
+      "lines": 406,
       "doc": "Make assistant markdown readable in Telegram.",
-      "tests": 6
+      "tests": 12
     },
     {
       "path": "src/telegram/mod.rs",
@@ -388,7 +423,7 @@
     {
       "path": "src/telegram/router.rs",
       "area": "telegram",
-      "lines": 1682,
+      "lines": 1683,
       "doc": "Route incoming Telegram updates into KinAI's chat pipeline.",
       "tests": 13
     },
@@ -402,9 +437,9 @@
     {
       "path": "src/tools/datetime.rs",
       "area": "tools",
-      "lines": 36,
+      "lines": 154,
       "doc": "Current date / time on the host machine.",
-      "tests": 0
+      "tests": 4
     },
     {
       "path": "src/tools/fetch_page.rs",
@@ -437,9 +472,9 @@
     {
       "path": "src/tools/loop_pipeline.rs",
       "area": "tools",
-      "lines": 1494,
+      "lines": 1562,
       "doc": "Tool-calling pipeline.",
-      "tests": 29
+      "tests": 31
     },
     {
       "path": "src/tools/mod.rs",
@@ -451,14 +486,14 @@
     {
       "path": "src/tools/registry.rs",
       "area": "tools",
-      "lines": 459,
+      "lines": 979,
       "doc": "Tool catalogue — generated dynamically from `ToolSettings` so users can disable tools their model shouldn't be allowed to call.",
-      "tests": 0
+      "tests": 10
     },
     {
       "path": "src/tools/status_phrases.rs",
       "area": "tools",
-      "lines": 142,
+      "lines": 152,
       "doc": "Human-sounding status lines shown while a tool runs.",
       "tests": 4
     },
@@ -507,7 +542,7 @@
     {
       "path": "src/updater.rs",
       "area": "entry",
-      "lines": 269,
+      "lines": 278,
       "doc": "Periodic update check — host first, GitHub fallback for off-LAN.",
       "tests": 0
     },
@@ -529,7 +564,7 @@
     {
       "path": "frontend/src/lib/api.ts",
       "kind": "lib",
-      "lines": 680,
+      "lines": 751,
       "doc": "Pause toggle. When `false` this slot is hidden from slash menus and skipped during message routing. Defaults to `true` for the fast slot, `false` for the deep slot (until the user fills it)."
     },
     {
@@ -569,10 +604,16 @@
       "doc": "Image / PDF attachments staged for the next overlay send. Mirrors the main ChatWindow's `pendingAttachments` semantics so a user can paste a screenshot into the quick-chat (Cmd+Space) overlay and have it ride along with the prompt, same as in the main window."
     },
     {
+      "path": "frontend/src/lib/components/ReminderPopup.svelte",
+      "kind": "component",
+      "lines": 363,
+      "doc": "Due-reminder popup — shows the first of `app.dueReminders`. Mounted by `+layout.svelte` next to ChangelogModal so it overlays every route. Each button calls `app.reminderAction`, which re-syncs the list and drops the id from the queue; the next queued reminder (if any) takes its place, otherwise the popup closes. Escape means \"snooze 10 min\" — never acknowledge: a reflex keypress must not silently"
+    },
+    {
       "path": "frontend/src/lib/components/Sidebar.svelte",
       "kind": "component",
-      "lines": 307,
-      "doc": "Belt-and-suspenders: if activeThreadId didn't actually change, the IPC succeeded but the store didn't pick up the new thread. Surface this rather than silently leaving the user in the old thread (the exact failure mode that caused topic-bleed bug)."
+      "lines": 336,
+      "doc": "Reminders that fired and are still waiting — the Calendar badge."
     },
     {
       "path": "frontend/src/lib/components/ThinkingDots.svelte",
@@ -589,7 +630,7 @@
     {
       "path": "frontend/src/lib/components/ToolPill.svelte",
       "kind": "component",
-      "lines": 38,
+      "lines": 61,
       "doc": ""
     },
     {
@@ -601,7 +642,7 @@
     {
       "path": "frontend/src/lib/dev-tauri-mock.ts",
       "kind": "lib",
-      "lines": 362,
+      "lines": 418,
       "doc": "DEV-ONLY Tauri IPC mock. When the frontend runs in a plain browser (`pnpm dev` + localhost:1420, no Tauri shell), `window.__TAURI_INTERNALS__` doesn't exist and every invoke() rejects — the UI is untestable outside the app. This module installs a minimal in-memory backend so the whole UI (most importantly the /setup wizard) can be driven end-to-end in a browser: config mutations persist for the se"
     },
     {
@@ -629,9 +670,15 @@
       "doc": "Which desktop OS this window is running on. KinAI ships one Svelte frontend to three very different machines, and for a long time the copy assumed all of them were Macs: a Windows user following a \"No hosts found\" hint was told to open System Settings → Privacy & Security, a pane that does not exist on their computer, and the microphone errors named macOS panes and offered buttons that were only r"
     },
     {
+      "path": "frontend/src/lib/reminders.ts",
+      "kind": "lib",
+      "lines": 183,
+      "doc": "Pure helpers for the reminders UI (Calendar panel + due popup). Everything here works on `due_local` (\"YYYY-MM-DDTHH:MM\" in the zone the member set the reminder in) — never on `due_at`, which is the UTC instant the host's scheduler fires on and must not be re-rendered through the device's zone."
+    },
+    {
       "path": "frontend/src/lib/stores/app.svelte.ts",
       "kind": "lib",
-      "lines": 1042,
+      "lines": 1153,
       "doc": "This machine can synthesize speech (macOS). Mac CLIENTS speak locally with their own voices; hosts are always Macs today."
     },
     {
@@ -649,7 +696,7 @@
     {
       "path": "frontend/src/routes/+layout.svelte",
       "kind": "route",
-      "lines": 206,
+      "lines": 210,
       "doc": "DEV-only: installs an in-memory Tauri IPC mock when running in a plain browser (no-op inside the real app; eliminated from production builds)."
     },
     {
@@ -671,6 +718,12 @@
       "doc": ""
     },
     {
+      "path": "frontend/src/routes/calendar/+page.svelte",
+      "kind": "route",
+      "lines": 321,
+      "doc": "Reminders bucketed by the day of `due_local`, chronological. Ordered by `due_at` — the real instant — so a member who set reminders in two zones still sees them in the order they fire, and grouped by day AND zone so a heading is never a claim about the wrong day."
+    },
+    {
       "path": "frontend/src/routes/client/+page.svelte",
       "kind": "route",
       "lines": 282,
@@ -685,13 +738,13 @@
     {
       "path": "frontend/src/routes/host/family/+page.svelte",
       "kind": "route",
-      "lines": 66,
-      "doc": ""
+      "lines": 172,
+      "doc": "This page had no error handling at all: a failed call left the list silently stale, which on a page about who can reach your household is the worst possible way to be wrong."
     },
     {
       "path": "frontend/src/routes/host/invite/+page.svelte",
       "kind": "route",
-      "lines": 199,
+      "lines": 289,
       "doc": "TTL options. `0` is the \"never expires\" sentinel — the backend encodes it as a ~100-year JWT so any check in the host's validate_token still passes for the realistic lifetime of the recipient device. Render-time we detect the far-future date and show \"Never\" in the invite-list summary."
     },
     {
@@ -845,11 +898,51 @@
       ]
     },
     {
+      "file": "tests/invite_hardening_live.rs",
+      "doc": "Live proof that `/v1/invite/redeem` is throttled, logged, and — the part a unit test cannot reach — that its `ConnectInfo<SocketAddr>` extractor actually resolves against the running server.",
+      "tests": [
+        {
+          "name": "redeem_is_throttled_per_ip_and_never_500s",
+          "ignored": true
+        }
+      ]
+    },
+    {
+      "file": "tests/pdf_extract_live.rs",
+      "doc": "Exercises the real PDF attachment path after the pdf-extract 0.7 -> 0.12 upgrade (which moves lopdf onto 0.42, fixing RUSTSEC-2026-0187). #[ignore] — needs KINAI_PDF=<path to a real pdf>.",
+      "tests": [
+        {
+          "name": "a_real_pdf_attachment_still_yields_its_text",
+          "ignored": true
+        }
+      ]
+    },
+    {
       "file": "tests/photo_followup_live.rs",
       "doc": "Live proof for the photo follow-up fix (0.2.119), spoken over the real client WebSocket the way a family device does: redeem an invite, say Hello, send a picture with a caption that needs a lookup on a slot that cannot see images, then…",
       "tests": [
         {
           "name": "a_follow_up_about_a_photo_still_sees_it",
+          "ignored": true
+        }
+      ]
+    },
+    {
+      "file": "tests/reminders_api_live.rs",
+      "doc": "Live proof of the reminder HTTP API against the running host — the whole point of which is that a program, not a model, decides.",
+      "tests": [
+        {
+          "name": "a_script_can_write_a_reminder_without_talking_to_a_model",
+          "ignored": true
+        }
+      ]
+    },
+    {
+      "file": "tests/reminders_live.rs",
+      "doc": "Live proof of the reminders protocol against the REAL running host, the way a family device sees it: redeem an invite, say Hello with a time zone, check the host advertises reminders, then round-trip a reminder through list / snooze /…",
+      "tests": [
+        {
+          "name": "a_family_device_can_list_act_on_and_receive_reminders",
           "ignored": true
         }
       ]
@@ -915,6 +1008,30 @@
       ]
     },
     {
+      "file": "tests/set_reminder_live.rs",
+      "doc": "Live proof that asking for a reminder still works after the 0.2.124 extraction, spoken over the real client WebSocket the way a family device does: redeem an invite, say Hello with a zone, ask in plain words, and check what actually…",
+      "tests": [
+        {
+          "name": "asking_for_a_reminder_still_puts_one_in_the_table",
+          "ignored": true
+        },
+        {
+          "name": "asking_for_a_repeating_reminder_stores_a_repeat",
+          "ignored": true
+        }
+      ]
+    },
+    {
+      "file": "tests/slot_matrix_live.rs",
+      "doc": "The release smoke matrix: one control question and one live-data question on EVERY configured slot, against the running host.",
+      "tests": [
+        {
+          "name": "every_configured_slot_answers_a_control_and_a_live_data_question",
+          "ignored": true
+        }
+      ]
+    },
+    {
       "file": "tests/thread_ops_live.rs",
       "doc": "End-to-end proof for the client→host thread operations (0.2.86).",
       "tests": [
@@ -931,6 +1048,7 @@
       "memory_notes",
       "messages",
       "peers",
+      "reminders",
       "reports",
       "telegram_active_thread",
       "telegram_links",
@@ -975,7 +1093,12 @@
       "SaveUserFact",
       "DeleteUserFact",
       "ClearUserFacts",
-      "UserFacts"
+      "UserFacts",
+      "ListReminders",
+      "Reminders",
+      "ReminderAction",
+      "ReminderActionAck",
+      "Reminder"
     ],
     "tools": [
       "calculator",
@@ -1012,6 +1135,7 @@
       "clear_user_facts",
       "connect_client",
       "consume_invite",
+      "create_api_key",
       "create_thread",
       "delete_report",
       "delete_reviewed_reports",
@@ -1020,6 +1144,7 @@
       "detect_backends",
       "disconnect_and_forget",
       "disconnect_client",
+      "disconnect_peer",
       "download_stt_model",
       "download_url_to_path",
       "edit_and_resend",
@@ -1033,6 +1158,7 @@
       "list_invites",
       "list_local_models",
       "list_peers",
+      "list_reminders",
       "list_reports",
       "list_threads",
       "list_tools",
@@ -1044,17 +1170,19 @@
       "mark_setup_completed",
       "open_logs_dir",
       "open_report_count",
+      "pause_peer",
       "preview_tts_voice",
       "query_model_caps",
       "reconnect_client",
       "redeem_invite_code",
       "regenerate_message",
+      "reminder_action",
       "rename_thread",
       "report_answer",
       "request_telegram_pair",
       "rescan_kinai_hosts",
+      "resume_peer",
       "revoke_invite",
-      "revoke_peer",
       "runtime_stats",
       "save_user_fact",
       "scan_local_network",
@@ -1097,6 +1225,158 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.126",
+      "date": "2026-09-11",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "KinAI no longer writes your words into its own log.",
+            "detail": "Every time it used a tool it recorded the first part of what it was given — so the log file on the host had been quietly collecting the text of reminders you set and questions you asked it to look up, in plain text, for as long as those files are kept. It now records only that a tool ran, which one, and how long it took. Older log files still contain what was already written; this stops new ones. They live in `~/.kinai/logs` if you want to clear them out."
+          },
+          {
+            "title": "Calendar sits at the top of the menu",
+            "detail": ", above the host's own settings pages. It is the entry every family member has, and the only one that tells you something is waiting."
+          }
+        ],
+        "Changed": [
+          {
+            "title": "The reminder API added in 0.2.125 is now documented — how to create a key, what it can and cannot reach, and what each r",
+            "detail": ""
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.2.125",
+      "date": "2026-09-11",
+      "sections": {
+        "Added": [
+          {
+            "title": "Reminders can repeat.",
+            "detail": "\"Remind me every weekday at eight to take the pills.\" Daily, every weekday, weekly or monthly — ask in your own words. A repeating reminder keeps its clock time even when the clocks change, so nine in the morning stays nine in the morning through spring and autumn. **Done** handles the one in front of you and the next one is already waiting; **Stop repeating** is a separate button, because finishing today's is not the same as never wanting it again. Snoozing moves only the one you snoozed — tomorrow's stays where it was. If KinAI was switched off for three days you get one reminder, not three."
+          },
+          {
+            "title": "A way for a program to add a reminder.",
+            "detail": "Until now the only way in was to ask, which means KinAI had to understand you first. A script, a scheduled job on the Mac, or a phone Shortcut can now add one directly. Create a key on the Invites page; it can write reminders to your own calendar and nothing else — it cannot open a chat, read anyone's messages, or write to another family member's calendar."
+          },
+          {
+            "title": "Pause, next to Disconnect.",
+            "detail": "Two buttons instead of one, because stopping a device for the afternoon and removing someone are different things. **Pause** keeps a device out until you let it back in, and the invite still works when you do. **Disconnect** ends the session and revokes the code, so coming back needs a new invite — the confirmation now says so, because it cannot be undone."
+          }
+        ],
+        "Fixed": [
+          {
+            "title": "Disconnect now actually disconnects.",
+            "detail": "It told the device its access had been revoked, removed it from Manage family, and stopped its reminders — but left the connection open, so the person could carry on chatting."
+          },
+          {
+            "title": "Manage family shows everyone who can reach your household",
+            "detail": ", not only the devices switched on at that moment. Someone whose laptop is shut used to be missing from the one page you would go to to look for them, and Disconnect could not reach them at all. Each row now says whether it is connected, paused, or simply not on right now. Invite codes are no longer printed on that page: they are working keys, and that page gets photographed."
+          },
+          {
+            "title": "The progress bar during an update was stuck near zero.",
+            "detail": "It was measuring each piece of the download against the whole file instead of adding them up, so it never climbed."
+          },
+          {
+            "title": "Downloading an update no longer uses a gigabyte of memory on the host.",
+            "detail": "Files were being held in memory whole; several devices updating at once could have taken the household's KinAI down."
+          }
+        ],
+        "Security": [
+          {
+            "title": "Invite codes can no longer be guessed at speed, or in silence.",
+            "detail": "The address that turns a six-character code into a key was unlimited and left no trace, so a device already on your network could try codes for as long as it liked and nobody would know. It is now limited per device and every refusal is written to the log."
+          },
+          {
+            "title": "KinAI no longer tells the network who is home.",
+            "detail": "Anything on your network could ask how many family devices were connected, over and over, and read the household's comings and goings from the answer. It also kept giving out the family name after you had turned off the setting that advertises it."
+          },
+          {
+            "title": "An invite with an unreadable expiry date is now refused",
+            "detail": "rather than treated as never expiring."
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.2.124",
+      "date": "2026-09-10",
+      "sections": {
+        "Changed": [
+          {
+            "title": "The rules about when a reminder may be set now live in one place.",
+            "detail": "Asking KinAI was the only checked way into your calendar: the rules that refuse a time already gone, a date more than a year out, or text longer than about a hundred words were written into the chat tool itself, and anything else writing a reminder skipped every one of them. They have moved somewhere every way of adding a reminder has to pass through — which is the groundwork for letting a program set one later without that route being the careless one. Nothing about asking KinAI changes: the same requests work, and the same refusals come back word for word."
+          },
+          {
+            "title": "KinAI checking for an update no longer counts as a download.",
+            "detail": "Every install asked the releases page for the update file, and each of those asks was recorded as somebody downloading the release — about two thirds of the downloads this project has ever counted were copies of KinAI checking in with themselves. The check now reads a plain file kept to one side, so a download means an install that genuinely updated. Updates themselves arrive exactly as before."
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.2.123",
+      "date": "2026-09-10",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "\"Remind me about your last answer\" now keeps the answer.",
+            "detail": "It used to save a label — \"review the last response about X\" — which tells you nothing hours later when it pops up. KinAI now writes what was actually said, and the reminder keeps the conversation it came from: both the popup and the Calendar offer **Open the conversation**, which takes you back to the exact point in the chat. This works for anything you point at rather than spell out, including \"remind me about that\"."
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.2.122",
+      "date": "2026-09-10",
+      "sections": {
+        "Changed": [
+          {
+            "title": "The reminder popup was rebuilt.",
+            "detail": "The time it was set for now sits at the top next to the bell, with a badge saying how late it is that keeps counting while the popup is open, so a glance answers \"when was this for?\". The reminder itself is the largest thing on the card. The three snooze choices share one control instead of competing with the main button, which is now simply **Done**."
+          },
+          {
+            "title": "Reminders can hold a lot more.",
+            "detail": "The limit went from about thirty words to about a hundred, so you can ask to be reminded of something with the detail attached rather than a keyword. Anything past a few lines folds behind a \"Show more\" so the popup never grows taller than the window it interrupts."
+          },
+          {
+            "title": "A web address in a reminder is now a link you can tap.",
+            "detail": "It gets its own row, shortened in the middle so you can still see which site it goes to and what kind of file it is, and it opens in your normal browser. Reminders with several links show the first two."
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.2.121",
+      "date": "2026-09-10",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "Links sent to Telegram no longer arrive broken.",
+            "detail": "If a web address contained an underscore — and plenty of PDFs and reports do — KinAI deleted every one of them on the way out, so the link it had just found for you led nowhere. One report's filename lost six. Addresses are now passed through to Telegram exactly as found, including the underscores, and the bold or italic markers a reply wraps around a link are still tidied away, even when the link ends a sentence. The same fix means ordinary words with underscores in them, like file names and settings, arrive intact rather than run together."
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.2.120",
+      "date": "2026-09-09",
+      "sections": {
+        "Added": [
+          {
+            "title": "Reminders.",
+            "detail": "Ask KinAI \"remind me tomorrow at 9 to return the library book\" or \"remind me in twenty minutes about that\" and it sets a reminder — in your own time zone, and about the thing you were actually discussing. When it's due, a popup appears in KinAI on your devices with **Acknowledge**, **Snooze 10 min**, **Snooze 1 h** and **Tomorrow 9:00**, a system notification goes out, and a message reaches your Telegram chat if you've paired it. A new **Calendar** entry in the side menu lists every reminder by day with the same buttons and a delete. Each family member has their own calendar; nobody sees anyone else's. A reminder that came due while a device was closed pops up on its next launch. Not in yet: repeats, and acknowledging straight from Telegram. The first reminder asks your system for permission to show notifications."
+          }
+        ],
+        "Fixed": [
+          {
+            "title": "A malformed PDF can no longer take the host down.",
+            "detail": "The PDF reader had a flaw where a small file with deeply nested contents crashed the process — and KinAI reads PDFs both from your attachments and from pages it opens while researching. Updated to a fixed version, along with security patches to several other libraries the app is built on."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.119",
       "date": "2026-09-09",
@@ -3382,6 +3662,34 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.126",
+      "date": "2026-09-11"
+    },
+    {
+      "tag": "v0.2.125",
+      "date": "2026-09-11"
+    },
+    {
+      "tag": "v0.2.124",
+      "date": "2026-09-10"
+    },
+    {
+      "tag": "v0.2.123",
+      "date": "2026-09-10"
+    },
+    {
+      "tag": "v0.2.122",
+      "date": "2026-09-10"
+    },
+    {
+      "tag": "v0.2.121",
+      "date": "2026-09-10"
+    },
+    {
+      "tag": "v0.2.120",
+      "date": "2026-09-09"
+    },
     {
       "tag": "v0.2.119",
       "date": "2026-09-09"
