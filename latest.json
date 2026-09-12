@@ -1,51 +1,51 @@
 {
-  "version": "0.2.125",
-  "notes": "## KinAI v0.2.125\n\nAll KinAI binaries are open-source and run 100% locally.\n\n**Connected to a family host?** Your KinAI will pick this update\nup automatically from the host within ~4 hours, no need to\ndownload from here. If the host is offline you can install\ndirectly:\n\n- **macOS Apple Silicon**: `KinAI_*_aarch64.dmg`\n- **macOS Intel**: `KinAI_*_x64.dmg`\n- **Windows x64**: `KinAI_*_x64-setup.exe` (or `KinAI_*_x64_en-US.msi`)\n- **Linux x64**: `KinAI_*_amd64.AppImage` (auto-updates; `.deb`/`.rpm` also available but update manually)",
-  "pub_date": "2026-09-11T20:54:53.125Z",
+  "version": "0.2.126",
+  "notes": "## KinAI v0.2.126\n\nAll KinAI binaries are open-source and run 100% locally.\n\n**Connected to a family host?** Your KinAI will pick this update\nup automatically from the host within ~4 hours, no need to\ndownload from here. If the host is offline you can install\ndirectly:\n\n- **macOS Apple Silicon**: `KinAI_*_aarch64.dmg`\n- **macOS Intel**: `KinAI_*_x64.dmg`\n- **Windows x64**: `KinAI_*_x64-setup.exe` (or `KinAI_*_x64_en-US.msi`)\n- **Linux x64**: `KinAI_*_amd64.AppImage` (auto-updates; `.deb`/`.rpm` also available but update manually)",
+  "pub_date": "2026-09-12T00:54:06.128Z",
   "platforms": {
     "darwin-aarch64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUnkwZHBOVkJJb1VLK3NDM0dlUU0yWjBCMFJIcmxmeU96ZDBWTnRWdjN4Tnk1MTR1OXVPejdvSlpVSXhJcEQyaGNWcllOTVQ5WUJUK2JhZDhKQjhvNHlNcHZ2VjhiV0FjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTU2OTI2CWZpbGU6S2luQUkuYXBwLnRhci5negpjTzYxTEl1cEZEaEluZXJsQ3JZQkFoaVlRUWZwZlF2QVgxWkY3VW1ybXVORE1PWlFaQWc1NnFwYXNhZitKazFrdGgzdXJXRS9YZjFRZURoQWkvdVVCQT09Cg==",
-      "url": "https://github.com/Gogo6969/kinai/releases/download/v0.2.125/KinAI_aarch64.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUnkwZHBOVkJJb1p0NlA4WTF2T0tvUmE4aU4vNlk5WFBtbHJVWFpUV2hHTW9NV0RMbEhtUWlZQnpxNWxrK3dmRG1FYWdMRUlUUXZyWko3ZGxzMzErYUxDb0ZCNk5wMEFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTcxMTE2CWZpbGU6S2luQUkuYXBwLnRhci5negp6NjFaVG5qZFZBay9MSjh3L1VCQWMwMS8vamsvN0FPMlhmR28rYXMwZTVUbllDZnlEd1pKWEd0bXYvWXRVVnY3UEg4TzZMUmRXVnM5V1VLZzhobUVEQT09Cg==",
+      "url": "https://github.com/Gogo6969/kinai/releases/download/v0.2.126/KinAI_aarch64.app.tar.gz"
     },
     "darwin-aarch64-app": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUnkwZHBOVkJJb1VLK3NDM0dlUU0yWjBCMFJIcmxmeU96ZDBWTnRWdjN4Tnk1MTR1OXVPejdvSlpVSXhJcEQyaGNWcllOTVQ5WUJUK2JhZDhKQjhvNHlNcHZ2VjhiV0FjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTU2OTI2CWZpbGU6S2luQUkuYXBwLnRhci5negpjTzYxTEl1cEZEaEluZXJsQ3JZQkFoaVlRUWZwZlF2QVgxWkY3VW1ybXVORE1PWlFaQWc1NnFwYXNhZitKazFrdGgzdXJXRS9YZjFRZURoQWkvdVVCQT09Cg==",
-      "url": "https://github.com/Gogo6969/kinai/releases/download/v0.2.125/KinAI_aarch64.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUnkwZHBOVkJJb1p0NlA4WTF2T0tvUmE4aU4vNlk5WFBtbHJVWFpUV2hHTW9NV0RMbEhtUWlZQnpxNWxrK3dmRG1FYWdMRUlUUXZyWko3ZGxzMzErYUxDb0ZCNk5wMEFnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTcxMTE2CWZpbGU6S2luQUkuYXBwLnRhci5negp6NjFaVG5qZFZBay9MSjh3L1VCQWMwMS8vamsvN0FPMlhmR28rYXMwZTVUbllDZnlEd1pKWEd0bXYvWXRVVnY3UEg4TzZMUmRXVnM5V1VLZzhobUVEQT09Cg==",
+      "url": "https://github.com/Gogo6969/kinai/releases/download/v0.2.126/KinAI_aarch64.app.tar.gz"
     },
     "darwin-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUnkwZHBOVkJJb1JPTHZZYnpIcG5NYlhNSHJWZ2JQb05wZW5rQVNJeGFlRm9YZElQc2RUU0RGYWpNSlB4bHRLWXBpMGQ3dHI3bmVQQTZIKzRqNy9uUXBDcURDamZuQmdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTU3OTA0CWZpbGU6S2luQUkuYXBwLnRhci5negpIcjdtaXZMWENFbXVRSTErOHJpSVVpUlJ5YnFEc2xqTHEvSzFTQ2RLVGpHRHBYUlJDd1MzTjZuN3NHdGNzSEdQbVlKOHFUdDYybElPUTJSNFZzSlBCdz09Cg==",
-      "url": "https://github.com/Gogo6969/kinai/releases/download/v0.2.125/KinAI_x64.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUnkwZHBOVkJJb2VyRStpQ0lVQUw5WWsxc1NSUGNwNERlUjJ3QzNaWkFoSWNEOENpMTVDa1VLc2hybU1weEtpNnpCWkxHb2xLOWxZZTRzbzl4SzZmTndsUi9EYkhrWGdFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTcxNzI2CWZpbGU6S2luQUkuYXBwLnRhci5negpDZlhDMEtjZlRybnVlVDFKaC8yMzJWeEYvZGtGMVlXVzcxSHpqYUFHVXR2Nk1pMXFJOFNhRVBWYzVNVE9uN0FkZ3ZabmR0SFBSaFVua1VhUm1jQWpCQT09Cg==",
+      "url": "https://github.com/Gogo6969/kinai/releases/download/v0.2.126/KinAI_x64.app.tar.gz"
     },
     "darwin-x86_64-app": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUnkwZHBOVkJJb1JPTHZZYnpIcG5NYlhNSHJWZ2JQb05wZW5rQVNJeGFlRm9YZElQc2RUU0RGYWpNSlB4bHRLWXBpMGQ3dHI3bmVQQTZIKzRqNy9uUXBDcURDamZuQmdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTU3OTA0CWZpbGU6S2luQUkuYXBwLnRhci5negpIcjdtaXZMWENFbXVRSTErOHJpSVVpUlJ5YnFEc2xqTHEvSzFTQ2RLVGpHRHBYUlJDd1MzTjZuN3NHdGNzSEdQbVlKOHFUdDYybElPUTJSNFZzSlBCdz09Cg==",
-      "url": "https://github.com/Gogo6969/kinai/releases/download/v0.2.125/KinAI_x64.app.tar.gz"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUnkwZHBOVkJJb2VyRStpQ0lVQUw5WWsxc1NSUGNwNERlUjJ3QzNaWkFoSWNEOENpMTVDa1VLc2hybU1weEtpNnpCWkxHb2xLOWxZZTRzbzl4SzZmTndsUi9EYkhrWGdFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTcxNzI2CWZpbGU6S2luQUkuYXBwLnRhci5negpDZlhDMEtjZlRybnVlVDFKaC8yMzJWeEYvZGtGMVlXVzcxSHpqYUFHVXR2Nk1pMXFJOFNhRVBWYzVNVE9uN0FkZ3ZabmR0SFBSaFVua1VhUm1jQWpCQT09Cg==",
+      "url": "https://github.com/Gogo6969/kinai/releases/download/v0.2.126/KinAI_x64.app.tar.gz"
     },
     "windows-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUnkwZHBOVkJJb1IwTWFtNjM1T1RQM2RWQnNIQld3ODBCaUxlMGpWbnpWSnhSTkhCem5BVm9vTTZaandad3ZIS3JTeWsyOGRsa2hQdGV2TEZDQlNpdzFVNVd5WDd0ZVFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTU5MDA0CWZpbGU6S2luQUlfMC4yLjEyNV94NjRfZW4tVVMubXNpCk1leTI4OGlEYjBDZmdoYmh6cXBxNk04T2NMSFJYSlVib1NVQ1ljK0wyNWt2Z3h5alBzZXpkcnBZb0xoTHpNbGxFaTJodmxYbDJwYkZKcXBNQmJodUJ3PT0K",
-      "url": "https://github.com/Gogo6969/kinai/releases/download/v0.2.125/KinAI_0.2.125_x64_en-US.msi"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUnkwZHBOVkJJb2Z3TENMM1QxdHZPd084RUZkd1VlZEVkL25HR1IrYU1vV2xTSGpDcHp2UmdoQWN4R0pVeTlacjdQcnpyeXZiYjdvTVNIdHNBZDk5TmNXVjBtelREeWc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTczMjUwCWZpbGU6S2luQUlfMC4yLjEyNl94NjRfZW4tVVMubXNpCjEvT1pLYmM3Wm9yVTZHWkNVOStOUDh2T0ZxNUFzNzFDN2hLYlZIZmM4eUlzakswVjRGUjIxaHFwRXBlNllXaGg3MXZiSUhlWW1LaFR5b09ZZTlpeURnPT0K",
+      "url": "https://github.com/Gogo6969/kinai/releases/download/v0.2.126/KinAI_0.2.126_x64_en-US.msi"
     },
     "windows-x86_64-msi": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUnkwZHBOVkJJb1IwTWFtNjM1T1RQM2RWQnNIQld3ODBCaUxlMGpWbnpWSnhSTkhCem5BVm9vTTZaandad3ZIS3JTeWsyOGRsa2hQdGV2TEZDQlNpdzFVNVd5WDd0ZVFFPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTU5MDA0CWZpbGU6S2luQUlfMC4yLjEyNV94NjRfZW4tVVMubXNpCk1leTI4OGlEYjBDZmdoYmh6cXBxNk04T2NMSFJYSlVib1NVQ1ljK0wyNWt2Z3h5alBzZXpkcnBZb0xoTHpNbGxFaTJodmxYbDJwYkZKcXBNQmJodUJ3PT0K",
-      "url": "https://github.com/Gogo6969/kinai/releases/download/v0.2.125/KinAI_0.2.125_x64_en-US.msi"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUnkwZHBOVkJJb2Z3TENMM1QxdHZPd084RUZkd1VlZEVkL25HR1IrYU1vV2xTSGpDcHp2UmdoQWN4R0pVeTlacjdQcnpyeXZiYjdvTVNIdHNBZDk5TmNXVjBtelREeWc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTczMjUwCWZpbGU6S2luQUlfMC4yLjEyNl94NjRfZW4tVVMubXNpCjEvT1pLYmM3Wm9yVTZHWkNVOStOUDh2T0ZxNUFzNzFDN2hLYlZIZmM4eUlzakswVjRGUjIxaHFwRXBlNllXaGg3MXZiSUhlWW1LaFR5b09ZZTlpeURnPT0K",
+      "url": "https://github.com/Gogo6969/kinai/releases/download/v0.2.126/KinAI_0.2.126_x64_en-US.msi"
     },
     "windows-x86_64-nsis": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUnkwZHBOVkJJb1Foa0IyV3R0a1RHUXcwUVc3elpIeXBRSU1EVjB5cUc0TSt6WDNob0pZVkpJaHZ5Y2Q5NnZ0cHdoUkVMTFc1MlFvRUcwMS9FWmtkalo5NXJOZTBWelFzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTU5MDA0CWZpbGU6S2luQUlfMC4yLjEyNV94NjQtc2V0dXAuZXhlCnIrbXZwV0liRTV3cERGWjREd1ljekVzdTBaWWZVZDIvVXE4K0FwcldTYWFGQkpFRHcyR3NNQlZ4T0RTM01IaGVuQUpDS0ZxeGRzdlFrQkJZVjYwN0JRPT0K",
-      "url": "https://github.com/Gogo6969/kinai/releases/download/v0.2.125/KinAI_0.2.125_x64-setup.exe"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUnkwZHBOVkJJb1d3Skx3MTJScTVmalV5OSttU3FJMmNUSDNYaGRpdnV4THhQa3FzeTJaYjZFUWF6R2FwU0ZLc1hoTU5ZNUpIbEUyTE96WXVDSFRpZ2RpYVNPcjJpZmdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTczMjUwCWZpbGU6S2luQUlfMC4yLjEyNl94NjQtc2V0dXAuZXhlCnFmQlB2RjZ4NnFNMjlOa2E1SUtpcnFkSGNKUEVhdG91L2pPdk5DUEJobEFiZ3ZkMXppaDJid1hCbFFRODdMTWFSQm9ZMno0VmN1SXRiclJXUzVTWEFnPT0K",
+      "url": "https://github.com/Gogo6969/kinai/releases/download/v0.2.126/KinAI_0.2.126_x64-setup.exe"
     },
     "linux-x86_64": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUnkwZHBOVkJJb2F4Z05FVC9XdHkxZ2swdFR3TXg4eWhTUXhsc3oxbHRYSWg1ZjdjSVFmaHdwOEVGNFFvWkxFOTZNUlJ2WEoyVmRZZDNqUkhMcE1ic1lSUEJlR1RlZ0FnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTYwMDg1CWZpbGU6S2luQUlfMC4yLjEyNV9hbWQ2NC5BcHBJbWFnZQpsT1ZXOEkrbzZHNVk0a25KZUJqUEZaV2lJak5MbGd4eW9HRWpTTUJ3N0JKM1VKN0ZUWmhNWXF6akxUdzRqUXQxWHBvU0V3V3ljK3Y4MDl2VTU3QnZCZz09Cg==",
-      "url": "https://github.com/Gogo6969/kinai/releases/download/v0.2.125/KinAI_0.2.125_amd64.AppImage"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUnkwZHBOVkJJb1JXd3VzTTlsanp1Zmtjc0lVK2tBZUJGWGJUSDRJZTc1MU8yR2U2NW1jaVVaa3JJQXIrVThYSDJHMUV6aHNCb3JwaG01QzBoT0tEWGlOaGRSVTdqL0FZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTc0NDM4CWZpbGU6S2luQUlfMC4yLjEyNl9hbWQ2NC5BcHBJbWFnZQpHZnp5Z2NoV0E5S2Y4bnhlRnE5eUhZSW5vaWZlVG9QaFRUL29HSlcvSkk2NVhndWlkL1grejFuT0tvdG11MTdnVUlnejk5QndYZHQxOU00ektaVXNCUT09Cg==",
+      "url": "https://github.com/Gogo6969/kinai/releases/download/v0.2.126/KinAI_0.2.126_amd64.AppImage"
     },
     "linux-x86_64-appimage": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUnkwZHBOVkJJb2F4Z05FVC9XdHkxZ2swdFR3TXg4eWhTUXhsc3oxbHRYSWg1ZjdjSVFmaHdwOEVGNFFvWkxFOTZNUlJ2WEoyVmRZZDNqUkhMcE1ic1lSUEJlR1RlZ0FnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTYwMDg1CWZpbGU6S2luQUlfMC4yLjEyNV9hbWQ2NC5BcHBJbWFnZQpsT1ZXOEkrbzZHNVk0a25KZUJqUEZaV2lJak5MbGd4eW9HRWpTTUJ3N0JKM1VKN0ZUWmhNWXF6akxUdzRqUXQxWHBvU0V3V3ljK3Y4MDl2VTU3QnZCZz09Cg==",
-      "url": "https://github.com/Gogo6969/kinai/releases/download/v0.2.125/KinAI_0.2.125_amd64.AppImage"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUnkwZHBOVkJJb1JXd3VzTTlsanp1Zmtjc0lVK2tBZUJGWGJUSDRJZTc1MU8yR2U2NW1jaVVaa3JJQXIrVThYSDJHMUV6aHNCb3JwaG01QzBoT0tEWGlOaGRSVTdqL0FZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTc0NDM4CWZpbGU6S2luQUlfMC4yLjEyNl9hbWQ2NC5BcHBJbWFnZQpHZnp5Z2NoV0E5S2Y4bnhlRnE5eUhZSW5vaWZlVG9QaFRUL29HSlcvSkk2NVhndWlkL1grejFuT0tvdG11MTdnVUlnejk5QndYZHQxOU00ektaVXNCUT09Cg==",
+      "url": "https://github.com/Gogo6969/kinai/releases/download/v0.2.126/KinAI_0.2.126_amd64.AppImage"
     },
     "linux-x86_64-deb": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUnkwZHBOVkJJb1RsajBCMGd1SHlGRk53aTR1LzZUV3BYTXhZK3hiVFVrcmhqUzhsOFB0NHErTlg4SnY4MHh1dmxZeGpGbHZUaGs0Q0tXbmVYMkYxTlVmWnFBNGNuMnc0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTYwMDg1CWZpbGU6S2luQUlfMC4yLjEyNV9hbWQ2NC5kZWIKcFJTNHZGb3pTTTVkY1NjWGo2WVkwWVltRmpodnc0WEs1Ky9JTWZMWlJiVlV3ekx6cDF4MlBHb1I2U0dGZHFoeXJVUndNZ2FZV1MyVzk1WDFJeThWQUE9PQo=",
-      "url": "https://github.com/Gogo6969/kinai/releases/download/v0.2.125/KinAI_0.2.125_amd64.deb"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUnkwZHBOVkJJb1RiV1NnK3dDMHMwT2c3THFzU2Z1ZmlWb3pETjdpbCtFU2VQUzBhQ01ualdhMDdOSWcxbXp1cHkwRXloOGUzb2Rlb1lxVUszL1JXNlJibWw2c3lxM2dBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTc0NDM4CWZpbGU6S2luQUlfMC4yLjEyNl9hbWQ2NC5kZWIKamRGZEs2NXRpWkpMQUFzRG5mN1NxVzdOZ3ZobGFOcWdlQS83WU1TcDNaZStwb2V5dk1iSzdjMVgvajhTVVF1cDhFcFZlVzBhWWg1ZG5QUklRNlZXQ1E9PQo=",
+      "url": "https://github.com/Gogo6969/kinai/releases/download/v0.2.126/KinAI_0.2.126_amd64.deb"
     },
     "linux-x86_64-rpm": {
-      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUnkwZHBOVkJJb1VZSm14V2RzQUFac2c5L2V2ZlN1OUNHRVBoVmdyNFJmWFhRT0Nhazd6ZmtnaFRXN0kvWVBjVTNtZEtsL1FVVmU5U1BCRmhraW5FVlMwSTUxa1V3QmdRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTYwMDg1CWZpbGU6S2luQUktMC4yLjEyNS0xLng4Nl82NC5ycG0KQVVMYWxselE2alBoT1l2eUozL0VwV0hkbXN0Q0ZsVmtSSk9oTjhTS05RK2lEL2F3MGVtVDY0eTZ0b013bm9RdjBOTnZaZVRXZlVnZ0JlT1pHYlBTQkE9PQo=",
-      "url": "https://github.com/Gogo6969/kinai/releases/download/v0.2.125/KinAI-0.2.125-1.x86_64.rpm"
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRUnkwZHBOVkJJb1d3KzJLWmIydFZkUVFzWUVkTmdYNmovSUhmM0lDdTQ3YWZJcHVKeWUwN05mcHNzOVA5Y3NFOHFBclE3bXAydnRkc3F4T095dE14ZEhtejdmMEtsREFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MTc0NDM4CWZpbGU6S2luQUktMC4yLjEyNi0xLng4Nl82NC5ycG0KY2p6ZUhIOHFzL2FKbkMwcC9rTmFzaXF2bXUrVUtKU3VKYlN6WmlTVFVxSVdvY1ZjQXdDWFNnVGhVWVgwOG9TRGUyT3VMYkxPbVU5K1JJbkNla1diQlE9PQo=",
+      "url": "https://github.com/Gogo6969/kinai/releases/download/v0.2.126/KinAI-0.2.126-1.x86_64.rpm"
     }
   }
 }
