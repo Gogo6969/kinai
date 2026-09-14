@@ -277,6 +277,24 @@
               {/if}
             </div>
           {:else}
+            {#if r.repeat && r.status !== 'done' && r.status !== 'cancelled'}
+              <!-- A snoozed repeat is `scheduled` until it comes back (0.2.130),
+                   so it lands here rather than in the cluster above. Ending
+                   the series must not have to wait for the next poke — and
+                   Delete's confirm says nothing about every future occurrence
+                   going with it. -->
+              <button
+                class="kin-btn-ghost text-white/50 hover:text-red-300"
+                onclick={() => {
+                  if (confirm('Stop this repeating reminder?\n\nIt will not come back.'))
+                    act(r.id, 'stop');
+                }}
+                disabled={pending.includes(r.id)}
+                title="End the series"
+              >
+                Stop
+              </button>
+            {/if}
             <button
               class="kin-btn-ghost text-red-300/70 hover:text-red-300"
               onclick={() => remove(r)}

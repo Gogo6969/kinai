@@ -18,6 +18,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   it. A snoozed repeat now behaves exactly like a snoozed one-off: gone
   until the time you chose, back when it arrives, and the series itself
   is untouched — tomorrow's occurrence is still tomorrow's.
+- **A repeating reminder can be stopped from the Calendar while it is
+  snoozed.** The Stop button used to appear only while the reminder was
+  due; between pokes the row offered nothing but Delete, whose warning
+  does not mention that every future occurrence goes with it.
 
 ## [0.2.129] — 2026-09-14
 
