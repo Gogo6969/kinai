@@ -104,12 +104,18 @@ SearXNG instead.)\n{out}",
                 // otherwise a permanently misconfigured family instance
                 // (formats: [json] missing, wrong port) is masked for as
                 // long as the public fallback keeps answering.
-                tracing::warn!("SearXNG fallback failed ({fb:#}); falling back further");
+                tracing::warn!(
+                    "SearXNG fallback failed ({}); falling back further",
+                    crate::logsafe::error(&format!("{fb:#}"))
+                );
                 failures.push_str(&format!("; the SearXNG fallback also failed ({fb:#})"));
             }
         }
     }
-    tracing::warn!("Exa unavailable ({primary_err:#}); falling back to DuckDuckGo");
+    tracing::warn!(
+        "Exa unavailable ({}); falling back to DuckDuckGo",
+        crate::logsafe::error(&format!("{primary_err:#}"))
+    );
     match duckduckgo_or_wikipedia(query, max_results).await {
         Ok((out, engine)) => Ok(format!(
             "(Exa is unavailable — {}. These results come from {engine} \
@@ -185,7 +191,9 @@ Open Settings → Search engine and enter your instance's address (e.g. http://1
         .get(&url)
         .header("User-Agent", user_agent())
         .send()
-        .await?;
+        .await
+        // The URL carries the member's question; reqwest would print it.
+        .map_err(reqwest::Error::without_url)?;
     if !resp.status().is_success() {
         let status = resp.status();
         anyhow::bail!(
@@ -302,7 +310,8 @@ async fn duckduckgo(query: &str, max: usize) -> Result<String> {
         .get(&url)
         .header("User-Agent", user_agent())
         .send()
-        .await?
+        .await
+        .map_err(reqwest::Error::without_url)?
         .text()
         .await?;
     Ok(extract_ddg(&resp, max))
@@ -330,7 +339,8 @@ async fn wikipedia(query: &str, max: usize) -> Result<String> {
         .get(&url)
         .header("User-Agent", user_agent())
         .send()
-        .await?
+        .await
+        .map_err(reqwest::Error::without_url)?
         .json::<serde_json::Value>()
         .await?;
     let mut out = Vec::new();
@@ -438,7 +448,10 @@ async fn exa_search(query: &str, max_results: usize, api_key: &str) -> Result<St
             let seq = RETRY_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let jitter = (seq % 4) * 400;
             let pause = if is_rate_limited(&e) { 2000 + jitter } else { 400 + jitter / 4 };
-            tracing::warn!("exa search failed ({e:#}); retrying once in {pause}ms");
+            tracing::warn!(
+                "exa search failed ({}); retrying once in {pause}ms",
+                crate::logsafe::error(&format!("{e:#}"))
+            );
             tokio::time::sleep(Duration::from_millis(pause)).await;
             exa_search_once(query, max_results, api_key).await
         }
@@ -489,11 +502,18 @@ async fn exa_search_once(query: &str, max_results: usize, api_key: &str) -> Resu
         .header("content-type", "application/json")
         .json(&body)
         .send()
-        .await?;
+        .await
+        .map_err(reqwest::Error::without_url)?;
     if !resp.status().is_success() {
         let status = resp.status();
         let err_body = resp.text().await.unwrap_or_default();
-        anyhow::bail!("Exa search failed ({status}): {err_body}");
+        // Enough of the body to classify on (`no_more_credits` is 15
+        // chars), not enough for a body that echoes the request to become
+        // a copy of it.
+        anyhow::bail!(
+            "Exa search failed ({status}): {}",
+            crate::logsafe::clip(&err_body, 200)
+        );
     }
     let parsed: ExaResponse = resp.json().await?;
     if parsed.results.is_empty() {

@@ -209,7 +209,9 @@ async fn handle_start(
     .await?
     {
         Some(peer_id) => {
-            tracing::info!("telegram: paired chat {chat_id} → peer {peer_id}");
+            // The peer's invite code is the diagnostic key; the Telegram
+            // chat id is a person's account number and stays in the DB.
+            tracing::info!("telegram: paired a chat → peer {peer_id}");
             api.send_message(
                 chat_id,
                 "✅ Linked to KinAI.\n\nTry:\n• `/help` — list commands\n• `/pic a sunset over Miami` — generate an image\n• or just type any question.",
@@ -1223,7 +1225,10 @@ async fn send_reply_remote_image(api: &BotApi, reply: &str, chat_id: i64) -> boo
         {
             Ok(()) => return true,
             Err(e) => {
-                tracing::warn!("telegram remote-image send failed for {url}: {e:?}");
+                tracing::warn!(
+                    "telegram remote-image send failed: {}",
+                    crate::logsafe::error(&format!("{e:?}"))
+                );
                 continue;
             }
         }

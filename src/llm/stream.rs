@@ -382,7 +382,10 @@ pub async fn open(
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(anyhow!("LLM error {status}: {body}"));
+        // OpenAI-compatible servers echo the offending request in some
+        // 400 bodies — a prompt, quoted back. Keep enough to classify
+        // (`tool_choice` rejections are matched on this text), no more.
+        return Err(anyhow!("LLM error {status}: {}", crate::logsafe::clip(&body, 300)));
     }
     let (tx, rx) = mpsc::unbounded_channel();
     let cancel_for_task = cancel.clone();
@@ -450,7 +453,13 @@ async fn pump(
                 let parsed: StreamChunk = match serde_json::from_str(&event.data) {
                     Ok(v) => v,
                     Err(e) => {
-                        tracing::warn!("bad sse chunk: {e} :: {}", event.data);
+                        // The frame is a slice of the model's reply — a
+                        // sentence of the answer, in the log. Its size is
+                        // the useful part of the diagnostic.
+                        tracing::warn!(
+                            "bad sse chunk ({} chars): {e}",
+                            event.data.chars().count()
+                        );
                         continue;
                     }
                 };

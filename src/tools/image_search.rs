@@ -90,7 +90,10 @@ async fn wikimedia_commons(query: &str, max: usize) -> Result<String> {
         .get(&url)
         .header("User-Agent", user_agent())
         .send()
-        .await?;
+        .await
+        // `gsrsearch=` is the member's picture request; keep it out of
+        // the error, which reaches the log.
+        .map_err(reqwest::Error::without_url)?;
     if !resp.status().is_success() {
         return Err(anyhow!(
             "Wikimedia Commons returned {}",
@@ -213,11 +216,16 @@ async fn exa_images(query: &str, max: usize, api_key: &str) -> Result<String> {
         .header("User-Agent", user_agent())
         .json(&body)
         .send()
-        .await?;
+        .await
+        .map_err(reqwest::Error::without_url)?;
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err(anyhow!("Exa returned {}: {}", status, body));
+        return Err(anyhow!(
+            "Exa returned {}: {}",
+            status,
+            crate::logsafe::clip(&body, 200)
+        ));
     }
     let parsed: ExaResp = resp.json().await?;
     let with_images: Vec<&ExaResult> = parsed
@@ -231,8 +239,11 @@ async fn exa_images(query: &str, max: usize, api_key: &str) -> Result<String> {
         // mode, so a family asking for a picture still gets one when Exa
         // returns nothing — whether that is a quiet API change (as in
         // 2026-09-05), an empty result set, or exhausted credits.
+        // The size of the request, never the request: this fires on a
+        // SUCCESS path, so it was the one place in src/tools that wrote a
+        // member's own words to the log as a plain field.
         tracing::warn!(
-            query,
+            query_chars = query.chars().count(),
             "Exa returned no images; falling back to Wikimedia Commons"
         );
         return wikimedia_commons(query, max).await;

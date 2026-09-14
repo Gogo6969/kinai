@@ -47,7 +47,13 @@ pub fn extract_text(attachments: &[Attachment]) -> Result<String> {
                 ));
             }
             Err(e) => {
-                tracing::warn!("pdf extraction failed for {label}: {e:?}");
+                // `label` is the filename the member attached; the
+                // ordinal is enough to match it to the turn.
+                tracing::warn!(
+                    "pdf extraction failed for attachment {}: {}",
+                    i + 1,
+                    crate::logsafe::error(&format!("{e:?}"))
+                );
                 if !out.is_empty() {
                     out.push_str("\n\n");
                 }

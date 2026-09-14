@@ -167,7 +167,9 @@ User message:
             .save_user_fact(peer_id, &key, &value, "extractor", Some(source_msg_id))
             .await
         {
-            tracing::warn!("extractor save failed for {key}: {e}");
+            // The key is a label the model gave to something the member
+            // said — content, by another name.
+            tracing::warn!("extractor save failed: {}", crate::logsafe::error(&e.to_string()));
             continue;
         }
         existing_keys.insert(key);

@@ -93,7 +93,9 @@ pub fn local_to_utc(
     let naive = NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M")
         .or_else(|_| NaiveDateTime::parse_from_str(raw, "%Y-%m-%dT%H:%M:%S"))
         .or_else(|_| NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M"))
-        .map_err(|_| anyhow::anyhow!("due_local must look like YYYY-MM-DDTHH:MM, got {raw:?}"))?;
+        // Not `{raw:?}`: what the model put here is usually a near-verbatim
+        // piece of what the member typed, and this message reaches the log.
+        .map_err(|_| anyhow::anyhow!("due_local must look like YYYY-MM-DDTHH:MM"))?;
     let resolve = |r: LocalResult<chrono::DateTime<chrono::Utc>>, zone: &str| match r {
         LocalResult::Single(dt) => Ok(dt),
         LocalResult::Ambiguous(earlier, _) => Ok(earlier),

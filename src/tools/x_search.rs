@@ -102,12 +102,14 @@ async fn exa_social(query: &str, max_results: usize, api_key: &str) -> Result<St
         .header("content-type", "application/json")
         .json(&body)
         .send()
-        .await?;
+        .await
+        .map_err(reqwest::Error::without_url)?;
     if !resp.status().is_success() {
         let status = resp.status();
         let body_text = resp.text().await.unwrap_or_default();
         anyhow::bail!(
-            "Exa social search failed (HTTP {status}). Response body: {body_text}"
+            "Exa social search failed (HTTP {status}). Response body: {}",
+            crate::logsafe::clip(&body_text, 200)
         );
     }
     let parsed: ExaResponse = resp.json().await?;
@@ -181,7 +183,12 @@ async fn hn_search(query: &str, mode: &str, max_results: usize) -> Result<String
         urlencode(query),
         max_results.clamp(1, 25),
     );
-    let resp = client.get(&url).send().await?;
+    // The query string IS the member's question; reqwest would print it.
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(reqwest::Error::without_url)?;
     if !resp.status().is_success() {
         anyhow::bail!("hacker news search responded {}", resp.status());
     }

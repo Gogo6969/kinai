@@ -68,6 +68,9 @@ pub async fn fetch(service: &str, url: &str) -> Result<String> {
         .send()
         .await
         .map_err(|e| {
+            // Without the URL: the request carries the video's address as
+            // a query parameter, and this sentence goes to the log.
+            let e = e.without_url();
             anyhow!("the transcript service did not respond ({e}). It runs on the family's own hardware — the host can check it is up.")
         })?;
 
@@ -75,22 +78,25 @@ pub async fn fetch(service: &str, url: &str) -> Result<String> {
     let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
 
     if !status.is_success() {
-        let msg = body
-            .get("error")
-            .and_then(|v| v.as_str())
-            .unwrap_or("the transcript service could not read that video");
+        // The service's own `error` text is deliberately NOT included: it
+        // can carry the video's title, and every one of these sentences
+        // reaches the host log. The `kind` is the whole diagnostic.
+        //
         // Each of these becomes user-visible text, so each is also
         // registered in `force_search::OUTAGE_CLAIMS` — otherwise the
         // sentence survives in the thread and KinAI keeps repeating
         // "I can't get transcripts" long after the service recovers.
         return Err(match body.get("kind").and_then(|v| v.as_str()) {
-            Some("no_captions") => anyhow!("that video has no captions to read: {msg}"),
-            Some("rate_limited") => anyhow!("{msg}"),
+            Some("no_captions") => anyhow!("that video has no captions to read"),
+            Some("rate_limited") => anyhow!(
+                "YouTube is rate limiting transcript requests from the family's network \
+                 right now; try again in a while"
+            ),
             Some("unsupported") => anyhow!(
-                "{}: {msg}",
+                "{}: the transcript service cannot read that address",
                 crate::tools::fetch_page::URL_REFUSED
             ),
-            _ => anyhow!("the transcript service could not read that video: {msg}"),
+            _ => anyhow!("the transcript service could not read that video"),
         });
     }
 

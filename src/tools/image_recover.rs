@@ -108,12 +108,14 @@ pub async fn recover_reply_images(reply: &str, runtime: &ToolRuntime) -> String 
             continue; // the model's URL actually works — keep it
         }
         let replacement = match first_real_image(&client, &alt, runtime).await {
+            // The alt text is the model's description of what the member
+            // asked to see; the log gets the outcome, not the subject.
             Some(real) => {
-                tracing::info!("image recover: replaced dead image for {alt:?}");
+                tracing::info!("image recover: replaced a dead image");
                 format!("![{alt}]({real})")
             }
             None => {
-                tracing::info!("image recover: dropped unrecoverable image for {alt:?}");
+                tracing::info!("image recover: dropped an unrecoverable image");
                 String::new()
             }
         };

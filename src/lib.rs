@@ -13,6 +13,7 @@ pub mod discovery;
 pub mod factcheck;
 pub mod hotkey;
 pub mod llm;
+pub mod logsafe;
 pub mod network;
 pub mod reminders;
 pub mod slash;

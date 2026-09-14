@@ -151,7 +151,13 @@ strings, nothing else.\n\nQUESTION:\n{question}\n\nANSWER:\n{answer}"
                 evidence.push_str(&format!("### Search {}: {q}\n{r}\n\n", i + 1));
             }
             Err(e) => {
-                tracing::warn!("fact check search '{q}' failed: {e:#}");
+                // The query is built from the member's question and the
+                // model's answer — number the search, don't quote it.
+                tracing::warn!(
+                    "fact check search {} failed: {}",
+                    i + 1,
+                    crate::logsafe::error(&format!("{e:#}"))
+                );
                 evidence.push_str(&format!(
                     "### Search {}: {q}\nSEARCH FAILED — no results from this query.\n\n",
                     i + 1

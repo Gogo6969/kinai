@@ -52,8 +52,11 @@ pub(crate) const URL_REFUSED: &str = "URL REFUSED";
 pub async fn fetch(url: &str) -> Result<String> {
     let mut current = url.trim().to_string();
     for _hop in 0..=MAX_REDIRECTS {
+        // Never echo `current` here: this branch fires precisely when the
+        // argument was NOT a URL — usually a piece of the member's own
+        // message, or a local file path, routed into the wrong slot.
         let parsed = reqwest::Url::parse(&current)
-            .map_err(|_| anyhow!("{URL_REFUSED}: that is not a valid URL: {current}"))?;
+            .map_err(|_| anyhow!("{URL_REFUSED}: that is not a valid URL"))?;
         if !matches!(parsed.scheme(), "http" | "https") {
             return Err(anyhow!("{URL_REFUSED}: only http and https URLs can be fetched"));
         }
@@ -73,7 +76,11 @@ pub async fn fetch(url: &str) -> Result<String> {
             .get(parsed.clone())
             .header("User-Agent", user_agent())
             .send()
-            .await?;
+            .await
+            // reqwest prints the request URL in every transport error;
+            // the model already knows what it asked for, and the log
+            // must not.
+            .map_err(reqwest::Error::without_url)?;
 
         if resp.status().is_redirection() {
             let loc = resp
@@ -88,7 +95,9 @@ pub async fn fetch(url: &str) -> Result<String> {
             continue;
         }
         if !resp.status().is_success() {
-            return Err(anyhow!("the server answered {} for {current}", resp.status()));
+            // The status is the diagnostic; the address is what the
+            // family was reading.
+            return Err(anyhow!("the server answered {} for that address", resp.status()));
         }
 
         let content_type = resp
@@ -145,7 +154,7 @@ Say so if the answer depends on what was cut.]\n\n{capped}"
             cleaned
         });
     }
-    Err(anyhow!("too many redirects fetching {url}"))
+    Err(anyhow!("too many redirects fetching that address"))
 }
 
 /// Parse a PDF off the async threads, under the gate and a wall clock.
@@ -198,7 +207,7 @@ async fn guard_host(url: &reqwest::Url) -> Result<Vec<SocketAddr>> {
             }
             tokio::net::lookup_host((host, port))
                 .await
-                .map_err(|_| anyhow!("could not resolve {host}"))?
+                .map_err(|_| anyhow!("could not resolve that host"))?
                 .collect()
         }
     };

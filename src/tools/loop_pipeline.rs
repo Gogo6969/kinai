@@ -172,7 +172,8 @@ pub async fn run_pipeline(
             // still choose to search.
             Err(e) if forcing && crate::llm::is_tool_choice_rejection(&e.to_string()) => {
                 tracing::warn!(
-                    "provider rejects tool_choice=required ({e:#}); running this turn unforced"
+                    "provider rejects tool_choice=required ({}); running this turn unforced",
+                    crate::logsafe::error(&format!("{e:#}"))
                 );
                 force_rounds_left = 0;
                 llm.stream_with_choice(&messages, tools.as_slice(), max_tokens, cancel.clone(), false)
@@ -241,12 +242,16 @@ pub async fn run_pipeline(
                         // silent failure (e.g. a vision endpoint returning a
                         // 413 / model-decommissioned that the user only sees
                         // as "no reply") is debuggable from the host log.
-                        tracing::warn!("llm stream produced no content: {e}");
+                        tracing::warn!(
+                            "llm stream produced no content: {}",
+                            crate::logsafe::error(&e.to_string())
+                        );
                         return Err(anyhow::anyhow!("llm stream: {e}"));
                     }
                     tracing::warn!(
-                        "stream error after {} chars of partial answer: {e}",
-                        partial.len()
+                        "stream error after {} chars of partial answer: {}",
+                        partial.len(),
+                        crate::logsafe::error(&e.to_string())
                     );
                     let partial = sanitize_partial(&partial);
                     return Ok(PipelineResult {
@@ -453,11 +458,16 @@ without it.",
                         }
                         Err(e) => {
                             let chain = format!("{e:#}");
+                            // The classifier below reads the RAW chain and
+                            // the log gets the scrubbed one — in that
+                            // order. Scrubbing first would hide the
+                            // `(402` / `no_more_credits` markers a dead
+                            // tool is recognised by.
                             tracing::warn!(
                                 tool = %call.function.name,
                                 args = %redact_args_for_log(&call.function.arguments),
                                 ms = started.elapsed().as_millis() as u64,
-                                error = %chain,
+                                error = %crate::logsafe::error(&chain),
                                 "TOOL CALL FAILED"
                             );
                             if is_permanent_tool_failure(&chain) {
@@ -1185,7 +1195,28 @@ fn shape_of(v: &serde_json::Value) -> String {
 
 #[cfg(test)]
 mod log_tests {
-    use super::redact_args_for_log;
+    use super::{is_permanent_tool_failure, redact_args_for_log};
+
+    /// The order at the failed-tool branch: classify on the raw chain,
+    /// log the scrubbed one. A member's question inside a failed search
+    /// URL must never reach the log; the `(402` that marks a dead tool
+    /// must never be scrubbed away before the classifier sees it.
+    #[test]
+    fn the_log_gets_the_scrubbed_chain_and_the_classifier_the_raw_one() {
+        let raw = "Exa search failed (402): {\"error\":\"no_more_credits\"}; \
+                   the SearXNG fallback also failed (error sending request for url \
+                   (http://searx.example:8888/search?q=how+to+tell+a+child+someone+died&format=json))";
+        // "fallback also failed" keeps this retryable — same verdict on
+        // both, because the marker is not a URL.
+        assert!(!is_permanent_tool_failure(raw));
+        let logged = crate::logsafe::error(raw);
+        assert!(!logged.contains("someone+died"), "{logged}");
+        assert!(logged.contains("(402"), "{logged}");
+
+        let dead = "Exa search failed (402): {\"error\":\"no_more_credits\"}";
+        assert!(is_permanent_tool_failure(dead));
+        assert_eq!(crate::logsafe::error(dead), dead, "nothing to scrub, nothing changed");
+    }
 
     /// The household's log must never accumulate what they asked for.
     #[test]

@@ -837,7 +837,9 @@ async fn dispatch(
                     let _ = s.tauri.emit("kinai://report", serde_json::json!({
                         "reporter": reporter,
                     }));
-                    tracing::info!("answer reported by {reporter}");
+                    // Who reported it is on the report itself, in the
+                    // Reported answers page. The log does not need a name.
+                    tracing::info!("answer reported");
                     (true, "Thanks — the host can see this answer now.".to_string())
                 }
                 Err(e) => {

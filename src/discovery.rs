@@ -59,7 +59,9 @@ pub fn start_advertise(state: &SharedState, app: AppHandle) {
             tracing::warn!("mdns register: {e}");
             return;
         }
-        tracing::info!("mdns: advertising as '{instance}' on port {port}");
+        // The instance name is "KinAI - <family name>"; the port is the
+        // part worth having in the log.
+        tracing::info!("mdns: advertising on port {port}");
         let _ = app.emit("kinai://mdns-advertising", serde_json::json!({"instance": instance}));
     });
 }

@@ -5,6 +5,31 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.129] — 2026-09-14
+
+### Fixed
+
+- **The log no longer records what the family was reading or asking, even
+  when something failed.** 0.2.126 stopped KinAI writing a tool's input
+  into its log. The failure line was the gap: a page that refused to load
+  wrote its full address, and a web search that timed out wrote the
+  question itself — percent-encoded inside the address of the search
+  engine, courtesy of the HTTP library's own error text, on a path no
+  reader of this code would have found. Both are gone. Failures still say
+  what went wrong — the status code, "timed out", which fallback failed —
+  and never what was being looked up.
+- **The same rule now covers every other line the host writes about
+  itself.** An image search that fell back to Wikimedia logged the picture
+  request; a fact-check that failed logged its query; a PDF that would not
+  parse logged its filename; a saved memory that failed logged its label;
+  a reported answer logged the reporter's name; and the network
+  announcement logged the family's name. Each now records that the thing
+  happened, and nothing about whom or what.
+- **Error text from upstream services is capped before it is kept.** Some
+  model servers echo the request back inside a 400 error; that could have
+  put a prompt into the log wholesale. Three hundred characters is enough
+  to see what broke.
+
 ## [0.2.128] — 2026-09-13
 
 ### Changed

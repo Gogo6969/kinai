@@ -144,7 +144,7 @@ async fn prepare_send(
     let chat_id_i64: i64 = match chat_id.parse() {
         Ok(v) => v,
         Err(e) => {
-            tracing::warn!("telegram echo: invalid chat_id {chat_id:?}: {e}");
+            tracing::warn!("telegram echo: stored chat_id does not parse: {e}");
             return None;
         }
     };
