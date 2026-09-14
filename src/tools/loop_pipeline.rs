@@ -459,10 +459,12 @@ without it.",
                         Err(e) => {
                             let chain = format!("{e:#}");
                             // The classifier below reads the RAW chain and
-                            // the log gets the scrubbed one — in that
-                            // order. Scrubbing first would hide the
-                            // `(402` / `no_more_credits` markers a dead
-                            // tool is recognised by.
+                            // the log gets the scrubbed one. Not the
+                            // other way round: the scrub caps the length,
+                            // and a long fallback chain can carry its
+                            // `(402` / `no_more_credits` past the cut —
+                            // classifying the scrubbed text would keep
+                            // retrying a tool that is out of credit.
                             tracing::warn!(
                                 tool = %call.function.name,
                                 args = %redact_args_for_log(&call.function.arguments),
@@ -1216,6 +1218,25 @@ mod log_tests {
         let dead = "Exa search failed (402): {\"error\":\"no_more_credits\"}";
         assert!(is_permanent_tool_failure(dead));
         assert_eq!(crate::logsafe::error(dead), dead, "nothing to scrub, nothing changed");
+
+        // The input on which the order actually matters: the marker sits
+        // past the scrub's length cap. Raw says dead; scrubbed would say
+        // retry. A refactor that classified the scrubbed text fails here.
+        let long = "x".repeat(300) + " (402): no_more_credits";
+        assert!(is_permanent_tool_failure(&long));
+        assert!(!is_permanent_tool_failure(&crate::logsafe::error(&long)));
+    }
+
+    /// An upstream body is clipped INTO the error message the classifier
+    /// reads. The first marker was `…(402 chars)` — and a 503 with a
+    /// 402-character body then retired web search for the whole turn.
+    #[test]
+    fn a_clipped_body_cannot_forge_a_status_code() {
+        let chain = format!(
+            "Exa search failed (503 Service Unavailable): {}",
+            crate::logsafe::clip(&"x".repeat(402), 200)
+        );
+        assert!(!is_permanent_tool_failure(&chain), "{chain}");
     }
 
     /// The household's log must never accumulate what they asked for.

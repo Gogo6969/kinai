@@ -2436,7 +2436,7 @@ async fn run_assistant_turn(
                 let _ = extractor_app.emit("kinai://user-facts-updated", serde_json::json!({}));
             }
             Ok(_) => { /* nothing fact-shaped; quiet */ }
-            Err(e) => tracing::warn!("extractor: {e:?}"),
+            Err(e) => tracing::warn!("extractor: {}", crate::logsafe::error(&format!("{e:#}"))),
         }
     });
 

@@ -275,7 +275,10 @@ message again."
                 };
                 let reason = crate::llm::short_server_down_reason(&msg);
                 let next_model = slot_settings(cfg, next).model.clone();
-                tracing::warn!("slot '{label}' down ({msg}); failing over to '{next}'");
+                tracing::warn!(
+                    "slot '{label}' down ({}); failing over to '{next}'",
+                    crate::logsafe::error(&msg)
+                );
                 let line = format!(
                     "⚠️ _The **{label}** model isn't responding ({reason}) — \
 answering with **{next}** (`{next_model}`) instead._\n\n"

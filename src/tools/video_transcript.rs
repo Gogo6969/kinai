@@ -35,6 +35,23 @@ const TIMEOUT: Duration = Duration::from_secs(150);
 /// three-hour podcast would otherwise swamp the conversation.
 const MAX_CHARS: usize = 40_000;
 
+/// Every sentence a failure can put in front of the model, in one place.
+///
+/// Each of these must stay recognisable to `force_search::OUTAGE_CLAIMS`
+/// — "transcript service", "no captions", "rate limiting transcript" —
+/// or the sentence survives in the thread and KinAI keeps repeating "I
+/// can't read videos" long after the service recovers. The test in
+/// `force_search` iterates `USER_VISIBLE`, so a rewrite of either side
+/// fails loudly instead of quietly re-opening that.
+pub(crate) const NO_CAPTIONS: &str = "that video has no captions to read";
+pub(crate) const RATE_LIMITED: &str = "YouTube is rate limiting transcript requests from the \
+                                       family's network right now; try again in a while";
+pub(crate) const UNSUPPORTED: &str = "the transcript service cannot read that address";
+pub(crate) const COULD_NOT_READ: &str = "the transcript service could not read that video";
+pub(crate) const NO_RESPONSE: &str = "the transcript service did not respond";
+pub(crate) const USER_VISIBLE: [&str; 5] =
+    [NO_CAPTIONS, RATE_LIMITED, UNSUPPORTED, COULD_NOT_READ, NO_RESPONSE];
+
 fn host_allowed(url: &str) -> bool {
     reqwest::Url::parse(url)
         .ok()
@@ -71,7 +88,7 @@ pub async fn fetch(service: &str, url: &str) -> Result<String> {
             // Without the URL: the request carries the video's address as
             // a query parameter, and this sentence goes to the log.
             let e = e.without_url();
-            anyhow!("the transcript service did not respond ({e}). It runs on the family's own hardware — the host can check it is up.")
+            anyhow!("{NO_RESPONSE} ({e}). It runs on the family's own hardware — the host can check it is up.")
         })?;
 
     let status = resp.status();
@@ -87,22 +104,19 @@ pub async fn fetch(service: &str, url: &str) -> Result<String> {
         // sentence survives in the thread and KinAI keeps repeating
         // "I can't get transcripts" long after the service recovers.
         return Err(match body.get("kind").and_then(|v| v.as_str()) {
-            Some("no_captions") => anyhow!("that video has no captions to read"),
-            Some("rate_limited") => anyhow!(
-                "YouTube is rate limiting transcript requests from the family's network \
-                 right now; try again in a while"
-            ),
+            Some("no_captions") => anyhow!("{NO_CAPTIONS}"),
+            Some("rate_limited") => anyhow!("{RATE_LIMITED}"),
             Some("unsupported") => anyhow!(
-                "{}: the transcript service cannot read that address",
+                "{}: {UNSUPPORTED}",
                 crate::tools::fetch_page::URL_REFUSED
             ),
-            _ => anyhow!("the transcript service could not read that video"),
+            _ => anyhow!("{COULD_NOT_READ}"),
         });
     }
 
     let text = body.get("text").and_then(|v| v.as_str()).unwrap_or_default();
     if text.trim().is_empty() {
-        return Err(anyhow!("that video has no captions to read"));
+        return Err(anyhow!("{NO_CAPTIONS}"));
     }
     let title = body.get("title").and_then(|v| v.as_str()).unwrap_or_default();
     let secs = body.get("duration").and_then(|v| v.as_u64()).unwrap_or(0);

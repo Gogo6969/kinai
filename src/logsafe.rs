@@ -27,41 +27,67 @@
 const MAX_CHARS: usize = 300;
 
 /// Make an error chain safe to log: URLs replaced, length bounded.
+///
+/// Only the log reads this string, so its cut marker may carry a number.
+/// `clip` below feeds error MESSAGES, and must not.
 pub fn error(chain: &str) -> String {
     let mut out = String::with_capacity(chain.len().min(MAX_CHARS + 16));
     let mut rest = chain;
     while let Some(start) = url_start(rest) {
         out.push_str(&rest[..start]);
         let tail = &rest[start..];
-        let end = tail
-            .find(|c: char| c.is_whitespace() || matches!(c, ')' | ']' | '"' | '\'' | '>' | ',' | ';'))
-            .unwrap_or(tail.len());
+        // The URL runs to the next whitespace. Then hand back whatever
+        // punctuation closes the sentence around it, so reqwest's
+        // `for url (<url>): operation timed out` still reads. Stopping at
+        // the first `)` or `,` INSIDE the URL instead — a wiki title with
+        // brackets, an image path with size parameters — left everything
+        // after it on the line.
+        let token = tail.find(char::is_whitespace).unwrap_or(tail.len());
+        let span = tail[..token].trim_end_matches(|c: char| {
+            matches!(c, ')' | ']' | '"' | '\'' | '>' | ',' | ';' | ':' | '.')
+        });
         out.push_str("<url>");
-        rest = &tail[end..];
+        rest = &tail[span.len()..];
     }
     out.push_str(rest);
-    clip(&out, MAX_CHARS)
-}
-
-/// The first `http://` or `https://`, whichever comes first.
-fn url_start(s: &str) -> Option<usize> {
-    match (s.find("http://"), s.find("https://")) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (a, None) => a,
-        (None, b) => b,
+    let n = out.chars().count();
+    if n <= MAX_CHARS {
+        out
+    } else {
+        format!("{}…({n} chars)", head(&out, MAX_CHARS))
     }
 }
 
-/// The first `max` characters, with a marker saying how much there was.
-/// Counted in characters, never bytes — cutting a multibyte character in
-/// half is exactly the mistake a length cap invites.
+/// Where the next URL begins: the scheme before a `://`, any letter case.
+/// One pass over the string, whatever it contains.
+fn url_start(s: &str) -> Option<usize> {
+    s.match_indices("://").find_map(|(i, _)| {
+        let before = s.as_bytes().get(..i)?;
+        ["https", "http", "wss", "ws"].iter().find_map(|scheme| {
+            let n = scheme.len();
+            (before.len() >= n && before[before.len() - n..].eq_ignore_ascii_case(scheme.as_bytes()))
+                .then_some(i - n)
+        })
+    })
+}
+
+/// The first `max` characters of an upstream body, for an error MESSAGE.
+///
+/// The marker carries no digits on purpose. This text is read by
+/// `is_permanent_tool_failure` and its siblings, which look for `(402`
+/// and the like — a marker saying `(402 chars)` after a 503 would have
+/// retired the search tool for the rest of the turn.
 pub fn clip(s: &str, max: usize) -> String {
-    let n = s.chars().count();
-    if n <= max {
+    if s.chars().count() <= max {
         return s.to_string();
     }
-    let head: String = s.chars().take(max).collect();
-    format!("{head}…({n} chars)")
+    format!("{}…[cut]", head(s, max))
+}
+
+/// Counted in characters, never bytes — cutting a multibyte character in
+/// half is exactly the mistake a length cap invites.
+fn head(s: &str, max: usize) -> String {
+    s.chars().take(max).collect()
 }
 
 #[cfg(test)]
@@ -78,8 +104,7 @@ mod tests {
         let safe = error(chain);
         assert!(!safe.contains("milligrams"), "{safe}");
         assert!(!safe.contains("duckduckgo"), "{safe}");
-        assert!(safe.contains("for url (<url>)"), "{safe}");
-        assert!(safe.contains("operation timed out"), "lost the cause: {safe}");
+        assert!(safe.contains("for url (<url>): operation timed out"), "{safe}");
     }
 
     /// The whole fallback chain carries the question once per engine.
@@ -100,11 +125,45 @@ mod tests {
         assert!(safe.contains("fallback also failed"), "{safe}");
     }
 
+    /// Brackets and commas are legal inside a URL. A wiki title with a
+    /// disambiguator, an image path with size parameters: the first cut
+    /// of this function stopped at the `)` and the `,` and wrote the rest
+    /// of the address out.
+    #[test]
+    fn punctuation_inside_a_url_does_not_end_the_scrub_early() {
+        let wiki = error(
+            "error sending request for url \
+             (https://de.wikipedia.org/wiki/Krebs_(Medizin)#Therapie): operation timed out",
+        );
+        assert!(!wiki.contains("Medizin"), "{wiki}");
+        assert!(!wiki.contains("Therapie"), "{wiki}");
+        assert_eq!(wiki, "error sending request for url (<url>): operation timed out");
+
+        let image = error(
+            "LLM error 400: Error while downloading \
+             https://img.example/fam/upload/w_300,h_200/scan-12w.jpg.",
+        );
+        assert!(!image.contains("scan-12w"), "{image}");
+        assert!(!image.contains("h_200"), "{image}");
+        assert_eq!(image, "LLM error 400: Error while downloading <url>.");
+    }
+
+    /// Debug output and upstream bodies are not normalised by the url
+    /// crate, so the scheme can arrive in any case, and a websocket
+    /// address is an address too.
+    #[test]
+    fn schemes_are_matched_in_any_case() {
+        assert_eq!(error("downloading HTTPS://Example.org/q?text=private+thing failed"), "downloading <url> failed");
+        assert_eq!(error("dial wss://host.example/kin?token=abc: refused"), "dial <url>: refused");
+        assert_eq!(error("xhttp://a.example/b"), "x<url>");
+    }
+
     /// A URL at the very end of a sentence, and one followed by a comma.
     #[test]
     fn urls_at_the_edges_of_a_sentence_are_found() {
         assert_eq!(error("too many redirects fetching https://a.example/x/y"), "too many redirects fetching <url>");
         assert_eq!(error("tried https://a.example/p, then gave up"), "tried <url>, then gave up");
+        assert_eq!(error("https://only.example/x"), "<url>");
     }
 
     #[test]
@@ -113,6 +172,7 @@ mod tests {
             "the server answered 403 Forbidden",
             "connection reset by peer (os error 54)",
             "Exa search failed (401): invalid api key",
+            "a ratio like 3://4 is not a scheme",
             "",
         ] {
             assert_eq!(error(msg), msg);
@@ -130,12 +190,20 @@ mod tests {
         assert!(safe.starts_with("LLM error 400"), "{safe}");
     }
 
+    /// `clip` output is embedded in error MESSAGES the classifiers read.
+    /// Its marker must never introduce a number that reads as a status.
+    #[test]
+    fn clip_marker_carries_no_digits() {
+        let cut = clip(&"x".repeat(402), 200);
+        assert!(cut.starts_with(&"x".repeat(200)), "{cut}");
+        assert!(!cut.chars().any(|c| c.is_ascii_digit()), "{cut}");
+        assert!(cut.ends_with("…[cut]"), "{cut}");
+    }
+
     #[test]
     fn clipping_counts_characters_not_bytes() {
         let s = "ü".repeat(10);
         assert_eq!(clip(&s, 10), s);
-        let cut = clip(&s, 4);
-        assert!(cut.starts_with("üüüü…"), "{cut}");
-        assert!(cut.ends_with("(10 chars)"), "{cut}");
+        assert_eq!(clip(&s, 4), "üüüü…[cut]");
     }
 }

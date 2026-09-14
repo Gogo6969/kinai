@@ -904,7 +904,10 @@ async fn dispatch(
                             {
                                 Ok(Ok(report)) => (true, report),
                                 Ok(Err(e)) => {
-                                    tracing::warn!("fact check for peer {peer} failed: {e:#}");
+                                    tracing::warn!(
+                                        "fact check for peer {peer} failed: {}",
+                                        crate::logsafe::error(&format!("{e:#}"))
+                                    );
                                     (
                                         false,
                                         "Fact check failed — the checker model returned an error. The host can see details in the KinAI log."
@@ -920,7 +923,10 @@ async fn dispatch(
                         }
                         Ok(None) => (false, "That message can't be fact-checked.".to_string()),
                         Err(e) => {
-                            tracing::warn!("fact check db lookup for peer {peer} failed: {e:#}");
+                            tracing::warn!(
+                                "fact check db lookup for peer {peer} failed: {}",
+                                crate::logsafe::error(&format!("{e:#}"))
+                            );
                             (false, "Fact check failed — please try again.".to_string())
                         }
                     }

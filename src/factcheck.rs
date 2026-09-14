@@ -114,7 +114,10 @@ strings, nothing else.\n\nQUESTION:\n{question}\n\nANSWER:\n{answer}"
             parse_query_array(&r.content)
         }
         Err(e) => {
-            tracing::warn!("fact check query step failed ({e:#}); using fallback query");
+            tracing::warn!(
+                "fact check query step failed ({}); using fallback query",
+                crate::logsafe::error(&format!("{e:#}"))
+            );
             Vec::new()
         }
     };

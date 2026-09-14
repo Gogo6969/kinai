@@ -383,9 +383,13 @@ pub async fn open(
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
         // OpenAI-compatible servers echo the offending request in some
-        // 400 bodies — a prompt, quoted back. Keep enough to classify
-        // (`tool_choice` rejections are matched on this text), no more.
-        return Err(anyhow!("LLM error {status}: {}", crate::logsafe::clip(&body, 300)));
+        // 400 bodies — a prompt, quoted back. Keep enough to read, no
+        // more. The forced-search fallback keys on `tool_choice` in this
+        // text, and an OpenAI-shaped body names the parameter LAST — past
+        // a 300-char cut once the message is long. So classify the raw
+        // body here and carry the verdict as a tag the matcher sees.
+        let tag = if crate::llm::is_tool_choice_rejection(&body) { " [tool_choice not supported]" } else { "" };
+        return Err(anyhow!("LLM error {status}{tag}: {}", crate::logsafe::clip(&body, 300)));
     }
     let (tx, rx) = mpsc::unbounded_channel();
     let cancel_for_task = cancel.clone();

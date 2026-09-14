@@ -210,8 +210,14 @@ fn parse_extractor_json(text: &str) -> Result<ExtractorResponse> {
         return Err(anyhow!("malformed JSON range"));
     }
     let json_slice = &stripped[start..=end];
-    let parsed: ExtractorResponse = serde_json::from_str(json_slice)
-        .map_err(|e| anyhow!("extractor JSON parse: {e} :: {json_slice}"))?;
+    // Never the slice itself: it is the list of facts the model just
+    // pulled out of what the member said, and this error is logged. A
+    // small model produces near-valid JSON — a trailing comma, single
+    // quotes — often enough that this branch is routine, not rare.
+    // serde's message already carries the line and column.
+    let parsed: ExtractorResponse = serde_json::from_str(json_slice).map_err(|e| {
+        anyhow!("extractor JSON parse: {e} ({} chars)", json_slice.chars().count())
+    })?;
     Ok(parsed)
 }
 
@@ -298,5 +304,19 @@ mod tests {
         let text = r#"{"facts":[]}"#;
         let parsed = parse_extractor_json(text).unwrap();
         assert!(parsed.facts.is_empty());
+    }
+
+    /// The parse error is logged. A small model's near-valid JSON — a
+    /// trailing comma here — used to be pasted into it whole, and that
+    /// JSON is the list of facts just pulled out of what the member said.
+    #[test]
+    fn a_failed_parse_does_not_carry_the_facts_into_the_error() {
+        let almost = r#"{"facts":[{"key":"daughter_condition","value":"SECRETWORD"},]}"#;
+        let err = parse_extractor_json(almost).expect_err("trailing comma must not parse");
+        let text = format!("{err:#}");
+        assert!(!text.contains("SECRETWORD"), "{text}");
+        assert!(!text.contains("daughter_condition"), "{text}");
+        assert!(text.contains("extractor JSON parse"), "{text}");
+        assert!(text.contains("chars)"), "size survives as the diagnostic: {text}");
     }
 }

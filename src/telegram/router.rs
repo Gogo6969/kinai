@@ -169,7 +169,7 @@ pub async fn handle_update<R: Runtime>(
     if let Err(e) = run_turn_for_peer(api, state, app, chat_id, &peer_id, &text_or_caption, msg)
         .await
     {
-        tracing::warn!("telegram run_turn: {e:?}");
+        tracing::warn!("telegram run_turn: {}", crate::logsafe::error(&format!("{e:#}")));
         let _ = api
             .send_message(chat_id, &humanize_turn_error(&e.to_string()))
             .await;

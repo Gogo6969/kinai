@@ -202,11 +202,17 @@ impl LlmClient {
                 builder = builder.bearer_auth(key);
             }
         }
-        let resp = builder.send().await?;
+        let resp = builder.send().await.map_err(reqwest::Error::without_url)?;
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            return Err(anyhow!("LLM error {status}: {body}"));
+            // Same treatment as the streaming twin in `stream.rs`: some
+            // servers echo the request inside a 400 body, and this
+            // message is logged by the fact checker. Classified on the
+            // raw body first, carried as a tag, so the clip cannot push
+            // a provider's `"param":"tool_choice"` past the cut.
+            let tag = if is_tool_choice_rejection(&body) { " [tool_choice not supported]" } else { "" };
+            return Err(anyhow!("LLM error {status}{tag}: {}", crate::logsafe::clip(&body, 300)));
         }
         let parsed: ChatRespFull = resp.json().await?;
         let choice = parsed

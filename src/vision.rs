@@ -533,8 +533,9 @@ pub async fn run_with_route(
                     }
                     let fo = failover.unwrap();
                     tracing::warn!(
-                        "vision primary ({}) failed transiently: {msg} — failing over to {}",
+                        "vision primary ({}) failed transiently: {} — failing over to {}",
                         primary.label,
+                        crate::logsafe::error(&msg),
                         fo.label
                     );
                     run_vision_endpoint(

@@ -29,6 +29,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   model servers echo the request back inside a 400 error; that could have
   put a prompt into the log wholesale. Three hundred characters is enough
   to see what broke.
+- **A memory that failed to save no longer lands in the log on its way
+  out.** When the model's list of things worth remembering came back as
+  almost-valid JSON — a stray comma is enough — the whole list was written
+  into the error, facts and all. The error now says how long it was.
 
 ## [0.2.128] — 2026-09-13
 

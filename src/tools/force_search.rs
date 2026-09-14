@@ -635,9 +635,15 @@ math, and general knowledge all work fine.)";
         for msg in [
             "I couldn't read it — the transcript service could not read that video.",
             "That video has no captions to read, so I can't tell you what was said.",
-            "YouTube is rate-limiting transcript downloads right now; try again in a few minutes.",
         ] {
             assert!(is_tool_outage_claim(msg), "not flagged: {msg:?}");
+        }
+        // The literal sentences the tool hands the model, as the model
+        // would repeat them. Pinned here so a rewrite on either side
+        // cannot silently stop matching.
+        for s in crate::tools::video_transcript::USER_VISIBLE {
+            let repeated = format!("Sorry — {s}.");
+            assert!(is_tool_outage_claim(&repeated), "not flagged: {repeated:?}");
         }
     }
 
