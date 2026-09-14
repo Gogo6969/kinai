@@ -5,6 +5,20 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.130] — 2026-09-15
+
+### Fixed
+
+- **Snoozing a repeating reminder now actually snoozes it.** Press "10 min"
+  on a daily reminder and the card came straight back — the host marked
+  the row "due" again the moment it was pushed away, so the popup, the
+  Calendar's "due now" badge and KinAI's own list all disagreed with what
+  you had just asked for. Escape on the popup is a ten-minute snooze, so a
+  reflex keypress on a repeating reminder was the most likely way to hit
+  it. A snoozed repeat now behaves exactly like a snoozed one-off: gone
+  until the time you chose, back when it arrives, and the series itself
+  is untouched — tomorrow's occurrence is still tomorrow's.
+
 ## [0.2.129] — 2026-09-14
 
 ### Fixed

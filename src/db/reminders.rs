@@ -402,11 +402,22 @@ pub async fn snooze(
     }
 
     let due_local = local_display(new_due, &current.tz);
-    // A repeating row stays `fired` while its occurrence is outstanding —
-    // the member asked to be poked again about THIS one, not to have it
-    // marked handled.
-    let (next_status, keep_fired) =
-        if repeat.repeats() { ("fired", true) } else { ("scheduled", false) };
+    // `scheduled` for a repeat too. It used to stay `fired`, on the theory
+    // that the occurrence was still outstanding — but nothing in the
+    // scheduler reads status for that: the series steps from
+    // `occurrence_local` (untouched above), `lease_due` leases a
+    // scheduled row when its `due_at` arrives, and `is_new_occurrence`
+    // compares instants. All `fired` did was tell every list consumer —
+    // the popup queue, the Calendar's "due now", the model's own listing
+    // — that a reminder the member had just pushed ten minutes away was
+    // due right now. Proven on 2026-09-14: snooze a daily reminder over
+    // the API and it came back listed `fired` with `due_at` ten minutes
+    // out, so the popup re-queued it on the very next refresh.
+    //
+    // `fired_at` is kept on a repeat as the record of the last delivery;
+    // `is_new_occurrence` deliberately never reads it.
+    let keep_fired = repeat.repeats();
+    let next_status = "scheduled";
     let row = sqlx::query(&format!(
         "UPDATE reminders
          SET due_at = ?1, due_local = ?2, status = ?6,
@@ -703,6 +714,87 @@ mod tests {
         assert_eq!(day3.due_local, "2026-11-13T09:00");
     }
 
+    /// A wall clock one hour ago in Berlin, so a seeded series is already
+    /// due against the real clock — `snooze` reads `Utc::now()` itself,
+    /// so these two tests cannot run on a synthetic date.
+    fn an_hour_ago_in_berlin() -> String {
+        let tz: chrono_tz::Tz = BERLIN.parse().unwrap();
+        (Utc::now().with_timezone(&tz) - Duration::hours(1))
+            .naive_local()
+            .format("%Y-%m-%dT%H:%M")
+            .to_string()
+    }
+
+    /// 2026-09-14, proven over the API on the installed host: snooze a
+    /// daily reminder ten minutes and it came back listed `fired` with
+    /// `due_at` ten minutes out — which is the row the popup queues, so
+    /// the card returned on the next refresh. A snoozed repeat must be
+    /// out of the way until its time and re-delivered when it arrives.
+    #[tokio::test]
+    async fn a_snoozed_repeat_is_not_due_until_the_snooze_elapses() {
+        let pool = fresh_pool().await;
+        let anchor = an_hour_ago_in_berlin();
+        let seeded = seed_daily(&pool, "ALICE", &anchor).await;
+        let fired = fire_once(&pool, "ALICE", Utc::now()).await;
+        assert_eq!(fired.status, "fired");
+
+        let before = Utc::now();
+        let s = snooze(&pool, "ALICE", &seeded.id, 10).await.unwrap().unwrap();
+        assert_eq!(s.status, "scheduled", "what every list consumer reads as 'not due'");
+        assert_eq!(s.occurrence_local, anchor, "the series did not move");
+        assert!(s.fired_at.is_some(), "last delivery kept on record");
+        let due = chrono::DateTime::parse_from_rfc3339(&s.due_at).unwrap().with_timezone(&Utc);
+        let ahead = (due - before).num_seconds();
+        assert!((9 * 60..=11 * 60).contains(&ahead), "due {ahead}s ahead, expected ~600");
+
+        // Not due now — and exactly due once the ten minutes pass, as the
+        // same occurrence (the anchor is untouched, so the scheduler
+        // re-pokes rather than stepping the series).
+        assert!(lease_due(&pool, Utc::now()).await.unwrap().is_empty(), "not leased early");
+        let later = lease_due(&pool, Utc::now() + Duration::minutes(11)).await.unwrap();
+        assert_eq!(later.len(), 1, "re-leased when the snooze elapses");
+        let tz = later[0].tz.parse::<chrono_tz::Tz>().ok();
+        assert!(
+            !is_new_occurrence(&later[0], crate::reminders::spec::Repeat::Daily, parse_wall(&anchor), tz),
+            "a snooze coming back round is the same occurrence"
+        );
+    }
+
+    /// "Tomorrow" on a daily reminder folds the snooze onto the next
+    /// occurrence. That row used to be byte-identical to a fresh
+    /// delivery — status `fired`, same `due_at` — so no reader could tell
+    /// "leave me alone until tomorrow" from "due right now". Now it is
+    /// `scheduled`, and when tomorrow arrives the series steps as if the
+    /// skipped occurrence had been acknowledged.
+    #[tokio::test]
+    async fn a_snooze_that_folds_onto_the_next_occurrence_waits_for_it() {
+        let pool = fresh_pool().await;
+        let anchor = an_hour_ago_in_berlin();
+        let seeded = seed_daily(&pool, "ALICE", &anchor).await;
+        let fired = fire_once(&pool, "ALICE", Utc::now()).await;
+        let next_at = chrono::DateTime::parse_from_rfc3339(&fired.due_at).unwrap().with_timezone(&Utc);
+
+        // 25 hours reaches past tomorrow's occurrence: folded back onto it.
+        let s = snooze(&pool, "ALICE", &seeded.id, 25 * 60).await.unwrap().unwrap();
+        assert_eq!(s.status, "scheduled", "out of the way until tomorrow");
+        assert_eq!(s.due_at, next_at.to_rfc3339(), "folded exactly onto the next occurrence");
+        assert_eq!(s.occurrence_local, anchor, "anchor untouched by the fold");
+        assert!(lease_due(&pool, Utc::now()).await.unwrap().is_empty(), "nothing due today");
+
+        // Tomorrow: the scheduler treats it as the next occurrence and
+        // steps the grid, so the day after is still on time.
+        let tomorrow = fire_once(&pool, "ALICE", next_at + Duration::minutes(1)).await;
+        let expected = crate::reminders::spec::next_local(
+            parse_wall(&anchor).unwrap(),
+            crate::reminders::spec::Repeat::Daily,
+        )
+        .unwrap()
+        .format("%Y-%m-%dT%H:%M")
+        .to_string();
+        assert_eq!(tomorrow.occurrence_local, expected, "the grid stepped once");
+        assert_eq!(tomorrow.status, "fired");
+    }
+
     /// Snoozing moves this poke and nothing else. The guarantee is
     /// structural: no member-facing verb writes `occurrence_local`.
     #[tokio::test]
@@ -718,8 +810,11 @@ mod tests {
                 s.occurrence_local, "2026-11-10T09:00",
                 "snooze must never touch the anchor"
             );
-            assert_eq!(s.status, "fired", "still outstanding, not quietly handled");
-            assert!(s.fired_at.is_some(), "and still flagged as delivered");
+            // `scheduled`, not `fired`: a snoozed repeat is out of the way
+            // until its time, exactly like a snoozed one-off. `fired`
+            // here is what put the card straight back on screen.
+            assert_eq!(s.status, "scheduled", "pushed away, not due");
+            assert!(s.fired_at.is_some(), "the last delivery stays on record");
         }
 
         // Tomorrow is still 09:00, not 09:50.
