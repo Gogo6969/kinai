@@ -1,20 +1,31 @@
 <script lang="ts">
   /**
-   * Due-reminder popup — shows the first of `app.dueReminders`.
+   * Due-reminder popup — shows one of `app.dueReminders` at a time, with
+   * a pager when more than one is waiting.
    *
    * Mounted by `+layout.svelte` next to ChangelogModal so it overlays
    * every route. Each button calls `app.reminderAction`, which re-syncs
-   * the list and drops the id from the queue; the next queued reminder
-   * (if any) takes its place, otherwise the popup closes.
+   * the list and drops the id from the queue; the queue closes up and the
+   * card at the same position takes over, otherwise the popup closes.
+   *
+   * It used to show `dueReminders[0]` and nothing else, so opening the
+   * app after five had gone off meant five forced decisions with no way
+   * to look ahead — and the only sign there were more was an 11px line at
+   * 35% opacity, which the amber "late" badge hid in exactly the case
+   * where it mattered (they share the header's right-hand slot, and
+   * anything waiting since before launch is late by definition).
    *
    * Escape means "snooze 10 min" — never acknowledge: a reflex keypress
    * must not silently discard something the member asked to be told
-   * about. Clicking the backdrop does nothing for the same reason.
+   * about. Clicking the backdrop does nothing for the same reason. Left
+   * and Right move between cards without deciding anything.
    */
   import { onMount } from 'svelte';
   import {
     BellRing,
     Check,
+    ChevronLeft,
+    ChevronRight,
     ExternalLink,
     Link as LinkIcon,
     MessageSquare,
@@ -32,7 +43,22 @@
     timeOf,
   } from '$lib/reminders';
 
-  const current = $derived(app.dueReminders[0] ?? null);
+  /** Which card is on screen. Kept as a POSITION rather than an id: the
+   *  queue only ever appends or removes one row, so a clamped index lands
+   *  on the sensible card every time — handle the middle one of five and
+   *  the one that shifted into its place is next; handle the last and you
+   *  step back; a reminder firing while the popup is open changes only
+   *  the count. An id would have to answer "and if that id is gone?"
+   *  every time. */
+  let index = $state(0);
+  const total = $derived(app.dueReminders.length);
+  const pos = $derived(total === 0 ? 0 : Math.min(index, total - 1));
+  const current = $derived(app.dueReminders[pos] ?? null);
+  // Fold the clamp back, or a reminder arriving after the member handled
+  // the last card would jump them forward to it.
+  $effect(() => {
+    if (index !== pos) index = pos;
+  });
   let busy = $state(false);
 
   /** Re-render the "late" badge as time passes, so a popup left on screen
@@ -67,8 +93,12 @@
   const split = $derived(current ? splitLinks(current.text) : { prose: '', links: [] });
   const shownLinks = $derived(split.links.slice(0, 2));
   const moreLinks = $derived(Math.max(0, split.links.length - shownLinks.length));
+  // Same string the clock is read from: a repeating reminder's `due_local`
+  // is already pointing at tomorrow while today's occurrence is still on
+  // screen, and taking the day from it labelled this morning's 07:00
+  // "tomorrow".
   const day = $derived(
-    current ? dayLabel(dayOf(current.due_local), new Date(), current.tz).toLowerCase() : ''
+    current ? dayLabel(dayOf(shownClock), new Date(), current.tz).toLowerCase() : ''
   );
   const late = $derived.by(() => {
     void tick;
@@ -121,12 +151,29 @@
     }
   }
 
+  function go(to: number) {
+    if (busy) return;
+    index = Math.max(0, Math.min(to, total - 1));
+  }
+
   function onKeyDown(e: KeyboardEvent) {
     // ChangelogModal (mounted first, stacked above) claims Escape with
     // preventDefault when it is open — don't snooze underneath it.
-    if (e.key === 'Escape' && current && !e.defaultPrevented) {
+    if (!current || e.defaultPrevented) return;
+    const t = e.target as HTMLElement | null;
+    if (t?.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t?.tagName ?? '')) return;
+    if (e.key === 'Escape') {
       e.preventDefault();
       void act('snooze', 10);
+      return;
+    }
+    // Reading is not deciding: the arrows never touch the reminder.
+    if (e.key === 'ArrowLeft' && pos > 0) {
+      e.preventDefault();
+      go(pos - 1);
+    } else if (e.key === 'ArrowRight' && pos < total - 1) {
+      e.preventDefault();
+      go(pos + 1);
     }
   }
 
@@ -155,19 +202,53 @@
           <BellRing size={15} class="kin-rem-accent self-center shrink-0" aria-hidden="true" />
           <span class="text-[15px] font-medium tabular-nums">{timeOf(shownClock)}</span>
           <span class="text-xs text-white/40">{day}</span>
-          {#if late}
-            <span
-              class="kin-rem-late ml-auto text-[11px] rounded-full px-2.5 py-0.5 shrink-0"
-            >
-              {late}
-            </span>
-          {:else if app.dueReminders.length > 1}
-            <span class="ml-auto text-[11px] text-white/40 shrink-0">
-              +{app.dueReminders.length - 1} waiting
-            </span>
-          {/if}
+          <!-- The badge and the pager used to fight over this slot as an
+               if/else. They both belong here: "late" is about this card,
+               "3 of 5" is about the pile. -->
+          <div class="ml-auto flex items-center gap-1.5 shrink-0 self-center">
+            {#if late}
+              <span class="kin-rem-late text-[11px] rounded-full px-2.5 py-0.5">
+                {late}
+              </span>
+            {/if}
+            {#if total > 1}
+              <div
+                class="kin-rem-inset flex items-center rounded-lg p-[3px]"
+                role="group"
+                aria-label="Move between the reminders waiting"
+              >
+                <button
+                  type="button"
+                  class="kin-rem-page"
+                  disabled={busy || pos === 0}
+                  aria-label="Previous reminder"
+                  onclick={() => go(pos - 1)}
+                >
+                  <ChevronLeft size={14} aria-hidden="true" />
+                </button>
+                <span class="kin-rem-count px-1 text-[11px] tabular-nums">{pos + 1} of {total}</span>
+                <button
+                  type="button"
+                  class="kin-rem-page"
+                  disabled={busy || pos >= total - 1}
+                  aria-label="Next reminder"
+                  onclick={() => go(pos + 1)}
+                >
+                  <ChevronRight size={14} aria-hidden="true" />
+                </button>
+              </div>
+            {/if}
+          </div>
         </div>
       </header>
+
+      <!-- Cycling changes the dialog's contents under a screen reader
+           without any announcement, and a live region created at the
+           moment its first message appears is not read out — so this one
+           exists for as long as the popup does. -->
+      <p class="sr-only" aria-live="polite">
+        {total > 1 ? `Reminder ${pos + 1} of ${total}. ` : ''}{heroText}
+      </p>
 
       <div class="px-5 pt-3.5 {expanded ? 'max-h-[45vh] overflow-y-auto' : ''}">
         <p
@@ -221,11 +302,6 @@
           <p class="mt-2 text-[11px] text-white/35">+{moreLinks} more link{moreLinks > 1 ? 's' : ''} in this reminder</p>
         {/if}
 
-        {#if app.dueReminders.length > 1 && late}
-          <p class="mt-2 text-[11px] text-white/35">
-            +{app.dueReminders.length - 1} more reminder{app.dueReminders.length > 2 ? 's' : ''} waiting
-          </p>
-        {/if}
       </div>
 
       <footer class="px-5 pt-4 pb-4 flex items-center gap-2">
@@ -314,6 +390,28 @@
   }
   :global(html.light) .kin-snooze {
     @apply text-ink-900/70 hover:bg-black/5 hover:text-ink-900;
+  }
+
+  /* Pager chevrons. `disabled:hover:bg-transparent` is repeated in the
+     light block on purpose: `html.light .kin-rem-page:hover` outranks
+     `.kin-rem-page:hover:disabled` on specificity, so without it a dead
+     chevron still lights up under the pointer on white. */
+  .kin-rem-page {
+    @apply rounded-md p-1 text-ink-50/70 hover:bg-white/10 hover:text-ink-50
+           transition-colors disabled:opacity-30 disabled:hover:bg-transparent;
+  }
+  :global(html.light) .kin-rem-page {
+    @apply text-ink-900/60 hover:bg-black/5 hover:text-ink-900
+           disabled:hover:bg-transparent;
+  }
+
+  /* "3 of 5". A bare text-white/55 was invisible on the light card — the
+     same trap the accent and late colours above are spelled out for. */
+  .kin-rem-count {
+    @apply text-ink-50/60;
+  }
+  :global(html.light) .kin-rem-count {
+    @apply text-ink-900/60;
   }
 
   /* Dark is the default; the light theme is an allowlist elsewhere in

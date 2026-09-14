@@ -5,6 +5,30 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.128] — 2026-09-13
+
+### Changed
+
+- **The reminder card counts the ones behind it, and lets you look.** Open
+  KinAI after five went off and the card now says "1 of 5", with arrows to
+  move through them — the left and right keys work too. Reading is not
+  deciding: moving between them changes nothing, and Escape still snoozes
+  the one you are looking at for ten minutes. Before this, the only sign
+  there were more was a grey line so faint it was easy to miss, and it was
+  hidden altogether whenever the reminder was late — which is always the
+  case for anything that went off before you opened the app. The only way
+  to see the second one was to deal with the first.
+
+### Fixed
+
+- **A reminder already handled somewhere else no longer sits in the pile.**
+  One dealt with on the Calendar page, over Telegram, or on another device
+  stayed in the popup queue until you acted on it again — and acting on it
+  showed you an error, because the host had already moved on.
+- **A repeating reminder shows today's day, not tomorrow's.** While this
+  morning's occurrence was still on screen, the card read the day from the
+  next one, so a 7am daily reminder announced itself as "07:00 tomorrow".
+
 ## [0.2.127] — 2026-09-12
 
 ### Fixed

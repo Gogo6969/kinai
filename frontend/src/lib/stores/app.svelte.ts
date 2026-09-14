@@ -589,7 +589,16 @@ class AppStore {
   async loadReminders() {
     try {
       this.reminders = await api.listReminders();
-      this.queueDueReminders(this.reminders.filter((r) => r.status === 'fired'));
+      const fired = this.reminders.filter((r) => r.status === 'fired');
+      // Drop what the host no longer holds as due: handled on the
+      // Calendar page, over Telegram, on another device, or cancelled by
+      // the model. The queue only ever grew before, which was invisible
+      // while the popup showed one card — now that the card counts them
+      // out loud, a stale row is a number that lies and an arrow onto a
+      // reminder that answers "not yours to act on, or already done".
+      const live = new Set(fired.map((r) => r.id));
+      this.dueReminders = this.dueReminders.filter((r) => live.has(r.id));
+      this.queueDueReminders(fired);
     } catch (e) {
       console.warn('reminders', e);
     }
