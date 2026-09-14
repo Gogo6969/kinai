@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-09-12T00:57:09+00:00",
-  "version": "0.2.126",
+  "generated_at": "2026-09-14T16:20:57+00:00",
+  "version": "0.2.129",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 344,
-    "head": "bbc7908"
+    "commits": 349,
+    "head": "fef93dc"
   },
   "totals": {
-    "rust_files": 68,
-    "rust_lines": 33376,
+    "rust_files": 69,
+    "rust_lines": 33911,
     "frontend_files": 37,
-    "frontend_lines": 13575,
-    "unit_tests": 337,
+    "frontend_lines": 13682,
+    "unit_tests": 352,
     "integration_test_files": 19,
-    "releases": 118,
-    "tags": 113
+    "releases": 121,
+    "tags": 116
   },
   "areas": [
     {
@@ -80,7 +80,7 @@
     {
       "path": "src/attachments.rs",
       "area": "input",
-      "lines": 115,
+      "lines": 121,
       "doc": "Attachment ingestion — for now: PDF → text. Image bytes pass through untouched (to be consumed by a future vision-routing pipeline).",
       "tests": 0
     },
@@ -136,9 +136,9 @@
     {
       "path": "src/context/extractor.rs",
       "area": "context",
-      "lines": 301,
+      "lines": 323,
       "doc": "Passive fact extraction.",
-      "tests": 6
+      "tests": 7
     },
     {
       "path": "src/context/memory.rs",
@@ -234,14 +234,14 @@
     {
       "path": "src/discovery.rs",
       "area": "media",
-      "lines": 148,
+      "lines": 150,
       "doc": "mDNS / Bonjour-style discovery for local-network hosts.",
       "tests": 0
     },
     {
       "path": "src/factcheck.rs",
       "area": "routing",
-      "lines": 328,
+      "lines": 337,
       "doc": "Independent fact-check of a single assistant reply.",
       "tests": 2
     },
@@ -255,7 +255,7 @@
     {
       "path": "src/lib.rs",
       "area": "entry",
-      "lines": 586,
+      "lines": 587,
       "doc": "KinAI library entrypoint — wires Tauri shell, Axum HTTP/WS server, tray, global hotkey, LLM client, and the never-lose-context pipeline.",
       "tests": 0
     },
@@ -269,16 +269,23 @@
     {
       "path": "src/llm/mod.rs",
       "area": "llm",
-      "lines": 611,
+      "lines": 617,
       "doc": "Local LLM client.",
       "tests": 11
     },
     {
       "path": "src/llm/stream.rs",
       "area": "llm",
-      "lines": 651,
+      "lines": 664,
       "doc": "Server-Sent-Events parser for OpenAI-style streaming chat completions.",
       "tests": 5
+    },
+    {
+      "path": "src/logsafe.rs",
+      "area": "other",
+      "lines": 210,
+      "doc": "What an error may look like by the time it reaches the host's log.",
+      "tests": 9
     },
     {
       "path": "src/main.rs",
@@ -339,7 +346,7 @@
     {
       "path": "src/network/server.rs",
       "area": "network",
-      "lines": 1511,
+      "lines": 1519,
       "doc": "Host-side Axum HTTP+WebSocket server.",
       "tests": 0
     },
@@ -374,7 +381,7 @@
     {
       "path": "src/slash.rs",
       "area": "routing",
-      "lines": 1069,
+      "lines": 1072,
       "doc": "Slash commands — intercepted BEFORE the LLM pipeline so messages starting with /pic, /picHQ, /help, ? skip the chat model entirely and route to native handlers (ComfyUI for image gen, a static command list for help).",
       "tests": 18
     },
@@ -423,7 +430,7 @@
     {
       "path": "src/telegram/router.rs",
       "area": "telegram",
-      "lines": 1683,
+      "lines": 1688,
       "doc": "Route incoming Telegram updates into KinAI's chat pipeline.",
       "tests": 13
     },
@@ -437,44 +444,44 @@
     {
       "path": "src/tools/datetime.rs",
       "area": "tools",
-      "lines": 154,
+      "lines": 156,
       "doc": "Current date / time on the host machine.",
       "tests": 4
     },
     {
       "path": "src/tools/fetch_page.rs",
       "area": "tools",
-      "lines": 783,
+      "lines": 792,
       "doc": "Fetch a URL the user gave and return its text.",
       "tests": 16
     },
     {
       "path": "src/tools/force_search.rs",
       "area": "tools",
-      "lines": 890,
+      "lines": 896,
       "doc": "Taking the \"should I search?\" decision away from the model.",
       "tests": 14
     },
     {
       "path": "src/tools/image_recover.rs",
       "area": "tools",
-      "lines": 124,
+      "lines": 126,
       "doc": "Recover hallucinated image URLs in assistant replies.",
       "tests": 0
     },
     {
       "path": "src/tools/image_search.rs",
       "area": "tools",
-      "lines": 334,
+      "lines": 345,
       "doc": "Image search dispatcher.",
       "tests": 3
     },
     {
       "path": "src/tools/loop_pipeline.rs",
       "area": "tools",
-      "lines": 1562,
+      "lines": 1734,
       "doc": "Tool-calling pipeline.",
-      "tests": 31
+      "tests": 36
     },
     {
       "path": "src/tools/mod.rs",
@@ -500,21 +507,21 @@
     {
       "path": "src/tools/video_transcript.rs",
       "area": "tools",
-      "lines": 180,
+      "lines": 200,
       "doc": "Read what a video actually says, via the family's own transcript service.",
       "tests": 4
     },
     {
       "path": "src/tools/web_search.rs",
       "area": "tools",
-      "lines": 658,
+      "lines": 678,
       "doc": "Web search dispatcher.",
       "tests": 4
     },
     {
       "path": "src/tools/x_search.rs",
       "area": "tools",
-      "lines": 380,
+      "lines": 387,
       "doc": "Social / discussion search.",
       "tests": 0
     },
@@ -549,7 +556,7 @@
     {
       "path": "src/vision.rs",
       "area": "routing",
-      "lines": 955,
+      "lines": 956,
       "doc": "Vision routing for image attachments.",
       "tests": 14
     }
@@ -606,8 +613,8 @@
     {
       "path": "frontend/src/lib/components/ReminderPopup.svelte",
       "kind": "component",
-      "lines": 363,
-      "doc": "Due-reminder popup — shows the first of `app.dueReminders`. Mounted by `+layout.svelte` next to ChangelogModal so it overlays every route. Each button calls `app.reminderAction`, which re-syncs the list and drops the id from the queue; the next queued reminder (if any) takes its place, otherwise the popup closes. Escape means \"snooze 10 min\" — never acknowledge: a reflex keypress must not silently"
+      "lines": 461,
+      "doc": "Due-reminder popup — shows one of `app.dueReminders` at a time, with a pager when more than one is waiting. Mounted by `+layout.svelte` next to ChangelogModal so it overlays every route. Each button calls `app.reminderAction`, which re-syncs the list and drops the id from the queue; the queue closes up and the card at the same position takes over, otherwise the popup closes. It used to show `dueRe"
     },
     {
       "path": "frontend/src/lib/components/Sidebar.svelte",
@@ -678,7 +685,7 @@
     {
       "path": "frontend/src/lib/stores/app.svelte.ts",
       "kind": "lib",
-      "lines": 1153,
+      "lines": 1162,
       "doc": "This machine can synthesize speech (macOS). Mac CLIENTS speak locally with their own voices; hosts are always Macs today."
     },
     {
@@ -1225,6 +1232,72 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.129",
+      "date": "2026-09-14",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "The log no longer records what the family was reading or asking, even when something failed.",
+            "detail": "0.2.126 stopped KinAI writing a tool's input into its log. The failure line was the gap: a page that refused to load wrote its full address, and a web search that timed out wrote the question itself — percent-encoded inside the address of the search engine, courtesy of the HTTP library's own error text, on a path no reader of this code would have found. Both are gone. Failures still say what went wrong — the status code, \"timed out\", which fallback failed — and never what was being looked up."
+          },
+          {
+            "title": "The same rule now covers every other line the host writes about itself.",
+            "detail": "An image search that fell back to Wikimedia logged the picture request; a fact-check that failed logged its query; a PDF that would not parse logged its filename; a saved memory that failed logged its label; a reported answer logged the reporter's name; and the network announcement logged the family's name. Each now records that the thing happened, and nothing about whom or what."
+          },
+          {
+            "title": "Error text from upstream services is capped before it is kept.",
+            "detail": "Some model servers echo the request back inside a 400 error; that could have put a prompt into the log wholesale. Three hundred characters is enough to see what broke."
+          },
+          {
+            "title": "A memory that failed to save no longer lands in the log on its way out.",
+            "detail": "When the model's list of things worth remembering came back as almost-valid JSON — a stray comma is enough — the whole list was written into the error, facts and all. The error now says how long it was."
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.2.128",
+      "date": "2026-09-13",
+      "sections": {
+        "Changed": [
+          {
+            "title": "The reminder card counts the ones behind it, and lets you look.",
+            "detail": "Open KinAI after five went off and the card now says \"1 of 5\", with arrows to move through them — the left and right keys work too. Reading is not deciding: moving between them changes nothing, and Escape still snoozes the one you are looking at for ten minutes. Before this, the only sign there were more was a grey line so faint it was easy to miss, and it was hidden altogether whenever the reminder was late — which is always the case for anything that went off before you opened the app. The only way to see the second one was to deal with the first."
+          }
+        ],
+        "Fixed": [
+          {
+            "title": "A reminder already handled somewhere else no longer sits in the pile.",
+            "detail": "One dealt with on the Calendar page, over Telegram, or on another device stayed in the popup queue until you acted on it again — and acting on it showed you an error, because the host had already moved on."
+          },
+          {
+            "title": "A repeating reminder shows today's day, not tomorrow's.",
+            "detail": "While this morning's occurrence was still on screen, the card read the day from the next one, so a 7am daily reminder announced itself as \"07:00 tomorrow\"."
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.2.127",
+      "date": "2026-09-12",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "A long video is read to the end.",
+            "detail": "Ask KinAI about a YouTube video and it fetched the whole transcript — then passed the model only the first 8,000 characters of it, roughly nine minutes of talking, and dropped the rest. It said so honestly (\"I could only analyse the first ten minutes\"), which is why this went unnoticed for a week: the answers were labelled, just thin. A transcript now travels whole, up to the same length the transcript reader itself allows. Nothing was ever wrong with the video, the captions, or the model."
+          },
+          {
+            "title": "The log now says when an answer was built on a shortened result",
+            "detail": ", and which limit shortened it. That warning existed but had never once fired on this host: a result cut by a tool's own ceiling reported itself as untouched, so the one line that would have shown the problem above was silent by construction."
+          },
+          {
+            "title": "A shortened result no longer blames the conversation's length when the conversation is short.",
+            "detail": "Both the log and the note handed to the model said \"to fit the model's context\" whatever the reason — so with the window nearly empty the model could still tell you the conversation had got too long, and suggest you start a new one for no reason."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.126",
       "date": "2026-09-11",
@@ -3662,6 +3735,18 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.129",
+      "date": "2026-09-14"
+    },
+    {
+      "tag": "v0.2.128",
+      "date": "2026-09-13"
+    },
+    {
+      "tag": "v0.2.127",
+      "date": "2026-09-12"
+    },
     {
       "tag": "v0.2.126",
       "date": "2026-09-11"
