@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-09-14T16:20:57+00:00",
-  "version": "0.2.129",
+  "generated_at": "2026-09-15T00:46:45+00:00",
+  "version": "0.2.130",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 349,
-    "head": "fef93dc"
+    "commits": 352,
+    "head": "a13b4a7"
   },
   "totals": {
     "rust_files": 69,
-    "rust_lines": 33911,
+    "rust_lines": 34006,
     "frontend_files": 37,
-    "frontend_lines": 13682,
-    "unit_tests": 352,
+    "frontend_lines": 13700,
+    "unit_tests": 354,
     "integration_test_files": 19,
-    "releases": 121,
-    "tags": 116
+    "releases": 122,
+    "tags": 117
   },
   "areas": [
     {
@@ -206,9 +206,9 @@
     {
       "path": "src/db/reminders.rs",
       "area": "db",
-      "lines": 1014,
+      "lines": 1109,
       "doc": "Reminders — per-member timed nudges. A family member sets one by asking KinAI (\"remind me tomorrow at 9 to …\"); the host's scheduler delivers it when due to the member's own devices and Telegram; the member acknowledges or snoozes it…",
-      "tests": 17
+      "tests": 19
     },
     {
       "path": "src/db/reports.rs",
@@ -727,7 +727,7 @@
     {
       "path": "frontend/src/routes/calendar/+page.svelte",
       "kind": "route",
-      "lines": 321,
+      "lines": 339,
       "doc": "Reminders bucketed by the day of `due_local`, chronological. Ordered by `due_at` — the real instant — so a member who set reminders in two zones still sees them in the order they fire, and grouped by day AND zone so a heading is never a claim about the wrong day."
     },
     {
@@ -1232,6 +1232,22 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.130",
+      "date": "2026-09-15",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "Snoozing a repeating reminder now actually snoozes it.",
+            "detail": "Press \"10 min\" on a daily reminder and the card came straight back — the host marked the row \"due\" again the moment it was pushed away, so the popup, the Calendar's \"due now\" badge and KinAI's own list all disagreed with what you had just asked for. Escape on the popup is a ten-minute snooze, so a reflex keypress on a repeating reminder was the most likely way to hit it. A snoozed repeat now behaves exactly like a snoozed one-off: gone until the time you chose, back when it arrives, and the series itself is untouched — tomorrow's occurrence is still tomorrow's."
+          },
+          {
+            "title": "A repeating reminder can be stopped from the Calendar while it is snoozed.",
+            "detail": "The Stop button used to appear only while the reminder was due; between pokes the row offered nothing but Delete, whose warning does not mention that every future occurrence goes with it."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.129",
       "date": "2026-09-14",
@@ -3735,6 +3751,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.130",
+      "date": "2026-09-14"
+    },
     {
       "tag": "v0.2.129",
       "date": "2026-09-14"
