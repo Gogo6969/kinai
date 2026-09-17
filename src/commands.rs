@@ -2886,6 +2886,23 @@ pub async fn revoke_invite(
     invite::revoke(&state.db.pool, &invite_id).await.map_err(err)
 }
 
+/// Rename a device from the Invites page.
+///
+/// The name is the host's own note about whose device this is — "Mum's
+/// iPad" — and it was previously fixed at the moment the invite was
+/// created. It shows on this page and, once the device connects, beside
+/// the name the device calls itself on Manage family.
+#[tauri::command]
+pub async fn rename_invite(
+    state: tauri::State<'_, SharedState>,
+    invite_id: String,
+    label: String,
+) -> Result<()> {
+    invite::rename(&state.db.pool, &invite_id, &label)
+        .await
+        .map_err(err)
+}
+
 #[tauri::command]
 pub async fn consume_invite(code: String) -> Result<invite::ResolvedInvite> {
     invite::parse_join_url(&code).map_err(err)

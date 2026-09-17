@@ -3,7 +3,12 @@
   import QRCode from 'qrcode';
   import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
-  import { Copy, RefreshCw, Trash2 } from '@lucide/svelte';
+  import { Check, Copy, Pencil, RefreshCw, Trash2, X } from '@lucide/svelte';
+
+  /** Mirrors `invite::MAX_LABEL_CHARS` on the host, so the three fields
+   *  that write this column agree with each other and with the gate
+   *  that would otherwise refuse them after a round trip. */
+  const MAX_LABEL = 60;
 
   let label = $state('Family device');
   // TTL options. `0` is the "never expires" sentinel — the backend
@@ -22,6 +27,14 @@
    *  unreadable, etc.). */
   let createError = $state<string>('');
 
+  /** The expiry as a number, or null when the stored value is not a
+   *  date at all. Parsed in one place so the readers below cannot
+   *  disagree about a row they cannot read. */
+  function expiryOf(inv: Invite): number | null {
+    const t = Date.parse(inv.expires_at);
+    return Number.isNaN(t) ? null : t;
+  }
+
   /** Heuristic: an invite issued with the "never" sentinel comes back
    *  with expires_at well past any human lifetime. If the year is
    *  more than 50 years out from now, treat it as never-expiring for
@@ -30,6 +43,112 @@
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return false;
     return d.getFullYear() - new Date().getFullYear() > 50;
+  }
+
+  function isExpired(inv: Invite): boolean {
+    if (isNeverExpiring(inv.expires_at)) return false;
+    const t = expiryOf(inv);
+    // A date the page cannot read is NOT quietly filed as expired — it
+    // is shown, with the expiry line saying it is unknown, because a
+    // working credential hidden by a parse failure is the worse half of
+    // the trade.
+    return t !== null && t < Date.now();
+  }
+
+  /** A reminder API key, not somebody's device. Same table so one Revoke
+   *  button covers both — which is exactly why it stays in the list;
+   *  the badge is what tells them apart. */
+  function isKey(inv: Invite): boolean {
+    return inv.scope === 'automation';
+  }
+
+  /** Can this still let something in? Revoked and expired cannot. A key
+   *  can, which is the reason to keep it in front of the host. */
+  function isActive(inv: Invite): boolean {
+    return !inv.revoked && !isExpired(inv);
+  }
+
+  // ---- The list, and what it is showing ----
+  // Defaults to the family's live devices: the page keeps revoked rows
+  // for about a week as a record, and after a few months of ordinary use
+  // they are most of the list. The count of what is hidden sits under
+  // the list with one click back to everything, so nothing is lost —
+  // only out of the way.
+  let activeOnly = $state(true);
+  const shown = $derived(activeOnly ? invites.filter(isActive) : invites);
+  const hidden = $derived(invites.length - shown.length);
+  const hiddenWhat = $derived.by(() => {
+    if (!activeOnly) return '';
+    const gone = invites.filter((i) => !isActive(i));
+    const revoked = gone.filter((i) => i.revoked).length;
+    const expired = gone.length - revoked;
+    const bits: string[] = [];
+    if (revoked) bits.push(`${revoked} revoked`);
+    if (expired) bits.push(`${expired} expired`);
+    return bits.join(', ');
+  });
+
+  // ---- Renaming a device ----
+  // The host's own note about whose device this is. Only the name moves:
+  // the code, the link and the QR are the credential and stay exactly as
+  // they were, so one already stuck on the fridge keeps working.
+  let editingId = $state<string | null>(null);
+  let editLabel = $state('');
+  let renaming = $state(false);
+  let renameError = $state('');
+
+  /** Focus and select the name the moment the field appears. The
+   *  `autofocus` attribute does not fire for an element Svelte inserts
+   *  after load, so the first keystroke went to the page instead. */
+  function takeFocus(node: HTMLInputElement) {
+    node.focus();
+    node.select();
+  }
+
+  function startRename(inv: Invite) {
+    editingId = inv.id;
+    // Counted in code points, like the host's own check — a name from
+    // before there was a limit would otherwise load too long to save
+    // and refuse every edit short of retyping it.
+    editLabel = [...inv.label].slice(0, MAX_LABEL).join('');
+    renameError = '';
+  }
+
+  function cancelRename() {
+    editingId = null;
+    editLabel = '';
+    renameError = '';
+  }
+
+  async function commitRename(inv: Invite) {
+    if (renaming) return;
+    const next = editLabel.trim();
+    // Unchanged is a quiet no-op; emptied is a mistake worth saying out
+    // loud, or the field just closes and the old name snaps back with
+    // no explanation.
+    if (next === inv.label) {
+      cancelRename();
+      return;
+    }
+    if (!next) {
+      renameError = 'Give the device a name so you can tell it apart later.';
+      return;
+    }
+    renaming = true;
+    renameError = '';
+    try {
+      await api.renameInvite(inv.id, next);
+    } catch (e) {
+      renameError = `Couldn't rename: ${String(e).replace(/^Error:\s*/, '')}`;
+      return;
+    } finally {
+      renaming = false;
+    }
+    // Only once the rename itself has landed. Re-reading the list can
+    // fail on its own, and reporting that as a failed rename would tell
+    // the host their change was lost while the host has it.
+    cancelRename();
+    await refresh();
   }
 
   // ---- Reminder API key ----
@@ -119,6 +238,9 @@
 
   async function revoke(id: string) {
     if (!confirm('Revoke this invite? Anyone with the code will lose access.')) return;
+    // An open editor on the row being taken away would keep a Save
+    // button the host can only be refused by.
+    if (editingId === id) cancelRename();
     await api.revokeInvite(id);
     await refresh();
   }
@@ -140,7 +262,7 @@
       <div class="grid grid-cols-[1fr_180px_auto] gap-3">
         <label class="block">
           <span class="text-sm text-white/70">Label</span>
-          <input class="kin-field mt-1" bind:value={label} placeholder="e.g. Mom's iPad" />
+          <input class="kin-field mt-1" bind:value={label} maxlength={MAX_LABEL} placeholder="e.g. Mom's iPad" />
         </label>
         <label class="block">
           <span class="text-sm text-white/70">Expires</span>
@@ -187,7 +309,7 @@
       <div class="flex flex-wrap items-end gap-3">
         <label class="text-sm">
           <div class="text-white/60 mb-1">What is it for?</div>
-          <input class="kin-field mt-1" bind:value={keyLabel} placeholder="Automation" />
+          <input class="kin-field mt-1" bind:value={keyLabel} maxlength={MAX_LABEL} placeholder="Automation" />
         </label>
         <button
           class="kin-btn-primary disabled:opacity-60"
@@ -228,29 +350,98 @@
     </div>
 
     <div class="space-y-4">
-      {#each invites as inv}
+      {#if invites.length > 0}
+        <div class="flex items-center justify-between gap-3 px-1">
+          <h2 class="font-semibold">
+            {activeOnly ? 'Active devices' : 'All invites'}
+            <span class="text-white/40 font-normal">· {shown.length}</span>
+          </h2>
+          <button class="kin-btn" onclick={() => { activeOnly = !activeOnly; cancelRename(); }}>
+            {activeOnly ? 'Show all' : 'Active only'}
+          </button>
+        </div>
+      {/if}
+
+      {#each shown as inv (inv.id)}
         <div
           class="kin-card grid grid-cols-[180px_1fr] gap-5
-                 {inv.revoked ? 'opacity-40' : ''}"
+                 {inv.revoked || isExpired(inv) ? 'opacity-40' : ''}"
         >
           <div class="bg-black/40 rounded-lg p-3 grid place-items-center">
             {@html qrSvgs[inv.id] ?? ''}
           </div>
           <div class="space-y-3 text-sm min-w-0">
-            <div class="flex items-center justify-between">
-              <div>
-                <div class="font-semibold">{inv.label || 'Untitled'}</div>
+            <div class="flex items-center justify-between gap-3">
+              <div class="min-w-0">
+                {#if editingId === inv.id && !inv.revoked}
+                  <div class="flex items-center gap-2">
+                    <input
+                      class="kin-field !py-1 min-w-0"
+                      bind:value={editLabel}
+                      maxlength={MAX_LABEL}
+                      use:takeFocus
+                      disabled={renaming}
+                      aria-label="Device name"
+                      onkeydown={(e) => {
+                        if (e.key === 'Enter') void commitRename(inv);
+                        if (e.key === 'Escape') cancelRename();
+                      }}
+                    />
+                    <button
+                      type="button"
+                      class="kin-btn-primary !px-2"
+                      disabled={renaming}
+                      onclick={() => void commitRename(inv)}
+                      aria-label="Save name"
+                      title="Save"
+                    >
+                      <Check size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      class="kin-btn !px-2"
+                      disabled={renaming}
+                      onclick={cancelRename}
+                      aria-label="Cancel rename"
+                      title="Cancel"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                  {#if renameError}
+                    <p class="text-xs text-red-300 mt-1" role="alert">{renameError}</p>
+                  {/if}
+                {:else}
+                  <div class="flex items-center gap-2 group min-w-0">
+                    <span class="font-semibold truncate">{inv.label || 'Untitled'}</span>
+                    {#if !inv.revoked}
+                      <button
+                        type="button"
+                        class="kin-btn-ghost !px-1.5 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+                        onclick={() => startRename(inv)}
+                        aria-label="Rename this device"
+                        title="Rename"
+                      >
+                        <Pencil size={13} />
+                      </button>
+                    {/if}
+                  </div>
+                {/if}
                 <div class="text-xs text-white/50">
                   {#if isNeverExpiring(inv.expires_at)}
                     Never expires
+                  {:else if expiryOf(inv) === null}
+                    Expiry unknown
                   {:else}
                     Expires {new Date(inv.expires_at).toLocaleDateString()}
                   {/if}
-                  {#if inv.revoked}<span class="text-red-400">· revoked</span>{/if}
+                  {#if inv.revoked}<span class="text-red-400">· revoked</span>
+                  {:else if isExpired(inv)}<span class="text-amber-300/80">· expired</span>{/if}
+                  {#if isKey(inv)}<span class="text-white/40">· API key</span>{/if}
                 </div>
               </div>
               {#if !inv.revoked}
-                <button class="kin-btn-ghost text-red-300/80 hover:text-red-300" onclick={() => revoke(inv.id)}>
+                <button class="kin-btn-ghost text-red-300/80 hover:text-red-300 shrink-0" onclick={() => revoke(inv.id)}>
                   <Trash2 size={14} /> Revoke
                 </button>
               {/if}
@@ -278,7 +469,20 @@
       {/each}
       {#if invites.length === 0}
         <div class="kin-card text-sm text-white/50 text-center">No invites yet.</div>
-      {:else}
+      {:else if shown.length === 0}
+        <div class="kin-card text-sm text-white/50 text-center">
+          No active devices. <button class="underline hover:text-white/80" onclick={() => { activeOnly = false; cancelRename(); }}>Show all {invites.length}</button>
+        </div>
+      {/if}
+
+      {#if hidden > 0 && shown.length > 0}
+        <p class="text-xs text-white/40 text-center pt-1">
+          {hidden} hidden{hiddenWhat ? ` (${hiddenWhat})` : ''} ·
+          <button class="underline hover:text-white/70" onclick={() => { activeOnly = false; cancelRename(); }}>Show all</button>
+        </p>
+      {/if}
+
+      {#if invites.length > 0}
         <p class="text-xs text-white/30 text-center pt-1">
           Revoked or expired codes are cleared automatically about a week later.
         </p>

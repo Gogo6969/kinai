@@ -76,7 +76,21 @@ Two buttons, and they mean different things:
 - **Pause** ends the session and keeps that device out until you press Resume. The invite still works, so letting them back in needs no new code. Use it to stop a device for an afternoon.
 - **Disconnect** ends the session *and* revokes the invite code. Coming back needs a brand-new invite. It cannot be undone, and the confirmation says so.
 
-Invite codes are not shown on this page. They are working credentials, and that page tends to get screenshotted — the full list lives on the **Invites** page, which is also where revoked ones stay visible.
+Invite codes are not shown on this page. They are working credentials, and that page tends to get screenshotted — the full list lives on the **Invites** page.
+
+That page opens on the invites that still work. Press **Show all** to
+include the revoked and expired ones, which are kept for about a week as a
+record; a line under the list always says how many are hidden. Reminder
+API keys stay in the list either way, marked **API key** — they are live
+credentials, and this is where you revoke them.
+
+The pencil beside a device's name renames it — your own note about whose
+device it is, not anything the device knows about itself. Renaming changes
+nothing about the credential: the 6-character code, the link and the QR
+stay exactly as they were, so one already scanned or stuck on the fridge
+keeps working. Once a device has connected, Manage family shows the name
+that device calls itself and yours beside it; before it ever connects,
+your name is all there is to show.
 
 ## 8. Things to know
 

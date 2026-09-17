@@ -10,7 +10,7 @@
 //! The shareable string is `kinai://join?host=<url>&code=<short>&token=<jwt>`.
 //! The QR code embeds the same URL.
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use chrono::{Duration, Utc};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -32,6 +32,45 @@ pub struct Invite {
     pub created_at: String,
     pub expires_at: String,
     pub revoked: bool,
+    /// `"family"` (or `""` on rows written before scopes existed) for a
+    /// device that may chat; `"automation"` for a reminder API key.
+    ///
+    /// The Invites page shows both — they share this table so one Revoke
+    /// button covers them — and needs to tell them apart: a key is not a
+    /// family member's device, its 6-character code is deliberately not
+    /// redeemable, and its QR carries a token that acts as the host.
+    #[serde(default)]
+    pub scope: String,
+}
+
+/// Longest invite label accepted, in characters. It is a name for a
+/// device ("Mum's iPad"), not a note, and it has to fit on one line of
+/// the invite card and beside a member's own name on Manage family.
+pub const MAX_LABEL_CHARS: usize = 60;
+
+/// Trim a label and refuse the two shapes that make a list unreadable:
+/// nothing at all, and an essay. Shared by create and rename so the two
+/// cannot drift apart.
+pub fn normalize_label(raw: &str) -> Result<String> {
+    // Every place this is shown — the invite card, Manage family, the
+    // name on a reported answer — is one line of somebody's identity. A
+    // newline would break the line in two and a bidi override would
+    // reorder the text around it, so control and formatting characters
+    // become spaces rather than being refused: the host typed a name,
+    // not an attack, and a paste from a document should just work.
+    let cleaned: String = raw
+        .chars()
+        .map(|c| if c.is_control() || matches!(c, '\u{200e}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}') { ' ' } else { c })
+        .collect();
+    // Collapse the runs those substitutions leave behind.
+    let label = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    if label.is_empty() {
+        bail!("give the device a name so you can tell it apart later");
+    }
+    if label.chars().count() > MAX_LABEL_CHARS {
+        bail!("that name is too long (max {MAX_LABEL_CHARS} characters)");
+    }
+    Ok(label)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +105,10 @@ pub async fn create_scoped(
     scope: &str,
     act_as: &str,
 ) -> Result<Invite> {
+    // Same gate as rename: a nameless or essay-length invite is as
+    // unreadable in the list on the day it is made as a week later.
+    let label = normalize_label(label)?;
+    let label = label.as_str();
     let id = Uuid::new_v4().to_string();
     let short_code = random_short_code(6);
     let host_url = guess_host_url(cfg);
@@ -115,12 +158,42 @@ pub async fn create_scoped(
         created_at: now.to_rfc3339(),
         expires_at: exp.to_rfc3339(),
         revoked: false,
+        scope: scope.into(),
     })
+}
+
+/// Rename a device from the Invites page.
+///
+/// Only the DB column moves. The label is ALSO a claim inside the
+/// already-issued JWT, on the family's devices and inside the QR they
+/// scanned — re-signing it would mint a second valid token for the same
+/// code and silently change a QR someone had printed out. Instead
+/// `validate_jwt_for_host` reads the current label from this column at
+/// every handshake, so the rename reaches the one place the claim was
+/// used (the name on a reported answer) without touching a token.
+///
+/// `revoked = 0` in the WHERE: renaming something already taken away is
+/// not a thing to support, and the page does not offer it.
+///
+/// Errors when nothing matched. `execute` reports `Ok` with zero rows
+/// for an id that does not exist, so without the check a stale row id
+/// would look exactly like a successful rename.
+pub async fn rename(pool: &SqlitePool, id: &str, label: &str) -> Result<()> {
+    let label = normalize_label(label)?;
+    let res = sqlx::query("UPDATE invites SET label = ?2 WHERE id = ?1 AND revoked = 0")
+        .bind(id)
+        .bind(&label)
+        .execute(pool)
+        .await?;
+    if res.rows_affected() == 0 {
+        bail!("that invite is gone or has been revoked — refresh the page");
+    }
+    Ok(())
 }
 
 pub async fn list(pool: &SqlitePool) -> Result<Vec<Invite>> {
     let rows = sqlx::query(
-        "SELECT id, short_code, jwt, host_url, label, created_at, expires_at, revoked
+        "SELECT id, short_code, jwt, host_url, label, created_at, expires_at, revoked, scope
          FROM invites ORDER BY created_at DESC",
     )
     .fetch_all(pool)
@@ -194,8 +267,8 @@ pub async fn validate_jwt_for_host(
     token: &str,
     expected_host_url: &str,
 ) -> Result<auth::Claims> {
-    let claims = auth::validate_token(token, expected_host_url)?;
-    let row = sqlx::query("SELECT revoked FROM invites WHERE short_code = ?1")
+    let mut claims = auth::validate_token(token, expected_host_url)?;
+    let row = sqlx::query("SELECT revoked, label FROM invites WHERE short_code = ?1")
         .bind(&claims.sub)
         .fetch_optional(pool)
         .await?;
@@ -205,6 +278,15 @@ pub async fn validate_jwt_for_host(
     let revoked: i64 = row.get("revoked");
     if revoked != 0 {
         return Err(anyhow!("invite revoked"));
+    }
+    // The label in the token is whatever it was called the day it was
+    // minted; the column is what the host calls it now. The host renames
+    // a device precisely so it reads correctly elsewhere — and the one
+    // consumer of this claim is the name on a reported answer — so the
+    // current name wins. The token is never re-signed for this.
+    let label: String = row.get("label");
+    if !label.is_empty() {
+        claims.label = label;
     }
     Ok(claims)
 }
@@ -313,6 +395,12 @@ fn row_to_invite(r: sqlx::sqlite::SqliteRow) -> Invite {
         created_at: r.get("created_at"),
         expires_at: r.get("expires_at"),
         revoked: revoked != 0,
+        // `try_get`, not `get`: a caller that selects the older column
+        // set gets `""` instead of a panic. It also swallows a real
+        // decode error the same way — acceptable because every consumer
+        // treats an unknown scope as "an ordinary family invite", which
+        // is what a row without the column always was.
+        scope: r.try_get("scope").unwrap_or_default(),
     }
 }
 
@@ -538,5 +626,154 @@ mod cleanup_tests {
         let removed = cleanup_stale(&pool, 7).await.unwrap();
         assert_eq!(removed, 0, "a freshly revoked invite survives the grace window");
         assert_eq!(ids(&pool).await, vec!["x"]);
+    }
+
+    async fn label_of(pool: &SqlitePool, id: &str) -> String {
+        sqlx::query("SELECT label FROM invites WHERE id = ?1")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .expect("row")
+            .get("label")
+    }
+
+    #[tokio::test]
+    async fn renaming_a_device_changes_only_its_name() {
+        let pool = fresh_pool().await;
+        seed(&pool, "ipad", &days_ago(1), &days_ahead(30), 0, None).await;
+        let before = list(&pool).await.unwrap().into_iter().next().unwrap();
+
+        rename(&pool, "ipad", "  Mum's iPad  ").await.unwrap();
+
+        assert_eq!(label_of(&pool, "ipad").await, "Mum's iPad", "trimmed");
+        let after = list(&pool).await.unwrap().into_iter().next().unwrap();
+        assert_eq!(after.label, "Mum's iPad");
+        // The credential itself is untouched: the token is not re-signed
+        // and the QR someone already scanned still reads the same.
+        assert_eq!(after.jwt, before.jwt, "no new token");
+        assert_eq!(after.short_code, before.short_code);
+        assert_eq!(after.join_url, before.join_url, "a printed QR keeps working");
+        assert_eq!(after.expires_at, before.expires_at);
+        assert!(!after.revoked);
+    }
+
+    #[tokio::test]
+    async fn a_rename_that_cannot_land_says_so() {
+        let pool = fresh_pool().await;
+        seed(&pool, "live", &days_ago(1), &days_ahead(30), 0, None).await;
+        seed(&pool, "gone", &days_ago(1), &days_ahead(30), 1, Some(&days_ago(1))).await;
+
+        // Empty and over-long are refused before any SQL runs.
+        assert!(rename(&pool, "live", "   ").await.is_err(), "nameless");
+        assert!(rename(&pool, "live", &"x".repeat(MAX_LABEL_CHARS + 1)).await.is_err(), "essay");
+        assert!(rename(&pool, "live", &"x".repeat(MAX_LABEL_CHARS)).await.is_ok(), "at the cap");
+
+        // A revoked row and a row that never existed are the SAME
+        // refusal, word for word: a different message for each would
+        // tell whoever is asking which invite ids exist.
+        let revoked = rename(&pool, "gone", "Nice try").await.unwrap_err().to_string();
+        let missing = rename(&pool, "no-such-id", "Nice try").await.unwrap_err().to_string();
+        assert_eq!(revoked, missing, "must not say which of the two it was");
+        assert_eq!(revoked, "that invite is gone or has been revoked — refresh the page");
+        assert_eq!(label_of(&pool, "gone").await, "L", "and untouched");
+    }
+
+    #[test]
+    fn a_name_is_tidied_or_refused() {
+        assert_eq!(normalize_label("  Mum's iPad  ").unwrap(), "Mum's iPad");
+        assert!(normalize_label("").is_err(), "nothing");
+        assert!(normalize_label(" \t ").is_err(), "whitespace only");
+        assert_eq!(normalize_label(&"x".repeat(MAX_LABEL_CHARS)).unwrap().chars().count(), MAX_LABEL_CHARS);
+        assert!(normalize_label(&"x".repeat(MAX_LABEL_CHARS + 1)).is_err(), "one over");
+        // Counted in characters, not bytes: an emoji is one name's worth
+        // of one character, not four.
+        assert!(normalize_label(&"🎈".repeat(MAX_LABEL_CHARS)).is_ok());
+
+        // A name is one line. A newline would break the invite card in
+        // two and a bidi override would reorder the text around it.
+        assert_eq!(normalize_label("Kitchen\niPad").unwrap(), "Kitchen iPad");
+        assert_eq!(normalize_label("Tab\there").unwrap(), "Tab here");
+        let bidi = normalize_label("Sofa\u{202e}drapi").unwrap();
+        assert!(!bidi.contains('\u{202e}'), "no reordering marks: {bidi:?}");
+        assert!(normalize_label("\u{202e}\u{202e}").is_err(), "nothing but marks is nothing");
+    }
+
+    /// `list` is what the Invites page reads, and the page tells a
+    /// reminder API key apart from somebody's device on this one field.
+    /// Drop `scope` from the SELECT and `try_get` quietly reports `""`
+    /// for every row — so without this, a key would look like a device.
+    #[tokio::test]
+    async fn the_list_says_which_rows_are_api_keys() {
+        let pool = fresh_pool().await;
+        seed_scoped(&pool, "device", auth::FAMILY_SCOPE).await;
+        seed_scoped(&pool, "key", auth::AUTOMATION_SCOPE).await;
+
+        let rows = list(&pool).await.unwrap();
+        let scope_of = |id: &str| {
+            rows.iter().find(|r| r.id == id).map(|r| r.scope.clone()).unwrap_or_default()
+        };
+        assert_eq!(scope_of("device"), auth::FAMILY_SCOPE);
+        assert_eq!(scope_of("key"), auth::AUTOMATION_SCOPE);
+    }
+
+    /// Rows created before labels were ever trimmed can hold `''`. The
+    /// handshake must leave the token's own label alone for those —
+    /// overwriting it with nothing would take away the only name a
+    /// reported answer had.
+    #[tokio::test]
+    async fn a_blank_stored_name_does_not_erase_the_token_s_own() {
+        let pool = fresh_pool().await;
+        auth::sandbox_home();
+        let host = "ws://192.0.2.10:4847/kin";
+        let token = auth::issue_token("OLD999", host, "From the token", 30).unwrap();
+        sqlx::query(
+            "INSERT INTO invites
+               (id, short_code, jwt, host_url, label, created_at, expires_at, revoked)
+             VALUES ('legacy', 'OLD999', ?1, ?2, '', ?3, ?4, 0)",
+        )
+        .bind(&token)
+        .bind(host)
+        .bind(days_ago(1))
+        .bind(days_ahead(30))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let claims = validate_jwt_for_host(&pool, &token, host).await.unwrap();
+        assert_eq!(claims.label, "From the token", "a blank column takes nothing away");
+    }
+
+    /// The label is minted twice — this column and a claim inside the
+    /// device's JWT — and only the column can change. The handshake
+    /// therefore reads the column, so the one place the claim was used
+    /// (the name on a reported answer) follows a rename instead of
+    /// repeating whatever the device was called on the day it joined.
+    #[tokio::test]
+    async fn the_handshake_reports_the_current_name_not_the_minted_one() {
+        let pool = fresh_pool().await;
+        auth::sandbox_home();
+        let host = "ws://192.0.2.10:4847/kin";
+
+        let token = auth::issue_token("ABC123", host, "Old name", 30).unwrap();
+        sqlx::query(
+            "INSERT INTO invites
+               (id, short_code, jwt, host_url, label, created_at, expires_at, revoked)
+             VALUES ('i1', 'ABC123', ?1, ?2, 'Old name', ?3, ?4, 0)",
+        )
+        .bind(&token)
+        .bind(host)
+        .bind(days_ago(1))
+        .bind(days_ahead(30))
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let claims = validate_jwt_for_host(&pool, &token, host).await.unwrap();
+        assert_eq!(claims.label, "Old name", "before the rename");
+
+        rename(&pool, "i1", "New name").await.unwrap();
+        let claims = validate_jwt_for_host(&pool, &token, host).await.unwrap();
+        assert_eq!(claims.label, "New name", "the same unchanged token, renamed");
+        assert_eq!(claims.sub, "ABC123", "still the same member");
     }
 }

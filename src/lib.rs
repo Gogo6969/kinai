@@ -426,6 +426,7 @@ pub fn run() {
             commands::list_invites,
             commands::create_api_key,
             commands::revoke_invite,
+            commands::rename_invite,
             commands::consume_invite,
             commands::redeem_invite_code,
             commands::list_peers,

@@ -15,6 +15,24 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+/** The invite fixture, in localStorage so it survives the reload a
+ *  scenario needs — same trick as `__mockReminders`. */
+function readMockInvites(): any[] {
+  try {
+    return JSON.parse(localStorage.getItem('__mockInvites') ?? '[]');
+  } catch {
+    return [];
+  }
+}
+
+function writeMockInvites(rows: any[]) {
+  try {
+    localStorage.setItem('__mockInvites', JSON.stringify(rows));
+  } catch {
+    /* private window, blocked storage — the page still renders */
+  }
+}
+
 function defaultConfig() {
   return {
     mode: 'unconfigured',
@@ -341,7 +359,31 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
     load_messages: () => cannedMessages,
     load_thread: () => cannedMessages,
     thread_active_slot: () => null,
-    list_invites: () => [],
+    // Invites: served from `localStorage.__mockInvites` so the page can be
+    // driven in a browser (rename, revoke, the active-only filter) with no
+    // host. Same shape as the Rust `Invite`. Seed it from the console or a
+    // test; an empty store keeps the old "no invites yet" state.
+    list_invites: () => readMockInvites(),
+    rename_invite: (a: any) => {
+      const rows = readMockInvites();
+      const row = rows.find((r: any) => r.id === a.inviteId);
+      // Mirrors the host: the label is gated, and a revoked or missing
+      // row is one refusal rather than a silent success.
+      if (!row || row.revoked) throw new Error('that invite is gone or has been revoked — refresh the page');
+      const label = String(a.label ?? '').trim();
+      if (!label) throw new Error('give the device a name so you can tell it apart later');
+      if ([...label].length > 60) throw new Error('that name is too long (max 60 characters)');
+      row.label = label;
+      writeMockInvites(rows);
+      return null;
+    },
+    revoke_invite: (a: any) => {
+      const rows = readMockInvites();
+      const row = rows.find((r: any) => r.id === a.inviteId);
+      if (row) row.revoked = true;
+      writeMockInvites(rows);
+      return null;
+    },
     create_api_key: (a: any) => ({
       id: 'key-1',
       short_code: 'qqq999',

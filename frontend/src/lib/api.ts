@@ -272,6 +272,11 @@ export interface Invite {
   created_at: string;
   expires_at: string;
   revoked: boolean;
+  /** `family` (or `''` on rows made before scopes existed) for a device
+   *  someone chats from; `automation` for a reminder API key. Keys share
+   *  this table so one Revoke button covers them, but a key is not a
+   *  family member's device — the list tells them apart on this. */
+  scope?: string;
 }
 
 export interface ResolvedInvite {
@@ -626,6 +631,10 @@ export const api = {
     invoke<Invite>('create_api_key', { args }),
   listInvites: () => invoke<Invite[]>('list_invites'),
   revokeInvite: (inviteId: string) => invoke<void>('revoke_invite', { inviteId }),
+  /** Change the host's own name for a device. Does not re-issue the
+   *  token, so a QR already scanned or printed keeps working. */
+  renameInvite: (inviteId: string, label: string) =>
+    invoke<void>('rename_invite', { inviteId, label }),
   consumeInvite: (code: string) => invoke<ResolvedInvite>('consume_invite', { code }),
   redeemInviteCode: (hostUrl: string, code: string) =>
     invoke<ResolvedInvite>('redeem_invite_code', { hostUrl, code }),

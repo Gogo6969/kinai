@@ -830,29 +830,33 @@ mod tests {
     /// Done finishes the occurrence and re-arms on the grid — it does not
     /// end the series, and it repairs a snoozed due_at.
     #[tokio::test]
+    /// Seeded ten years out on purpose: `acknowledge` re-arms from the
+    /// REAL clock (`spec::advance(anchor, .., Utc::now())`), so an anchor
+    /// in 2026 stopped matching the literal below the day the real date
+    /// passed it. Ten years is far enough that nobody reads this in time.
     async fn done_handles_one_occurrence_and_stop_ends_the_series() {
         let pool = fresh_pool().await;
-        let seeded = seed_daily(&pool, "ALICE", "2026-11-10T09:00").await;
-        fire_once(&pool, "ALICE", utc(2026, 11, 10, 8, 0)).await;
+        let seeded = seed_daily(&pool, "ALICE", "2036-11-10T09:00").await;
+        fire_once(&pool, "ALICE", utc(2036, 11, 10, 8, 0)).await;
         snooze(&pool, "ALICE", &seeded.id, 30).await.unwrap();
 
         assert!(acknowledge(&pool, "ALICE", &seeded.id).await.unwrap());
         let after = get(&pool, "ALICE", &seeded.id).await.unwrap().unwrap();
         assert_eq!(after.status, "scheduled", "a repeating row is never 'done'");
         assert!(after.fired_at.is_none(), "this occurrence is handled");
-        assert_eq!(after.due_local, "2026-11-11T09:00", "back on the grid, not 09:30");
+        assert_eq!(after.due_local, "2036-11-11T09:00", "back on the grid, not 09:30");
 
         // A second Done from another device changes nothing.
         acknowledge(&pool, "ALICE", &seeded.id).await.unwrap();
         let again = get(&pool, "ALICE", &seeded.id).await.unwrap().unwrap();
-        assert_eq!(again.due_local, "2026-11-11T09:00", "idempotent");
+        assert_eq!(again.due_local, "2036-11-11T09:00", "idempotent");
 
         // Stop is the way out, and it is a different verb from Done.
         apply_action(&pool, "ALICE", &seeded.id, "stop", 0).await.unwrap();
         let stopped = get(&pool, "ALICE", &seeded.id).await.unwrap().unwrap();
         assert_eq!(stopped.status, "cancelled");
         assert!(
-            lease_due(&pool, utc(2027, 1, 1, 0, 0)).await.unwrap().is_empty(),
+            lease_due(&pool, utc(2037, 1, 1, 0, 0)).await.unwrap().is_empty(),
             "a stopped series is never leased again"
         );
     }

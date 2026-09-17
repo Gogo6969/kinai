@@ -7,6 +7,36 @@
 
 mod keys;
 
+/// One sandboxed `$HOME` for the whole test binary, created once and
+/// never taken away.
+///
+/// Every test that signs a token needs the keys to come from somewhere
+/// that is not the family's real `~/.kinai/keys/`. `$HOME` is
+/// process-global and `ensure_keys` caches its answer in another
+/// process-global, so two tests that each set `$HOME` and generate a
+/// keypair race: the slower one wins the cache, the faster one then
+/// validates a token against the other's key and fails with
+/// `InvalidSignature` — intermittently, on the gate that decides
+/// whether a release ships. And a `TempDir` dropped at the end of one
+/// test leaves every test that runs afterwards pointing at a directory
+/// that is gone.
+///
+/// So: one directory, held in a `static` (never dropped), with the
+/// keypair generated inside the initialiser, where `OnceLock` blocks
+/// every other caller until it is done.
+#[cfg(test)]
+pub(crate) fn sandbox_home() {
+    use std::sync::OnceLock;
+    static HOME: OnceLock<tempfile::TempDir> = OnceLock::new();
+    HOME.get_or_init(|| {
+        let dir = tempfile::tempdir().expect("tempdir for the test HOME");
+        std::env::set_var("HOME", dir.path());
+        // Fill the key cache from THIS home before anyone else looks.
+        keys::ensure_keys().expect("generate a keypair in the sandbox");
+        dir
+    });
+}
+
 use anyhow::{anyhow, Result};
 use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
@@ -221,15 +251,11 @@ mod tests {
     /// user's real ~/.kinai/keys/ directory.
     #[test]
     fn jwt_roundtrip_smoketest() {
-        // Route keys to a tempdir so we don't read/write the user's
-        // real ~/.kinai/keys/ during tests, and we exercise the
-        // key-generation path too.
-        let tmp = tempfile::tempdir().expect("tempdir");
-        std::env::set_var("HOME", tmp.path());
-        // ensure_keys caches after first call; reset its cache by
-        // using a fresh process if the cache layer changes — for now
-        // tests run in the same process and the cache is fine because
-        // the tempdir keys persist for the test lifetime.
+        // Route keys to the shared sandbox HOME rather than setting
+        // $HOME here: this is no longer the only test in the binary
+        // that signs a token, and two of them setting it independently
+        // race over one process-global key cache.
+        super::sandbox_home();
 
         let host_url = "ws://192.0.2.10:4847/kin";
         let token = issue_token("ABC123", host_url, "test-label", 30)

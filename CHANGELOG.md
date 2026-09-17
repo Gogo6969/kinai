@@ -5,6 +5,29 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.131] — 2026-09-17
+
+### Added
+
+- **Rename a device on the Invites page.** The name beside an invite is
+  your own note about whose device it is, and until now it was fixed the
+  moment you created the invite — a phone that changed hands kept the old
+  name for good. The pencil beside the name edits it. Nothing about the
+  credential changes: the code, the link and the QR are untouched, so one
+  already scanned or stuck on the fridge keeps working. The new name also
+  reaches the name shown on a reported answer — from that device's next
+  connection — which used to keep repeating whatever the device was
+  called on the day it joined.
+- **The Invites page opens on what still works.** Revoked and expired
+  codes are kept for about a week as a record, and after a while they
+  were most of what the page showed. They are one click away under
+  **Show all**, and a line under the list says how many are hidden and
+  whether they were revoked or expired. Reminder API keys stay in the
+  list — they are live credentials and the Revoke button is here — but
+  they are labelled as keys now, rather than looking like somebody's
+  device. An invite whose expiry date cannot be read says so instead of
+  showing "Invalid Date".
+
 ## [0.2.130] — 2026-09-15
 
 ### Fixed
