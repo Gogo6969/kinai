@@ -245,10 +245,57 @@ pub async fn download_and_install<R: Runtime>(app: AppHandle<R>) -> Result<(), S
         )
         .await
         .map_err(|e| e.to_string())?;
+    // Say, on disk, that the launch about to happen was asked for. See
+    // `take_restart_marker` for why the new process cannot work that out
+    // for itself.
+    mark_restart();
     // The plugin's `download_and_install` triggers a restart on its own
     // (macOS replaces the .app and relaunches). The line below is
     // belt-and-suspenders for platforms that don't auto-restart.
     app.restart();
+}
+
+/// Where the "this relaunch was asked for" note lives.
+fn restart_marker() -> std::path::PathBuf {
+    crate::config::AppConfig::config_dir().join(".restarting")
+}
+
+/// Leave that note, just before handing over to the restart.
+fn mark_restart() {
+    if let Err(e) = std::fs::write(restart_marker(), chrono::Utc::now().to_rfc3339()) {
+        // Not fatal: the worst case is the window staying hidden, which
+        // is the behaviour this note exists to improve on.
+        tracing::warn!("could not mark the restart: {e}");
+    }
+}
+
+/// Was this launch the one the updater asked for?
+///
+/// Tauri restarts by re-running the binary with the ORIGINAL argv
+/// (`process::restart` → `Command::new(bin).args(env.args_os.iter().skip(1))`),
+/// so a copy that macOS started at login comes back still carrying
+/// `--autostart`. Startup reads that flag as "this is a background
+/// boot" and leaves the window hidden — so the member pressed a button
+/// labelled *install and restart*, watched the app disappear, and had
+/// nothing come back. It was running the whole time, in the tray.
+/// Measured on 0.2.131: a launch carrying `--autostart` opens zero
+/// windows, an ordinary one opens a window.
+///
+/// The note is consumed on read, and ignored when it is old — a restart
+/// that never happened must not make every launch from then on pop a
+/// window the member did not ask for.
+pub fn take_restart_marker() -> bool {
+    let path = restart_marker();
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return false;
+    };
+    let _ = std::fs::remove_file(&path);
+    chrono::DateTime::parse_from_rfc3339(raw.trim())
+        .map(|t| {
+            let age = chrono::Utc::now() - t.with_timezone(&chrono::Utc);
+            age.num_seconds() >= 0 && age.num_seconds() < 300
+        })
+        .unwrap_or(false)
 }
 
 async fn check_via_host<R: Runtime>(
@@ -274,4 +321,39 @@ async fn check_via_github<R: Runtime>(
 ) -> Result<Option<tauri_plugin_updater::Update>, anyhow::Error> {
     let updater = app.updater()?;
     Ok(updater.check().await?)
+}
+
+#[cfg(test)]
+mod restart_marker_tests {
+    use super::{restart_marker, take_restart_marker};
+
+    /// The note has to be consumed, or the first update would make every
+    /// launch from then on open a window nobody asked for — including
+    /// the login launches this whole flag exists to keep quiet.
+    #[test]
+    fn the_note_is_read_once_and_only_when_fresh() {
+        crate::auth::sandbox_home();
+        let path = restart_marker();
+        std::fs::create_dir_all(path.parent().unwrap()).ok();
+        let _ = std::fs::remove_file(&path);
+
+        // No note at all: an ordinary launch.
+        assert!(!take_restart_marker(), "nothing to find");
+
+        // A note written just now: this launch was asked for.
+        std::fs::write(&path, chrono::Utc::now().to_rfc3339()).unwrap();
+        assert!(take_restart_marker(), "the restart we just asked for");
+        assert!(!path.exists(), "and it is gone");
+        assert!(!take_restart_marker(), "so the next launch is ordinary again");
+
+        // A note from a restart that never happened — a crash between
+        // writing it and relaunching — must not follow the member around.
+        std::fs::write(&path, (chrono::Utc::now() - chrono::Duration::hours(2)).to_rfc3339()).unwrap();
+        assert!(!take_restart_marker(), "stale");
+        assert!(!path.exists(), "cleared anyway");
+
+        // Garbage is not a restart either.
+        std::fs::write(&path, "yesterday-ish").unwrap();
+        assert!(!take_restart_marker(), "unparseable");
+    }
 }

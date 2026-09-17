@@ -501,8 +501,18 @@ pub fn run() {
                     std::env::args().any(|a| a == "--autostart");
                 let autostart_minimized =
                     st.config.read().startup.autostart_minimized;
+                //   * a relaunch the updater asked for → ALWAYS show. It
+                //     re-runs with the original argv, so a copy started
+                //     at login comes back still claiming to be one, and
+                //     the rule below would hide it. Somebody pressed
+                //     "install and restart" and deserves to see the app
+                //     come back. See `updater::take_restart_marker`.
+                let after_update = updater::take_restart_marker();
                 let show_at_startup =
-                    !(is_autostart_launch && autostart_minimized);
+                    after_update || !(is_autostart_launch && autostart_minimized);
+                if after_update {
+                    tracing::info!("relaunched after an update — showing the window");
+                }
 
                 if let Some(w) = app.get_webview_window("main") {
                     if show_at_startup {
