@@ -1371,6 +1371,10 @@ pub async fn list_peers(state: &SharedState) -> Vec<PeerSummary> {
     let rows = sqlx::query(
         "SELECT i.short_code    AS invite_id,
                 i.label         AS label,
+                i.expires_at    AS expires_at,
+                i.jwt           AS jwt,
+                i.host_url      AS host_url,
+                i.scope         AS scope,
                 p.display_name  AS device_name,
                 p.first_seen    AS first_seen,
                 p.last_seen     AS last_seen,
@@ -1393,6 +1397,12 @@ pub async fn list_peers(state: &SharedState) -> Vec<PeerSummary> {
             let first_seen: Option<String> = r.try_get("first_seen").ok().flatten();
             let stored_last: Option<String> = r.try_get("last_seen").ok().flatten();
             let paused: i64 = r.try_get("paused").unwrap_or(0);
+            let expires_at: String = r.try_get("expires_at").unwrap_or_default();
+            let scope: String = r.try_get("scope").unwrap_or_default();
+            // The same three strings the Invites page builds its QR from.
+            let jwt: String = r.try_get("jwt").unwrap_or_default();
+            let host_url: String = r.try_get("host_url").unwrap_or_default();
+            let join_url = crate::network::invite::join_url(&host_url, &invite_id, &jwt);
 
             let connected = live.get(&invite_id);
             let state_str = if connected.is_some() {
@@ -1411,6 +1421,9 @@ pub async fn list_peers(state: &SharedState) -> Vec<PeerSummary> {
                 state: state_str.to_string(),
                 first_seen,
                 last_seen: connected.map(|(_, s)| s.clone()).or(stored_last),
+                expires_at,
+                join_url,
+                scope,
                 invite_id,
             }
         })
@@ -1425,9 +1438,15 @@ pub async fn list_peers(state: &SharedState) -> Vec<PeerSummary> {
 #[derive(Serialize)]
 pub struct PeerSummary {
     /// The invite short code. Stable across reconnects, and what
-    /// pause/resume/disconnect act on. Deliberately NOT rendered by the
-    /// UI: it is a working credential, and a screenshot of this page used
-    /// to publish one per row.
+    /// pause/resume/disconnect act on.
+    ///
+    /// It IS rendered now, behind a per-row reveal. It was hidden here
+    /// for a while because a screenshot of this page publishes one per
+    /// row — but the effect was that the only way to re-read the code
+    /// for a device you already have was a different page, reached by a
+    /// button labelled "+ Invite", which is for making new ones. The
+    /// reveal keeps a casual screenshot clean without moving the
+    /// information away from the device it belongs to.
     pub invite_id: String,
     /// The device's own name when it has ever said Hello, otherwise the
     /// label the invite was created with.
@@ -1442,6 +1461,16 @@ pub struct PeerSummary {
     /// also for devices that last connected before 0.2.120, which is when
     /// the `peers` table got its first writer.
     pub last_seen: Option<String>,
+    /// RFC3339. The ~100-year sentinel reads as "never" in the UI.
+    #[serde(default)]
+    pub expires_at: String,
+    /// `kinai://join?…` — the same string the Invites page turns into a
+    /// QR, so a device can be re-paired from the screen that lists it.
+    #[serde(default)]
+    pub join_url: String,
+    /// `family` or `automation`; a reminder API key is not a device.
+    #[serde(default)]
+    pub scope: String,
 }
 
 /// End every live session belonging to one invite, for real.

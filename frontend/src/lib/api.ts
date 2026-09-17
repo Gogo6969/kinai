@@ -287,14 +287,22 @@ export interface ResolvedInvite {
 
 export interface PeerSummary {
   /** The invite short code — stable, and what pause/disconnect act on.
-   *  Never render it: it is a working credential, and a screenshot of
-   *  Manage family used to publish one per row. */
+   *  Shown behind a per-row reveal: it is a working credential and a
+   *  screenshot of this page publishes one per row, but keeping it off
+   *  the page entirely meant the only way to re-read a device's code was
+   *  a page reached by a button marked "+ Invite". */
   invite_id: string;
   display_name: string;
   label: string;
   state: 'connected' | 'paused' | 'offline';
   first_seen: string | null;
   last_seen: string | null;
+  /** RFC3339; the ~100-year sentinel reads as "never". */
+  expires_at?: string;
+  /** `kinai://join?…` — what the QR encodes. */
+  join_url?: string;
+  /** `family`, or `automation` for a reminder API key. */
+  scope?: string;
 }
 
 export interface HostInfo {

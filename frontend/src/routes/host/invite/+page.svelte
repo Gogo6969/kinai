@@ -62,31 +62,27 @@
     return inv.scope === 'automation';
   }
 
-  /** Can this still let something in? Revoked and expired cannot. A key
-   *  can, which is the reason to keep it in front of the host. */
-  function isActive(inv: Invite): boolean {
-    return !inv.revoked && !isExpired(inv);
+  /** What the filter hides: revoked, and nothing else.
+   *
+   *  It used to hide expired invites too, on the reasoning that neither
+   *  can let a device in. But hiding a row takes its QR, its code, its
+   *  link and its expiry date with it, and those are worth keeping in
+   *  reach — an expired invite is still a record of who had what, and
+   *  its details may be wanted again. Revoking is a decision the host
+   *  made about a device; expiring is just time passing. Only the first
+   *  is a reason to put something away. */
+  function isHiddenByFilter(inv: Invite): boolean {
+    return inv.revoked;
   }
 
   // ---- The list, and what it is showing ----
-  // Defaults to the family's live devices: the page keeps revoked rows
-  // for about a week as a record, and after a few months of ordinary use
-  // they are most of the list. The count of what is hidden sits under
-  // the list with one click back to everything, so nothing is lost —
-  // only out of the way.
-  let activeOnly = $state(true);
-  const shown = $derived(activeOnly ? invites.filter(isActive) : invites);
+  // Revoked invites are kept for about a week as a record, and after a
+  // few months of ordinary use they are most of the list. They are put
+  // away by default and brought back with one click — nothing is lost,
+  // and everything still on the page keeps its code, link and QR.
+  let hideRevoked = $state(true);
+  const shown = $derived(hideRevoked ? invites.filter((i) => !isHiddenByFilter(i)) : invites);
   const hidden = $derived(invites.length - shown.length);
-  const hiddenWhat = $derived.by(() => {
-    if (!activeOnly) return '';
-    const gone = invites.filter((i) => !isActive(i));
-    const revoked = gone.filter((i) => i.revoked).length;
-    const expired = gone.length - revoked;
-    const bits: string[] = [];
-    if (revoked) bits.push(`${revoked} revoked`);
-    if (expired) bits.push(`${expired} expired`);
-    return bits.join(', ');
-  });
 
   // ---- Renaming a device ----
   // The host's own note about whose device this is. Only the name moves:
@@ -353,11 +349,11 @@
       {#if invites.length > 0}
         <div class="flex items-center justify-between gap-3 px-1">
           <h2 class="font-semibold">
-            {activeOnly ? 'Active devices' : 'All invites'}
+            {hideRevoked ? 'Invites' : 'All invites'}
             <span class="text-white/40 font-normal">· {shown.length}</span>
           </h2>
-          <button class="kin-btn" onclick={() => { activeOnly = !activeOnly; cancelRename(); }}>
-            {activeOnly ? 'Show all' : 'Active only'}
+          <button class="kin-btn" onclick={() => { hideRevoked = !hideRevoked; cancelRename(); }}>
+            {hideRevoked ? 'Show revoked' : 'Hide revoked'}
           </button>
         </div>
       {/if}
@@ -471,14 +467,15 @@
         <div class="kin-card text-sm text-white/50 text-center">No invites yet.</div>
       {:else if shown.length === 0}
         <div class="kin-card text-sm text-white/50 text-center">
-          No active devices. <button class="underline hover:text-white/80" onclick={() => { activeOnly = false; cancelRename(); }}>Show all {invites.length}</button>
+          Every invite here has been revoked.
+          <button class="underline hover:text-white/80" onclick={() => { hideRevoked = false; cancelRename(); }}>Show all {invites.length}</button>
         </div>
       {/if}
 
       {#if hidden > 0 && shown.length > 0}
         <p class="text-xs text-white/40 text-center pt-1">
-          {hidden} hidden{hiddenWhat ? ` (${hiddenWhat})` : ''} ·
-          <button class="underline hover:text-white/70" onclick={() => { activeOnly = false; cancelRename(); }}>Show all</button>
+          {hidden} revoked invite{hidden > 1 ? 's' : ''} hidden ·
+          <button class="underline hover:text-white/70" onclick={() => { hideRevoked = false; cancelRename(); }}>Show {hidden > 1 ? 'them' : 'it'}</button>
         </p>
       {/if}
 

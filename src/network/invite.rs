@@ -80,6 +80,21 @@ pub struct ResolvedInvite {
     pub label: String,
 }
 
+/// The `kinai://join?…` string a device redeems: host, code, token.
+///
+/// One definition, because it is built in three places — at creation, when
+/// listing invites, and now on Manage family, which shows the code beside
+/// the device it belongs to. A copy that drifted would hand somebody a QR
+/// that does not pair.
+pub fn join_url(host_url: &str, short_code: &str, jwt: &str) -> String {
+    format!(
+        "kinai://join?host={}&code={}&token={}",
+        urlencode(host_url),
+        urlencode(short_code),
+        urlencode(jwt)
+    )
+}
+
 /// Create a normal family invite: may open a WebSocket and chat.
 ///
 /// Signature deliberately unchanged — five live tests and the Tauri
@@ -125,12 +140,7 @@ pub async fn create_scoped(
     let now = Utc::now();
     let exp = now + Duration::days(effective_ttl);
 
-    let join_url = format!(
-        "kinai://join?host={}&code={}&token={}",
-        urlencode(&host_url),
-        urlencode(&short_code),
-        urlencode(&jwt)
-    );
+    let join_url = join_url(&host_url, &short_code, &jwt);
 
     sqlx::query(
         "INSERT INTO invites (id, short_code, jwt, host_url, label, created_at, expires_at, scope)
@@ -377,12 +387,7 @@ fn row_to_invite(r: sqlx::sqlite::SqliteRow) -> Invite {
     let host_url: String = r.get("host_url");
     let jwt: String = r.get("jwt");
     let short_code: String = r.get("short_code");
-    let join_url = format!(
-        "kinai://join?host={}&code={}&token={}",
-        urlencode(&host_url),
-        urlencode(&short_code),
-        urlencode(&jwt)
-    );
+    let join_url = join_url(&host_url, &short_code, &jwt);
     let revoked: i64 = r.get("revoked");
     Invite {
         id: r.get("id"),
