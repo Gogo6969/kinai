@@ -5,6 +5,34 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.132] — 2026-09-17
+
+### Fixed
+
+- **"Install and restart" brings the app back where you can see it.** It
+  did restart — it just came back invisible, into the menu bar, so from
+  the outside KinAI closed and never returned. The relaunch re-runs KinAI
+  with the arguments it was originally started with, and a copy that macOS
+  started at login carries a flag meaning "stay in the background"; the
+  new copy read that flag and stayed hidden. You pressed a button that
+  says restart, so now it shows itself whatever that flag says. If this
+  caught you, nothing was broken — the new version was already installed
+  and opening KinAI again was enough.
+- **A device's code, link and QR are on the screen with the device.**
+  Manage family lists everyone who can reach the household, but re-reading
+  the 6-character code for a device already on that list meant going to
+  the Invites page, reached by a button marked **+ Invite** — the page for
+  making new ones. Each row now shows when its invite expires, and a
+  **Show code** button opens that device's code, join link and QR right
+  there, for setting it up a second time or on another device. **+ Invite**
+  is for new invitations, which is what it says.
+- **Only revoked invites are put away, not expired ones.** The Invites
+  page's new filter hid both — and hiding a row takes its QR, code, link
+  and expiry date with it. An expired invite is still a record of who had
+  what. Revoking is a decision you made about a device; expiring is time
+  passing. The button now says what it does: **Show revoked** /
+  **Hide revoked**.
+
 ## [0.2.131] — 2026-09-17
 
 ### Added
