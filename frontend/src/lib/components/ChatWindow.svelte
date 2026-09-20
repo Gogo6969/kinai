@@ -525,18 +525,51 @@
   // and the old 120px version re-took the pin whenever the reader had only
   // nudged up a line or two. What the reader chose does not go stale.
   let follow = $state(true);
+  /** Where we last parked it ourselves, so our own scroll is not mistaken
+   *  for the reader moving. */
+  let selfScrolledTo = -1;
+  let lastTop = 0;
 
+  // The rule is DIRECTION, not distance.
+  //
+  // A distance test cannot work at the start of an answer, which is
+  // precisely where reading from the beginning matters. Three lines in,
+  // the whole answer is barely taller than the window: scrolled right to
+  // the top, the bottom is only ~50px away, so any "am I near the bottom"
+  // threshold still says yes and takes the pin straight back. The reader
+  // is pinned for the first screenful and only gets control once the
+  // answer is tall enough to clear the threshold — "when it starts I
+  // cannot stay at the top, later I can".
+  //
+  // Moving UP is unambiguous at any length: the reader went somewhere, so
+  // stop dragging them. Coming back to the very bottom re-engages.
   function onScroll() {
     if (!scrollEl) return;
-    // A small threshold so landing "basically at the bottom" still counts —
-    // a sub-pixel rounding or one trailing line must not strand the pin.
-    follow = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 80;
+    const top = scrollEl.scrollTop;
+    if (top === selfScrolledTo) {
+      // Our own parking, echoed back as an event. Not a reader gesture.
+      lastTop = top;
+      return;
+    }
+    if (top < lastTop - 1) {
+      follow = false;
+    } else if (scrollEl.scrollHeight - top - scrollEl.clientHeight <= 4) {
+      // Genuinely at the bottom again — a few pixels of slack for
+      // fractional layout, not two lines of it.
+      follow = true;
+    }
+    lastTop = top;
   }
 
   /** Ride the bottom, but only while the reader is still there. */
   function stickToBottom() {
     queueMicrotask(() => {
-      if (scrollEl && follow) scrollEl.scrollTop = scrollEl.scrollHeight;
+      if (!scrollEl || !follow) return;
+      scrollEl.scrollTop = scrollEl.scrollHeight;
+      // The browser clamps to scrollHeight - clientHeight; remember where
+      // it actually landed.
+      selfScrolledTo = scrollEl.scrollTop;
+      lastTop = selfScrolledTo;
     });
   }
 
@@ -564,6 +597,7 @@
     // Asking a question is intent to watch the answer, wherever the reader
     // had scrolled to while reading the last one.
     follow = true;
+    lastTop = scrollEl?.scrollTop ?? 0;
     historyIndex = null;
     // /newchat — open a fresh thread so a new question doesn't reuse the
     // current conversation's context (persistent memory is kept). Any
@@ -594,7 +628,12 @@
 <svelte:window ondragover={onWindowDragOver} ondrop={onWindowDrop} />
 
 <section class="flex flex-col h-full">
-  <div bind:this={scrollEl} onscroll={onScroll} class="flex-1 overflow-y-auto px-6 py-6 space-y-4">
+  <div
+    bind:this={scrollEl}
+    onscroll={onScroll}
+    onwheel={(e) => { if (e.deltaY < 0) follow = false; }}
+    class="flex-1 overflow-y-auto px-6 py-6 space-y-4"
+  >
     {#if messages.length === 0 && streamingIds.length === 0 && threadErrors.length === 0}
       {@const isHost = app.config?.mode === 'host'}
       {@const peerCount = app.stats?.peers_connected ?? 0}
