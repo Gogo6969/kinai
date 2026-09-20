@@ -5,6 +5,21 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.133] — 2026-09-20
+
+### Fixed
+
+- **You can read a long answer from the beginning while it is still being
+  written.** Scrolling up used to work only once an answer had grown to
+  several screens; at the start — exactly when you want to catch the first
+  lines — it dragged you back down every time. The reason: KinAI asked
+  "are you near the bottom?", and three lines into an answer the bottom is
+  only a few pixels away even when you have scrolled right to the top, so
+  the answer was always yes. It now notices that you *moved* instead of
+  measuring where you are, which works at any length. Scroll back to the
+  bottom and it resumes following; asking a new question always follows
+  again.
+
 ## [0.2.132] — 2026-09-17
 
 ### Fixed
