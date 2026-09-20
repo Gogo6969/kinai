@@ -506,28 +506,48 @@
     Object.entries(app.turnErrors).filter(([, v]) => v.threadId === app.activeThreadId)
   );
 
-  // Two-part autoscroll:
-  //   * When the message count changes (user sent, assistant arrived) →
-  //     always scroll to the bottom. New activity is what the user wants
-  //     to see; their explicit action implies intent to follow.
-  //   * While tokens are streaming → only stay pinned if they were already
-  //     near the bottom. Re-reading older content doesn't get yanked.
+  // --- Stick to the bottom, but the reader wins ---
+  //
+  // Following the newest text is the default: that is what you want while
+  // an answer writes itself. But a long answer is unreadable if the view
+  // will not hold still — scroll up to read it from the beginning and the
+  // next token drags you back down.
+  //
+  // So the pin is a REMEMBERED CHOICE, not a measurement. It releases the
+  // moment the reader scrolls away from the bottom and re-engages when
+  // they come back to it, exactly as `ThinkingPanel` already does for the
+  // thinking box.
+  //
+  // Why remembered rather than "am I near the bottom right now": the
+  // height changes under us on every token — markdown is re-parsed, images
+  // resolve to their real size, the thinking panel grows — so a distance
+  // measured against the layout of the previous frame is already stale,
+  // and the old 120px version re-took the pin whenever the reader had only
+  // nudged up a line or two. What the reader chose does not go stale.
+  let follow = $state(true);
+
+  function onScroll() {
+    if (!scrollEl) return;
+    // A small threshold so landing "basically at the bottom" still counts —
+    // a sub-pixel rounding or one trailing line must not strand the pin.
+    follow = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 80;
+  }
+
+  /** Ride the bottom, but only while the reader is still there. */
+  function stickToBottom() {
+    queueMicrotask(() => {
+      if (scrollEl && follow) scrollEl.scrollTop = scrollEl.scrollHeight;
+    });
+  }
+
   $effect(() => {
     void messages.length;
-    queueMicrotask(() => {
-      if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
-    });
+    stickToBottom();
   });
   $effect(() => {
     void Object.values(app.streaming).join('|').length;
     void Object.values(app.reasoning).join('|').length;
-    if (!scrollEl) return;
-    const nearBottom =
-      scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight < 120;
-    if (!nearBottom) return;
-    queueMicrotask(() => {
-      if (scrollEl) scrollEl.scrollTop = scrollEl.scrollHeight;
-    });
+    stickToBottom();
   });
 
   // `/newchat` → trailing question ('' if bare), or null if not the
@@ -541,6 +561,9 @@
     e.preventDefault();
     const text = input.trim();
     if (!text && pendingAttachments.length === 0) return;
+    // Asking a question is intent to watch the answer, wherever the reader
+    // had scrolled to while reading the last one.
+    follow = true;
     historyIndex = null;
     // /newchat — open a fresh thread so a new question doesn't reuse the
     // current conversation's context (persistent memory is kept). Any
@@ -571,7 +594,7 @@
 <svelte:window ondragover={onWindowDragOver} ondrop={onWindowDrop} />
 
 <section class="flex flex-col h-full">
-  <div bind:this={scrollEl} class="flex-1 overflow-y-auto px-6 py-6 space-y-4">
+  <div bind:this={scrollEl} onscroll={onScroll} class="flex-1 overflow-y-auto px-6 py-6 space-y-4">
     {#if messages.length === 0 && streamingIds.length === 0 && threadErrors.length === 0}
       {@const isHost = app.config?.mode === 'host'}
       {@const peerCount = app.stats?.peers_connected ?? 0}

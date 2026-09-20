@@ -440,6 +440,25 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
     stt_download_progress: () => null,
   };
 
+  // Event listeners registered through Tauri's `listen`. The real backend
+  // pushes streaming tokens this way, so without them a browser session can
+  // render a thread but never watch one arrive — which is exactly the state
+  // the scroll-while-streaming bugs live in. Keep the callback id Tauri
+  // mints and let a test drive it: `__mockEmit('kinai://token', {...})`.
+  const listeners = new Map<number, string>();
+  w.__mockEmit = (event: string, payload: unknown) => {
+    let delivered = 0;
+    for (const [id, name] of listeners) {
+      if (name !== event) continue;
+      const cb = w[`_${id}`];
+      if (typeof cb === 'function') {
+        cb({ event, id, payload });
+        delivered += 1;
+      }
+    }
+    return delivered;
+  };
+
   w.__TAURI_INTERNALS__ = {
     metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } },
     plugins: {},
@@ -454,7 +473,17 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
       // Plugin-namespaced commands (events, autostart, dialogs…) all no-op.
       if (cmd.startsWith('plugin:')) {
         if (cmd === 'plugin:autostart|is_enabled') return false;
-        if (cmd === 'plugin:event|listen') return 0;
+        if (cmd === 'plugin:event|listen') {
+          const id = args?.handler;
+          if (typeof id === 'number' && typeof args?.event === 'string') {
+            listeners.set(id, args.event);
+          }
+          return id ?? 0;
+        }
+        if (cmd === 'plugin:event|unlisten') {
+          if (typeof args?.eventId === 'number') listeners.delete(args.eventId);
+          return null;
+        }
         return null;
       }
       const h = handlers[cmd];
