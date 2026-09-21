@@ -152,7 +152,7 @@ User message:
 
     let mut written = 0;
     for fact in parsed.facts.into_iter().take(MAX_FACTS_PER_MESSAGE) {
-        let key = normalize_key(&fact.key);
+        let key = crate::db::user_facts::normalize_key(&fact.key);
         let value = fact.value.trim().to_string();
         if key.is_empty() || value.is_empty() {
             continue;
@@ -176,22 +176,6 @@ User message:
         written += 1;
     }
     Ok(written)
-}
-
-fn normalize_key(raw: &str) -> String {
-    raw.trim()
-        .to_lowercase()
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '_' })
-        .collect::<String>()
-        .trim_matches('_')
-        .chars()
-        .collect::<String>()
-        // Collapse runs of underscores. snake_case with single _.
-        .split('_')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("_")
 }
 
 fn parse_extractor_json(text: &str) -> Result<ExtractorResponse> {
@@ -282,13 +266,6 @@ mod tests {
     fn gate_accepts_self_reference() {
         assert!(looks_fact_shaped("I live in Berlin and work in Munich."));
         assert!(looks_fact_shaped("My wife is vegetarian, can you suggest"));
-    }
-
-    #[test]
-    fn normalize_key_handles_spaces_and_punctuation() {
-        assert_eq!(normalize_key("Wife's birthday"), "wife_s_birthday");
-        assert_eq!(normalize_key("CITY"), "city");
-        assert_eq!(normalize_key("  multi   word  "), "multi_word");
     }
 
     #[test]

@@ -1815,10 +1815,15 @@ pub async fn save_user_fact(
         .await?;
         // The host's response is the full updated list. Pick the row
         // we just saved so the call's return type stays UserFact.
-        // Match by key (peer scope is implicit on the host side).
+        // Match by key (peer scope is implicit on the host side) — and
+        // match on the NORMALIZED key, because that is what the host
+        // stored and echoed back. Matching on the raw input here would
+        // miss the row for any key the user typed with capitals or
+        // spaces, failing a save that in fact succeeded.
+        let saved_key = db::user_facts::normalize_key(&args.key);
         return facts
             .into_iter()
-            .find(|f| f.key == args.key.trim())
+            .find(|f| f.key == saved_key)
             .ok_or_else(|| "host accepted save but the new fact isn't in the response list".to_string());
     }
     state

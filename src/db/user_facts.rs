@@ -32,12 +32,41 @@ pub struct UserFact {
     pub updated_at: String,
 }
 
+/// Collapse a caller-supplied key into the canonical stored form:
+/// lowercase, non-alphanumerics folded to `_`, runs of `_` collapsed,
+/// leading/trailing `_` trimmed. `Wife Name`, `wife-name` and
+/// `wife_name` all become `wife_name`.
+///
+/// This lives HERE, not in the caller, because `(peer_id, key)` is the
+/// table's uniqueness constraint — and there are four write paths into
+/// it (the `remember` tool, the passive extractor, the host's Settings
+/// → Memory page, and the client's WS `SaveUserFact`). Originally only
+/// the extractor normalized, so `wife_name`, `wifes_name` and
+/// `Wife Name` could sit in three separate rows: the overwrite-on-update
+/// contract the `remember` tool advertises silently didn't hold, both
+/// values got injected into the prompt as authoritative, and `forget`
+/// cleared only whichever variant it was handed. Normalizing at the
+/// single point of write is what keeps those paths from diverging again.
+pub fn normalize_key(raw: &str) -> String {
+    raw.trim()
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect::<String>()
+        .split('_')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("_")
+}
+
 /// Insert or update a fact. Returns the row as it now sits in the DB —
 /// the same id if this was an update, or a fresh uuid if it was new.
 ///
-/// Trims key and value, rejects empty input (returns Err so callers can
-/// surface "you tried to remember nothing" to the model / user instead
-/// of silently writing junk).
+/// Normalizes the key (see `normalize_key`) and trims the value, then
+/// rejects empty input (returns Err so callers can surface "you tried to
+/// remember nothing" to the model / user instead of silently writing
+/// junk). The returned row carries the NORMALIZED key — callers that
+/// echo it back or match on it must use that, not what they passed in.
 pub async fn upsert(
     pool: &SqlitePool,
     peer_id: &str,
@@ -46,7 +75,9 @@ pub async fn upsert(
     source: &str,
     source_msg_id: Option<&str>,
 ) -> Result<UserFact> {
-    let key = key.trim();
+    // Normalize BEFORE the empty/length gates so what we validate is
+    // exactly what lands in the unique index.
+    let key = normalize_key(key);
     let value = value.trim();
     if key.is_empty() {
         anyhow::bail!("fact key is empty");
@@ -69,7 +100,7 @@ pub async fn upsert(
         "SELECT id, created_at FROM user_facts WHERE peer_id = ?1 AND key = ?2",
     )
     .bind(peer_id)
-    .bind(key)
+    .bind(key.as_str())
     .fetch_optional(pool)
     .await?;
 
@@ -91,7 +122,7 @@ pub async fn upsert(
         return Ok(UserFact {
             id,
             peer_id: peer_id.into(),
-            key: key.into(),
+            key: key.clone(),
             value: value.into(),
             source: source.into(),
             source_msg_id: source_msg_id.map(|s| s.into()),
@@ -107,7 +138,7 @@ pub async fn upsert(
     )
     .bind(&id)
     .bind(peer_id)
-    .bind(key)
+    .bind(key.as_str())
     .bind(value)
     .bind(source)
     .bind(source_msg_id)
@@ -117,7 +148,7 @@ pub async fn upsert(
     Ok(UserFact {
         id,
         peer_id: peer_id.into(),
-        key: key.into(),
+        key,
         value: value.into(),
         source: source.into(),
         source_msg_id: source_msg_id.map(|s| s.into()),
@@ -161,10 +192,14 @@ pub async fn delete(pool: &SqlitePool, peer_id: &str, id: &str) -> Result<()> {
 
 /// Forget a fact by its semantic key. Used by the `forget` tool when
 /// the LLM only knows the key ("forget my city") not the row id.
+///
+/// The key is normalized on the way in, exactly as `upsert` normalizes
+/// it on the way out, so `forget("Wife Name")` clears the row that
+/// `remember("wifes name")` wrote.
 pub async fn delete_by_key(pool: &SqlitePool, peer_id: &str, key: &str) -> Result<u64> {
     let result = sqlx::query("DELETE FROM user_facts WHERE peer_id = ?1 AND key = ?2")
         .bind(peer_id)
-        .bind(key.trim())
+        .bind(normalize_key(key))
         .execute(pool)
         .await?;
     Ok(result.rows_affected())
@@ -285,6 +320,97 @@ mod tests {
         assert!(list(&pool, "ALICE").await.unwrap().is_empty());
         // BOB's row untouched.
         assert_eq!(list(&pool, "BOB").await.unwrap().len(), 1);
+    }
+
+    /// The regression this module exists to prevent: the `remember`
+    /// tool, the extractor and the two manual UI paths all reach the
+    /// SAME row for keys that differ only in case, spacing or
+    /// punctuation. Before normalization moved in here, each spelling
+    /// got its own row and the "calling remember with the same key
+    /// OVERWRITES" contract in the tool description was a lie.
+    #[tokio::test]
+    async fn key_variants_collapse_to_one_row() {
+        let pool = fresh_pool().await;
+
+        // Same fact, four spellings a model or a person might produce.
+        let a = upsert(&pool, "ALICE", "favourite_tea", "sencha", "tool", None).await.unwrap();
+        let b = upsert(&pool, "ALICE", "Favourite Tea", "genmaicha", "manual", None).await.unwrap();
+        let c = upsert(&pool, "ALICE", "FAVOURITE-TEA", "hojicha", "extractor", None).await.unwrap();
+        let d = upsert(&pool, "ALICE", "  favourite__tea  ", "matcha", "tool", None).await.unwrap();
+
+        assert_eq!(a.id, b.id, "mixed case must hit the same row");
+        assert_eq!(a.id, c.id, "punctuation must hit the same row");
+        assert_eq!(a.id, d.id, "spaces + doubled underscores must hit the same row");
+
+        let facts = list(&pool, "ALICE").await.unwrap();
+        assert_eq!(facts.len(), 1, "four spellings must leave exactly ONE row");
+        assert_eq!(facts[0].key, "favourite_tea", "the stored key is the normalized one");
+        assert_eq!(facts[0].value, "matcha", "last write wins — that IS the update path");
+    }
+
+    /// The stored key is normalized even when only one spelling is ever
+    /// used, so what the UI shows and what the prompt injects agree.
+    #[tokio::test]
+    async fn upsert_returns_the_normalized_key() {
+        let pool = fresh_pool().await;
+        let f = upsert(&pool, "ALICE", "Preferred Units", "metric", "manual", None).await.unwrap();
+        assert_eq!(f.key, "preferred_units");
+        let listed = list(&pool, "ALICE").await.unwrap();
+        assert_eq!(listed[0].key, "preferred_units");
+    }
+
+    /// A key that is all punctuation normalizes to nothing — reject it
+    /// rather than writing a row under the empty string.
+    #[tokio::test]
+    async fn key_of_pure_punctuation_is_rejected() {
+        let pool = fresh_pool().await;
+        assert!(upsert(&pool, "ALICE", "???", "whatever", "tool", None).await.is_err());
+        assert!(list(&pool, "ALICE").await.unwrap().is_empty());
+    }
+
+    /// forget("Wife Name") must clear the row remember("wifes name")
+    /// wrote. Any variant reaches the row; the delete is not silently
+    /// a no-op that leaves a stale fact injected as authoritative.
+    #[tokio::test]
+    async fn forget_clears_the_row_via_any_variant() {
+        for variant in ["reading_format", "Reading Format", "READING-FORMAT", " reading__format "] {
+            let pool = fresh_pool().await;
+            upsert(&pool, "ALICE", "reading_format", "paperback", "tool", None).await.unwrap();
+
+            let deleted = delete_by_key(&pool, "ALICE", variant).await.unwrap();
+            assert_eq!(deleted, 1, "variant {variant:?} should have cleared the row");
+            assert!(
+                list(&pool, "ALICE").await.unwrap().is_empty(),
+                "variant {variant:?} left the fact behind"
+            );
+        }
+    }
+
+    /// Normalization must not punch through the peer boundary: ALICE
+    /// forgetting her key cannot clear BOB's identically-named row.
+    #[tokio::test]
+    async fn forget_by_key_stays_peer_scoped() {
+        let pool = fresh_pool().await;
+        upsert(&pool, "ALICE", "Commute Mode", "bicycle", "tool", None).await.unwrap();
+        upsert(&pool, "BOB", "commute_mode", "tram", "tool", None).await.unwrap();
+
+        let deleted = delete_by_key(&pool, "ALICE", "COMMUTE MODE").await.unwrap();
+        assert_eq!(deleted, 1);
+        assert!(list(&pool, "ALICE").await.unwrap().is_empty());
+        assert_eq!(list(&pool, "BOB").await.unwrap().len(), 1, "BOB's row must survive");
+    }
+
+    #[test]
+    fn normalize_key_handles_spaces_and_punctuation() {
+        assert_eq!(normalize_key("Wife's birthday"), "wife_s_birthday");
+        assert_eq!(normalize_key("CITY"), "city");
+        assert_eq!(normalize_key("  multi   word  "), "multi_word");
+        assert_eq!(normalize_key("__leading_and_trailing__"), "leading_and_trailing");
+        assert_eq!(normalize_key("work-stack"), "work_stack");
+        assert_eq!(normalize_key("   "), "");
+        // Non-ASCII letters are alphanumeric and must survive: a German
+        // or Catalan key should not be shredded into underscores.
+        assert_eq!(normalize_key("Lieblingskäse"), "lieblingskäse");
     }
 
     /// clear_all wipes only the requesting peer.

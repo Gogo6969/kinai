@@ -958,6 +958,40 @@ mod reminder_tool_tests {
         assert!(b.thread_id.is_none());
     }
 
+    /// The `remember` / `forget` arms are the surface this bug was
+    /// reported against: they passed the model's raw JSON `key`
+    /// straight through, so three spellings of one fact became three
+    /// rows and `forget` cleared only one of them. Normalization now
+    /// lives in the DB layer, and this exercises it through the actual
+    /// tool arms so a future refactor that re-reads or pre-matches the
+    /// key inside the arm can't quietly reintroduce the split.
+    #[tokio::test]
+    async fn remember_and_forget_treat_key_spellings_as_one_fact() {
+        let rt = runtime().await;
+        let db = rt.db.clone().unwrap();
+
+        execute("remember", r#"{"key":"coffee_order","value":"flat white"}"#, &rt).await.unwrap();
+        execute("remember", r#"{"key":"Coffee Order","value":"cortado"}"#, &rt).await.unwrap();
+        let out = execute("remember", r#"{"key":"COFFEE-ORDER","value":"espresso"}"#, &rt)
+            .await
+            .unwrap();
+        // The confirmation echoes the canonical key, not what came in.
+        assert!(out.contains("coffee_order"), "{out}");
+
+        let facts = db.list_user_facts("ALICE").await.unwrap();
+        assert_eq!(facts.len(), 1, "three spellings must be ONE fact, got {facts:?}");
+        assert_eq!(facts[0].key, "coffee_order");
+        assert_eq!(facts[0].value, "espresso", "the last remember overwrites");
+
+        // forget with a spelling that matches none of the writes verbatim.
+        let out = execute("forget", r#"{"key":"Coffee  Order"}"#, &rt).await.unwrap();
+        assert!(out.starts_with("Forgotten:"), "{out}");
+        assert!(
+            db.list_user_facts("ALICE").await.unwrap().is_empty(),
+            "forget must clear the row whichever spelling it is handed"
+        );
+    }
+
     #[tokio::test]
     async fn absolute_time_uses_the_members_zone() {
         let rt = runtime().await;

@@ -76,6 +76,28 @@ and "published".
       question on `/online` failed, and testing `fast` alone could never
       have found it — the slots run against different providers, so one
       slot answering proves nothing about the others.
+- [ ] **Persistent memory still treats one fact as one fact.** On any
+      one slot: ask KinAI to remember something under a key written with
+      capitals and a space, then ask it to remember a *different* value
+      for the same thing spelled another way (lowercase, or hyphenated).
+      Settings → Memory must show **one** row holding the second value,
+      not two rows. Then ask it to forget it using a third spelling and
+      confirm the row is gone.
+
+      `(peer_id, key)` is the uniqueness constraint on `user_facts`, and
+      for a long time only the passive extractor normalized the key: the
+      `remember` / `forget` tools and both Settings → Memory paths (the
+      host command and the client's WS handler) wrote whatever they were
+      handed, so three spellings of one fact became three rows. The
+      `remember` tool's own description promises the opposite — "calling
+      remember with the same key OVERWRITES" — so the breakage was
+      silent: contradictory values all got injected into the prompt as
+      authoritative, and `forget` cleared only the one spelling it was
+      given. Normalization now lives in `db::user_facts`, the single
+      point of write, and unit tests cover it; this step is what catches
+      a caller that bypasses it again, which is the only way it can come
+      back.
+
 - [ ] Staged client bundle matches the build:
       `shasum -a 256 ~/.kinai/updates/<ver>/darwin-aarch64/KinAI.app.tar.gz`
       == `shasum -a 256 target/release/bundle/macos/KinAI.app.tar.gz`.
