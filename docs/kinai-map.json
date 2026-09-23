@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-09-15T00:46:45+00:00",
-  "version": "0.2.130",
+  "generated_at": "2026-09-23T19:41:11+00:00",
+  "version": "0.2.135",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 352,
-    "head": "a13b4a7"
+    "commits": 368,
+    "head": "15fa2fa"
   },
   "totals": {
     "rust_files": 69,
-    "rust_lines": 34006,
+    "rust_lines": 34776,
     "frontend_files": 37,
-    "frontend_lines": 13700,
-    "unit_tests": 354,
+    "frontend_lines": 14193,
+    "unit_tests": 373,
     "integration_test_files": 19,
-    "releases": 122,
-    "tags": 117
+    "releases": 127,
+    "tags": 122
   },
   "areas": [
     {
@@ -94,7 +94,7 @@
     {
       "path": "src/auth/mod.rs",
       "area": "auth",
-      "lines": 259,
+      "lines": 285,
       "doc": "JWT (RS256) issuance and validation.",
       "tests": 3
     },
@@ -115,7 +115,7 @@
     {
       "path": "src/commands.rs",
       "area": "entry",
-      "lines": 3460,
+      "lines": 3482,
       "doc": "Tauri command surface — every IPC entrypoint the frontend can call.",
       "tests": 0
     },
@@ -136,9 +136,9 @@
     {
       "path": "src/context/extractor.rs",
       "area": "context",
-      "lines": 323,
+      "lines": 300,
       "doc": "Passive fact extraction.",
-      "tests": 7
+      "tests": 6
     },
     {
       "path": "src/context/memory.rs",
@@ -206,7 +206,7 @@
     {
       "path": "src/db/reminders.rs",
       "area": "db",
-      "lines": 1109,
+      "lines": 1113,
       "doc": "Reminders — per-member timed nudges. A family member sets one by asking KinAI (\"remind me tomorrow at 9 to …\"); the host's scheduler delivers it when due to the member's own devices and Telegram; the member acknowledges or snoozes it…",
       "tests": 19
     },
@@ -227,9 +227,9 @@
     {
       "path": "src/db/user_facts.rs",
       "area": "db",
-      "lines": 317,
+      "lines": 443,
       "doc": "Long-term per-user facts — the persistent memory layer that survives across threads and sessions.",
-      "tests": 4
+      "tests": 10
     },
     {
       "path": "src/discovery.rs",
@@ -255,7 +255,7 @@
     {
       "path": "src/lib.rs",
       "area": "entry",
-      "lines": 587,
+      "lines": 598,
       "doc": "KinAI library entrypoint — wires Tauri shell, Axum HTTP/WS server, tray, global hotkey, LLM client, and the never-lose-context pipeline.",
       "tests": 0
     },
@@ -311,9 +311,9 @@
     {
       "path": "src/network/invite.rs",
       "area": "network",
-      "lines": 543,
+      "lines": 785,
       "doc": "Invite issuance & validation.",
-      "tests": 5
+      "tests": 11
     },
     {
       "path": "src/network/mod.rs",
@@ -346,7 +346,7 @@
     {
       "path": "src/network/server.rs",
       "area": "network",
-      "lines": 1519,
+      "lines": 1548,
       "doc": "Host-side Axum HTTP+WebSocket server.",
       "tests": 0
     },
@@ -381,9 +381,9 @@
     {
       "path": "src/slash.rs",
       "area": "routing",
-      "lines": 1072,
+      "lines": 1179,
       "doc": "Slash commands — intercepted BEFORE the LLM pipeline so messages starting with /pic, /picHQ, /help, ? skip the chat model entirely and route to native handlers (ComfyUI for image gen, a static command list for help).",
-      "tests": 18
+      "tests": 22
     },
     {
       "path": "src/stt.rs",
@@ -416,7 +416,7 @@
     {
       "path": "src/telegram/mod.rs",
       "area": "telegram",
-      "lines": 524,
+      "lines": 530,
       "doc": "Telegram bot integration — host-side only.",
       "tests": 11
     },
@@ -430,7 +430,7 @@
     {
       "path": "src/telegram/router.rs",
       "area": "telegram",
-      "lines": 1688,
+      "lines": 1701,
       "doc": "Route incoming Telegram updates into KinAI's chat pipeline.",
       "tests": 13
     },
@@ -458,9 +458,9 @@
     {
       "path": "src/tools/force_search.rs",
       "area": "tools",
-      "lines": 896,
+      "lines": 987,
       "doc": "Taking the \"should I search?\" decision away from the model.",
-      "tests": 14
+      "tests": 16
     },
     {
       "path": "src/tools/image_recover.rs",
@@ -493,9 +493,9 @@
     {
       "path": "src/tools/registry.rs",
       "area": "tools",
-      "lines": 979,
+      "lines": 1013,
       "doc": "Tool catalogue — generated dynamically from `ToolSettings` so users can disable tools their model shouldn't be allowed to call.",
-      "tests": 10
+      "tests": 11
     },
     {
       "path": "src/tools/status_phrases.rs",
@@ -549,9 +549,9 @@
     {
       "path": "src/updater.rs",
       "area": "entry",
-      "lines": 278,
+      "lines": 360,
       "doc": "Periodic update check — host first, GitHub fallback for off-LAN.",
-      "tests": 0
+      "tests": 1
     },
     {
       "path": "src/vision.rs",
@@ -565,13 +565,13 @@
     {
       "path": "frontend/src/lib/activeModel.ts",
       "kind": "lib",
-      "lines": 97,
+      "lines": 115,
       "doc": "Which slot is answering *right now*, for the composer prompt label. the owner's ask: \"show in the prompt which model is currently set — so that the user always knows which model is right now working for him\", and then: \"the chat entry in the app should just show fast: balanced: or deep:\". So this resolves the slot, not the model id — the per-message footer already carries the full model name and s"
     },
     {
       "path": "frontend/src/lib/api.ts",
       "kind": "lib",
-      "lines": 751,
+      "lines": 768,
       "doc": "Pause toggle. When `false` this slot is hidden from slash menus and skipped during message routing. Defaults to `true` for the fast slot, `false` for the deep slot (until the user fills it)."
     },
     {
@@ -583,7 +583,7 @@
     {
       "path": "frontend/src/lib/components/ChatWindow.svelte",
       "kind": "component",
-      "lines": 997,
+      "lines": 1059,
       "doc": "Status line of the most recent tool for a streaming message, if any."
     },
     {
@@ -595,7 +595,7 @@
     {
       "path": "frontend/src/lib/components/MessageBubble.svelte",
       "kind": "component",
-      "lines": 555,
+      "lines": 556,
       "doc": "True only for the last assistant message — gates the regenerate affordance so older replies don't show it."
     },
     {
@@ -649,7 +649,7 @@
     {
       "path": "frontend/src/lib/dev-tauri-mock.ts",
       "kind": "lib",
-      "lines": 418,
+      "lines": 499,
       "doc": "DEV-ONLY Tauri IPC mock. When the frontend runs in a plain browser (`pnpm dev` + localhost:1420, no Tauri shell), `window.__TAURI_INTERNALS__` doesn't exist and every invoke() rejects — the UI is untestable outside the app. This module installs a minimal in-memory backend so the whole UI (most importantly the /setup wizard) can be driven end-to-end in a browser: config mutations persist for the se"
     },
     {
@@ -745,14 +745,14 @@
     {
       "path": "frontend/src/routes/host/family/+page.svelte",
       "kind": "route",
-      "lines": 172,
-      "doc": "This page had no error handling at all: a failed call left the list silently stale, which on a page about who can reach your household is the worst possible way to be wrong."
+      "lines": 285,
+      "doc": "---- Re-pairing a device from the row it belongs to ---- The code, the link and the QR used to live only on the Invites page, reached by a button marked \"+ Invite\" — so re-reading the code for a device you already have meant going to the page for making new ones. They belong here, next to the device. Behind a per-row reveal, not because they are secret from the host, but because this page is the o"
     },
     {
       "path": "frontend/src/routes/host/invite/+page.svelte",
       "kind": "route",
-      "lines": 289,
-      "doc": "TTL options. `0` is the \"never expires\" sentinel — the backend encodes it as a ~100-year JWT so any check in the host's validate_token still passes for the realistic lifetime of the recipient device. Render-time we detect the far-future date and show \"Never\" in the invite-list summary."
+      "lines": 490,
+      "doc": "Mirrors `invite::MAX_LABEL_CHARS` on the host, so the three fields that write this column agree with each other and with the gate that would otherwise refuse them after a round trip."
     },
     {
       "path": "frontend/src/routes/host/reports/+page.svelte",
@@ -1184,6 +1184,7 @@
       "redeem_invite_code",
       "regenerate_message",
       "reminder_action",
+      "rename_invite",
       "rename_thread",
       "report_answer",
       "request_telegram_pair",
@@ -1232,6 +1233,98 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.135",
+      "date": "2026-09-23",
+      "sections": {
+        "Changed": [
+          {
+            "title": "The uncensored model is called that everywhere now.",
+            "detail": "0.2.134 renamed it in the help, but the model picker still said \"Deep — Thinks hard\", the box you type in still showed `deep:`, and the `/` menu and Telegram's command list still offered `/deep`. All of them now say **Uncensored**, with a 🔓 instead of the brain, and switching confirms \"Switched to the uncensored model\". Typing `/deep` still works."
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.2.134",
+      "date": "2026-09-23",
+      "sections": {
+        "Changed": [
+          {
+            "title": "The deep model is now called Uncensored.",
+            "detail": "Switch to it with `/uncensored`; `/deep` still works if that is what your fingers know. Only the name changed — the model behind it, its settings and every existing conversation are exactly as they were."
+          }
+        ],
+        "Fixed": [
+          {
+            "title": "Asking for a link always searches.",
+            "detail": "\"What is the network speed of this machine — with a link\" is something only the web can answer, but KinAI sometimes answered it from memory instead: it picked up a link mentioned earlier in the conversation and repeated that earlier answer's guess as though it were the official spec. A request for a link, a URL or a source now always runs a real search."
+          },
+          {
+            "title": "Telling KinAI a fact twice keeps one fact, not two.",
+            "detail": "Saying something about yourself and later saying it again, worded a little differently, could store it twice under two spellings — and KinAI then believed both, with no way to tell which was current. Updating a fact now replaces the old one, forgetting it removes it completely, and the same holds for facts edited in Settings → Memory."
+          },
+          {
+            "title": "Telegram shows it is typing right away.",
+            "detail": "The \"typing…\" dots used to appear only after a second and a half, so every message looked ignored for a moment. They now show within a quarter of a second."
+          }
+        ],
+        "Security": [
+          {
+            "title": "`devalue` updated to 5.9.2",
+            "detail": "(GHSA-9rgm-9g3h-6x36, Dependabot #26). A second copy of the library, pulled in by Svelte, was on a vulnerable version. The affected code path was not reachable in KinAI — the app ships as static files with no server-side rendering — but the fixed version is the only one that ships now."
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.2.133",
+      "date": "2026-09-20",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "You can read a long answer from the beginning while it is still being written.",
+            "detail": "Scrolling up used to work only once an answer had grown to several screens; at the start — exactly when you want to catch the first lines — it dragged you back down every time. The reason: KinAI asked \"are you near the bottom?\", and three lines into an answer the bottom is only a few pixels away even when you have scrolled right to the top, so the answer was always yes. It now notices that you *moved* instead of measuring where you are, which works at any length. Scroll back to the bottom and it resumes following; asking a new question always follows again."
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.2.132",
+      "date": "2026-09-17",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "\"Install and restart\" brings the app back where you can see it.",
+            "detail": "It did restart — it just came back invisible, into the menu bar, so from the outside KinAI closed and never returned. The relaunch re-runs KinAI with the arguments it was originally started with, and a copy that macOS started at login carries a flag meaning \"stay in the background\"; the new copy read that flag and stayed hidden. You pressed a button that says restart, so now it shows itself whatever that flag says. If this caught you, nothing was broken — the new version was already installed and opening KinAI again was enough."
+          },
+          {
+            "title": "A device's code, link and QR are on the screen with the device.",
+            "detail": "Manage family lists everyone who can reach the household, but re-reading the 6-character code for a device already on that list meant going to the Invites page, reached by a button marked **+ Invite** — the page for making new ones. Each row now shows when its invite expires, and a **Show code** button opens that device's code, join link and QR right there, for setting it up a second time or on another device. **+ Invite** is for new invitations, which is what it says."
+          },
+          {
+            "title": "Only revoked invites are put away, not expired ones.",
+            "detail": "The Invites page's new filter hid both — and hiding a row takes its QR, code, link and expiry date with it. An expired invite is still a record of who had what. Revoking is a decision you made about a device; expiring is time passing. The button now says what it does: **Show revoked** / **Hide revoked**."
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.2.131",
+      "date": "2026-09-17",
+      "sections": {
+        "Added": [
+          {
+            "title": "Rename a device on the Invites page.",
+            "detail": "The name beside an invite is your own note about whose device it is, and until now it was fixed the moment you created the invite — a phone that changed hands kept the old name for good. The pencil beside the name edits it. Nothing about the credential changes: the code, the link and the QR are untouched, so one already scanned or stuck on the fridge keeps working. The new name also reaches the name shown on a reported answer — from that device's next connection — which used to keep repeating whatever the device was called on the day it joined."
+          },
+          {
+            "title": "The Invites page opens on what still works.",
+            "detail": "Revoked and expired codes are kept for about a week as a record, and after a while they were most of what the page showed. They are one click away under **Show all**, and a line under the list says how many are hidden and whether they were revoked or expired. Reminder API keys stay in the list — they are live credentials and the Revoke button is here — but they are labelled as keys now, rather than looking like somebody's device. An invite whose expiry date cannot be read says so instead of showing \"Invalid Date\"."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.130",
       "date": "2026-09-15",
@@ -3751,6 +3844,26 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.135",
+      "date": "2026-09-23"
+    },
+    {
+      "tag": "v0.2.134",
+      "date": "2026-09-23"
+    },
+    {
+      "tag": "v0.2.133",
+      "date": "2026-09-20"
+    },
+    {
+      "tag": "v0.2.132",
+      "date": "2026-09-17"
+    },
+    {
+      "tag": "v0.2.131",
+      "date": "2026-09-17"
+    },
     {
       "tag": "v0.2.130",
       "date": "2026-09-14"
