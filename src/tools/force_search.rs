@@ -281,6 +281,48 @@ const REQUEST_SHAPE: &[&str] = &[
 /// Live-by-construction phrases that need no temporal word at all
 /// (panel false-misses): release dates and opening status are always
 /// about now or the future.
+/// An explicit request for a link, URL or source. Live by construction:
+/// a URL is not knowledge the model holds, it is something only a lookup
+/// can supply — so the question decides the tool, not the model's mood.
+///
+/// 2026-09-22: added after `search_discipline_live` measured 25/80 (31%)
+/// against its 70% gate, down from 14/15 when the gate was written. The
+/// classifier had NO rule here, so "Olares One ethernet speed - with
+/// link" fell through to the model, which declined roughly three times in
+/// four — it re-used a URL already in the thread and restated that
+/// reply's hedge as fact (the 2026-07-27 field report, verbatim). A
+/// prompt rule was tried three times for this and rotted on every model
+/// swap; the classifier does not.
+///
+/// Multi-word forms only. A bare "link" matches "the link between sugar
+/// and diabetes", which asks about a relationship, and a bare "source"
+/// matches "open source" and "the source of that smell".
+const LINK_REQUEST: &[&str] = &[
+    "with link", "with a link", "with the link", "including a link",
+    "mit link", "mit einem link", "mit dem link",
+    "give me a link", "give me the link", "send me a link",
+    "send me the link", "send a link", "share the link", "link me",
+    "a link to", "the link to", "link zu", "link für", "link fuer",
+    "gib mir einen link", "gib mir den link", "schick mir einen link",
+    "schicke mir einen link",
+    "url",
+    "official page", "official site", "official website",
+    "offizielle seite", "offizielle website",
+    "cite your source", "cite the source", "cite your sources",
+    "with source", "with sources", "mit quelle", "mit quellen",
+    "quelle bitte", "source please", "sources please",
+];
+
+/// A link to something KinAI itself produced — the web is the wrong place
+/// to look, and forcing a web_search-only round would hide the right tool.
+/// The TASK_VETO lesson, applied to link requests.
+const OWN_ARTIFACT_VETO: &[&str] = &[
+    "you made", "you generated", "you created", "you drew", "you wrote",
+    "you just made", "you sent", "you posted",
+    "du gemacht", "du erstellt", "du generiert", "du gezeichnet",
+    "the photo you", "the image you", "the picture you", "das bild das du",
+];
+
 const RELEASE_STEM: &[&str] = &[
     "come out", "comes out", "coming out", "release date", "releases",
     "kommt raus", "erscheint", "erscheinungsdatum", "wann kommt",
@@ -413,6 +455,15 @@ pub fn needs_live_data(question: &str) -> bool {
     // Release dates and opening status are about now/future by
     // construction, no temporal word needed.
     if any(&q, RELEASE_STEM) || any(&q, OPEN_NOW) {
+        return true;
+    }
+    // An explicit ask for a link/URL/source is live by construction too.
+    // Gated by the task and own-artifact vetoes so "remind me to send the
+    // link" and "send me the link to the photo you made" do not force a
+    // web-only round. Sits AFTER the creative/meta/datetime vetoes above,
+    // so "write me a poem with a link to it" and "why did you search just
+    // now?" are already out.
+    if any(&q, LINK_REQUEST) && !any(&q, TASK_VETO) && !any(&q, OWN_ARTIFACT_VETO) {
         return true;
     }
     if words < 2 {
@@ -785,6 +836,46 @@ math, and general knowledge all work fine.)";
 
     /// Every string here was found by an adversarial review of the first
     /// version, which matched raw substrings and fired on all of them.
+    #[test]
+    fn an_explicit_link_request_forces_a_search() {
+        // 2026-09-22: the gap that dropped search_discipline_live to 31%.
+        // Every one of these returned false before LINK_REQUEST existed.
+        for q in [
+            "Olares One ethernet speed - with link",
+            "Olares One ethernet speed, with a link please",
+            "give me a link for the mini pc spec",
+            "can you send me the link to that page",
+            "post the url for that spec sheet",
+            "what is the url of the manual",
+            "find the official page for that router",
+            "cite your source for that",
+            "what did the council decide, with sources",
+            "wie schnell ist das netzwerk, mit link",
+            "schick mir einen link dazu",
+        ] {
+            assert!(needs_live_data(q), "should force a search: {q:?}");
+        }
+    }
+
+    #[test]
+    fn link_shaped_phrases_that_are_not_link_requests_do_not_force() {
+        // A bare "link"/"source" token would catch every one of these,
+        // which is why LINK_REQUEST is multi-word only.
+        for q in [
+            "what is the link between sugar and diabetes",
+            "is there a link between screen time and sleep",
+            "what are good open source alternatives to photoshop",
+            "what is the source of that smell in the kitchen",
+            // KinAI's own artifacts — the web is the wrong place to look
+            "send me the link to the photo you made",
+            "can you resend the picture you generated",
+            // task tools own these, forcing web_search would hide them
+            "remind me to send Anna the link tomorrow",
+        ] {
+            assert!(!needs_live_data(q), "should NOT force a search: {q:?}");
+        }
+    }
+
     #[test]
     fn innocent_messages_do_not_force_a_search() {
         for q in [
