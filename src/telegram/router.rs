@@ -546,24 +546,30 @@ back, unless you switch model yourself.",
     // phone user thinks the bot froze. Cancelled when the LLM run
     // completes (or errors).
     //
-    // The 1.5-second initial delay matters more than it looks: fast-
-    // model turns often finish in well under 2s. If we fire
-    // sendChatAction immediately on those, the HTTP call can reach
-    // Telegram AFTER our sendMessage (network race), which Telegram
-    // interprets as "bot started typing AGAIN" and leaves the indicator
-    // hanging for ~5 seconds after the reply already arrived. By
-    // delaying the first fire past the typical fast-response window,
-    // we either avoid the indicator entirely (no race possible) or
-    // fire it well before the reply lands.
+    // The initial delay exists to dodge a network race: if we fire
+    // sendChatAction immediately, the HTTP call can reach Telegram
+    // AFTER our sendMessage, which Telegram reads as "bot started
+    // typing AGAIN" and leaves the indicator spinning for ~5 seconds
+    // after the reply already arrived.
+    //
+    // 2026-09-23: cut 1500ms -> 250ms at the owner's request. At 1.5s
+    // the dots felt laggy on every Telegram turn — the delay was tuned
+    // to skip the indicator entirely on sub-2s turns, but the cost was
+    // that EVERY turn looked unresponsive for a second and a half.
+    // 250ms is below the threshold where a person reads it as lag, and
+    // still leaves the sendChatAction comfortably ahead of any real
+    // LLM reply: even a trivial turn needs a model round-trip, so the
+    // race needs a sub-250ms end-to-end turn to bite.
     let typing_cancel = CancellationToken::new();
     {
         let api_clone = api.clone();
         let cancel_clone = typing_cancel.clone();
         tokio::spawn(async move {
-            // Initial delay: skip the indicator for sub-1.5s turns.
+            // Initial delay: just enough to stay clear of the
+            // sendChatAction/sendMessage race, not enough to read as lag.
             tokio::select! {
                 _ = cancel_clone.cancelled() => return,
-                _ = tokio::time::sleep(std::time::Duration::from_millis(1500)) => {}
+                _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {}
             }
             // For longer turns, re-fire every 4s. Telegram's typing
             // indicator auto-times-out at ~5s without a re-fire.
