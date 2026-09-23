@@ -2,6 +2,7 @@
   import type { Attachment, Message, TurnMetrics } from '$lib/api';
   import { renderMarkdown } from '$lib/markdown';
   import { app } from '$lib/stores/app.svelte';
+  import { slotName } from '$lib/activeModel';
   import { invoke } from '@tauri-apps/api/core';
   import { Check, Copy, FileText, Search, RefreshCw, Pencil, Volume2, Square, ShieldCheck, Loader2, Flag } from '@lucide/svelte';
 
@@ -166,12 +167,12 @@
   }
   const modelAbbrev = $derived(metrics?.model ? abbreviateModel(metrics.model) : '');
   /** Glyph + tooltip text for the slot — keeps the badge compact:
-   *  fast = ⚡, balanced = ⚖️, deep = 🧠. Empty slot label = no glyph
+   *  fast = ⚡, balanced = ⚖️, deep (shown as "uncensored") = 🔓. Empty slot label = no glyph
    *  (single-model setups don't need the visual cue). */
   function slotGlyph(slot: string | undefined): string {
     if (slot === 'fast') return '⚡';
     if (slot === 'balanced') return '⚖️';
-    if (slot === 'deep') return '🧠';
+    if (slot === 'deep') return '🔓';
     return '';
   }
   const slotIcon = $derived(slotGlyph(metrics?.slot));
@@ -397,7 +398,7 @@
         <span>·</span>
         <span
           class="font-mono text-teal-300/70"
-          title="LLM model that produced this reply{metrics?.slot ? ` (${metrics.slot} slot)` : ''} — full id: {metrics?.model}"
+          title="LLM model that produced this reply{metrics?.slot ? ` (${slotName(metrics.slot)} slot)` : ''} — full id: {metrics?.model}"
         >{slotIcon ? slotIcon + ' ' : ''}{modelAbbrev}</span>
       {/if}
     </div>

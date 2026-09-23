@@ -19,7 +19,7 @@
   import { streamMarkdown } from '$lib/stream-html';
   import { api, type Attachment } from '$lib/api';
   import { fileToDataUrl } from '$lib/image';
-  import { resolveActiveSlot, slotFromCommand, type SlotSlug } from '$lib/activeModel';
+  import { resolveActiveSlot, slotFromCommand, slotName, slotCommand, type SlotSlug } from '$lib/activeModel';
   import { THIS_COMPUTER, isMac, MODIFIERS } from '$lib/platform';
   import { displayModelName } from '$lib/modelName';
   import { Send, Square, Paperclip, X, FileText, Image as ImageIcon, Check, ChevronUp } from '@lucide/svelte';
@@ -165,13 +165,13 @@
   const SLOT_GLYPH: Record<string, string> = {
     fast: '⚡',
     balanced: '⚖️',
-    deep: '🧠',
+    deep: '🔓',
     online: '☁️',
   };
   const SLOT_BLURB: Record<string, string> = {
     fast: 'Quick responses',
     balanced: 'Middle ground',
-    deep: 'Thinks hard',
+    deep: 'Answers what others won\u2019t',
     online: 'Leaves the house',
   };
 
@@ -232,7 +232,7 @@
   function pickSlot(slug: string) {
     slotMenuOpen = false;
     if (slug === activeModel.slot) return;
-    void app.send(`/${slug}`);
+    void app.send(slotCommand(slug));
   }
 
   const SLASH_COMMANDS = $derived.by(() => {
@@ -262,7 +262,7 @@
     const extra =
       slots.length >= 2
         ? slots.map(({ slug, model, alive }) => ({
-            cmd: `/${slug}`,
+            cmd: slotCommand(slug),
             desc:
               alive === false
                 ? `⚠️ ${SLOT_MENU_TEXT[slug].label} model (${displayModelName(model)}) — offline right now, auto-switches`
@@ -906,10 +906,10 @@
             }
           }}
           title={activeModel.alive
-            ? `Answering with the ${activeModel.slot} model${activeModel.model ? `: ${displayModelName(activeModel.model)}` : ''}. Click to switch.`
-            : `The ${activeModel.slot} model${activeModel.model ? ` (${displayModelName(activeModel.model)})` : ''} looks unreachable — KinAI will switch to an available one for this turn.`}
+            ? `Answering with the ${slotName(activeModel.slot)} model${activeModel.model ? `: ${displayModelName(activeModel.model)}` : ''}. Click to switch.`
+            : `The ${slotName(activeModel.slot)} model${activeModel.model ? ` (${displayModelName(activeModel.model)})` : ''} looks unreachable — KinAI will switch to an available one for this turn.`}
         >
-          <span>{activeModel.slot}:</span>
+          <span>{slotName(activeModel.slot)}:</span>
           {#if slotChoices.length >= 2}
             <ChevronUp size={11} class="opacity-60 transition-transform {slotMenuOpen ? '' : 'rotate-180'}" />
           {/if}
@@ -941,7 +941,7 @@
                   {SLOT_GLYPH[choice.slug] ?? '•'}
                 </span>
                 <span class="min-w-0 flex-1">
-                  <span class="block text-[13px] capitalize leading-5">{choice.slug}</span>
+                  <span class="block text-[13px] capitalize leading-5">{slotName(choice.slug)}</span>
                   <span class="block text-[11.5px] text-white/45 truncate">
                     {offline ? 'Offline — auto-switches' : SLOT_BLURB[choice.slug]} · {displayModelName(choice.model)}
                   </span>

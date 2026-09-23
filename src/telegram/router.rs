@@ -344,20 +344,27 @@ async fn run_turn_for_peer<R: Runtime>(
 
     let cfg = state.config.read().clone();
 
-    // Bare `/fast`, `/balanced` or `/deep` (no body) = mode switch, not a
-    // question. Persist the choice on the thread, confirm, return.
+    // Bare `/fast`, `/balanced`, `/uncensored` (or `/deep`), `/online` —
+    // no body = mode switch, not a question. Persist the choice on the
+    // thread, confirm, return. Both the key and the name people see
+    // (slot_display_name) match, so the Telegram menu's /uncensored
+    // lands here rather than falling through to the generic path.
     let trimmed_lc = content.trim().to_ascii_lowercase();
     if let Some(slot) = crate::slash::SLOTS
         .iter()
-        .find(|s| trimmed_lc == format!("/{s}"))
+        .find(|s| {
+            trimmed_lc == format!("/{s}")
+                || trimmed_lc == format!("/{}", crate::slash::slot_display_name(s))
+        })
         .copied()
     {
         // thread_id is already resolved + upserted above — write the
         // sticky slot to the active (possibly /newchat-rotated) thread.
         let _ = state.db.set_thread_active_slot(peer_id, &thread_id, Some(slot)).await;
         let active_model = &crate::slash::slot_settings(&cfg, slot).model;
+        let name = crate::slash::slot_display_name(slot);
         let icon = match slot {
-            "deep" => "🧠",
+            "deep" => "🔓",
             "balanced" => "⚖️",
             "online" => "☁️",
             _ => "⚡",
@@ -365,15 +372,15 @@ async fn run_turn_for_peer<R: Runtime>(
         let others: Vec<String> = crate::slash::SLOTS
             .iter()
             .filter(|s| **s != slot && crate::slash::slot_settings(&cfg, s).is_active())
-            .map(|s| format!("`/{s}`"))
+            .map(|s| format!("`/{}`", crate::slash::slot_display_name(s)))
             .collect();
         let mut body = if active_model.trim().is_empty() {
-            format!("{icon} Switched to **{slot}** model — but no model is configured for this slot. Open KinAI → Settings to add one.")
+            format!("{icon} Switched to **{name}** model — but no model is configured for this slot. Open KinAI → Settings to add one.")
         } else if others.is_empty() {
-            format!("{icon} Switched to **{slot}** model (`{active_model}`).")
+            format!("{icon} Switched to **{name}** model (`{active_model}`).")
         } else {
             format!(
-                "{icon} Switched to **{slot}** model (`{active_model}`).\nAll follow-up questions in this chat go here until you type {} to switch.",
+                "{icon} Switched to **{name}** model (`{active_model}`).\nAll follow-up questions in this chat go here until you type {} to switch.",
                 others.join(" or ")
             )
         };

@@ -308,7 +308,9 @@ fn command_menu(cfg: &crate::config::AppConfig) -> Vec<api::BotCommand> {
     if active.len() >= 2 {
         for slot in &active {
             out.push(api::BotCommand {
-                command: (**slot).into(),
+                // The name people use, not the key: the deep slot is
+                // offered as /uncensored (see slash::slot_display_name).
+                command: crate::slash::slot_display_name(slot).into(),
                 description: slot_menu_description(slot).into(),
             });
         }
@@ -379,8 +381,12 @@ mod menu_tests {
         let cfg = cfg_with_slots(&["fast", "balanced", "deep", "online"]);
         let n = names(&cfg);
         for slot in ["fast", "balanced", "deep", "online"] {
-            assert!(n.contains(&slot.to_string()), "/{slot} missing from menu: {n:?}");
+            let cmd = crate::slash::slot_display_name(slot);
+            assert!(n.contains(&cmd.to_string()), "/{cmd} missing from menu: {n:?}");
         }
+        // The deep slot is offered under its name only.
+        assert!(n.contains(&"uncensored".to_string()), "{n:?}");
+        assert!(!n.contains(&"deep".to_string()), "menu still offers /deep: {n:?}");
     }
 
     /// Guards against the same drift for any slot added later: whatever
@@ -392,7 +398,7 @@ mod menu_tests {
         let n = names(&cfg);
         for slot in crate::slash::SLOTS {
             assert!(
-                n.contains(&slot.to_string()),
+                n.contains(&crate::slash::slot_display_name(slot).to_string()),
                 "slot /{slot} exists in SLOTS but is not offered in Telegram: {n:?}"
             );
         }
@@ -405,7 +411,7 @@ mod menu_tests {
         let cfg = cfg_with_slots(&["fast", "deep"]);
         let n = names(&cfg);
         assert!(n.contains(&"fast".to_string()));
-        assert!(n.contains(&"deep".to_string()));
+        assert!(n.contains(&"uncensored".to_string()));
         assert!(!n.contains(&"online".to_string()), "unconfigured /online offered: {n:?}");
         assert!(!n.contains(&"balanced".to_string()));
     }

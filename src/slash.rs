@@ -89,6 +89,21 @@ fn rewrite_slot_alias(content: &str) -> Option<String> {
     None
 }
 
+/// What a person sees and types for a slot: its alias when it has one,
+/// otherwise the key itself. Every menu, switch confirmation and the
+/// Telegram command list goes through this, so the name cannot drift
+/// between surfaces again — 0.2.134 renamed the help text but left
+/// `/deep` in the menus, because each of those built its entries from
+/// the raw key.
+pub fn slot_display_name(slot: &str) -> &str {
+    for (alias, key) in COMMAND_ALIASES {
+        if *key == slot {
+            return alias;
+        }
+    }
+    slot
+}
+
 pub const SLOTS: &[&str] = &["fast", "balanced", "deep", "online"];
 
 /// The slots automatic failover is allowed to reach for when a routed
@@ -489,6 +504,7 @@ pub fn switch_confirmation(
     wanted_alive: Option<bool>,
 ) -> String {
     let label = route.slot_label;
+    let name = slot_display_name(label);
     // Show the model the way the rest of the UI does. llama-server reports
     // whatever `-m` it was given unless an alias was set, so a slot can be
     // called `/home/olares/models/Qwen3.6-35B-A3B-MTP-UD-Q4_K_S.gguf` — a
@@ -498,13 +514,13 @@ pub fn switch_confirmation(
     let others: Vec<String> = SLOTS
         .iter()
         .filter(|s| **s != label && slot_settings(cfg, s).is_active())
-        .map(|s| format!("`/{s}`"))
+        .map(|s| format!("`/{}`", slot_display_name(s)))
         .collect();
     let mut msg = if others.is_empty() {
-        format!("Switched to the **{label}** model (`{model}`).")
+        format!("Switched to the **{name}** model (`{model}`).")
     } else {
         format!(
-            "Switched to the **{label}** model (`{model}`). It stays active for this conversation until you switch again with {}.",
+            "Switched to the **{name}** model (`{model}`). It stays active for this conversation until you switch again with {}.",
             others.join(" or ")
         )
     };
@@ -848,6 +864,33 @@ mod routing_tests {
         let r2 = route_for(&db, &cfg, "host", &t.id, "and 3+3?").await;
         assert_eq!(r2.slot_label, "balanced");
         assert_eq!(r2.stripped_content, "and 3+3?");
+    }
+
+    #[test]
+    fn the_deep_slot_is_named_uncensored_and_the_others_keep_their_keys() {
+        assert_eq!(slot_display_name("deep"), "uncensored");
+        for s in ["fast", "balanced", "online"] {
+            assert_eq!(slot_display_name(s), s);
+        }
+    }
+
+    #[tokio::test]
+    async fn switching_confirms_the_name_people_use_not_the_key() {
+        let db = fresh_db().await;
+        let cfg = cfg_three_slots();
+        let t = db.create_thread("host", Some("t")).await.unwrap();
+        // A bare /uncensored is a mode switch onto the deep slot...
+        let r = route_for(&db, &cfg, "host", &t.id, "/uncensored").await;
+        assert!(r.bare_switch);
+        assert_eq!(r.slot_label, "deep");
+        let msg = switch_confirmation(&cfg, &r, None);
+        assert!(msg.contains("**uncensored**"), "{msg}");
+        assert!(!msg.contains("**deep**"), "{msg}");
+        // ...and switching AWAY offers it under its name, not `/deep`.
+        let r2 = route_for(&db, &cfg, "host", &t.id, "/balanced").await;
+        let msg2 = switch_confirmation(&cfg, &r2, None);
+        assert!(msg2.contains("`/uncensored`"), "{msg2}");
+        assert!(!msg2.contains("`/deep`"), "{msg2}");
     }
 
     #[tokio::test]

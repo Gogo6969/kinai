@@ -33,10 +33,28 @@ import type { Message, TurnMetrics } from './api';
 
 export type SlotSlug = 'fast' | 'balanced' | 'deep' | 'online';
 
-/** Leading slash command, if the message is one. */
+/** What a person sees and types for a slot. Only `deep` differs: it is
+ *  called "uncensored", while the key stays `deep` in config, storage
+ *  and on the wire. Mirrors `slot_display_name` in src/slash.rs — the
+ *  host routes `/uncensored` to the deep slot since 0.2.134. */
+export function slotName(slug: string | null | undefined): string {
+  return slug === 'deep' ? 'uncensored' : (slug ?? '');
+}
+
+/** The command that switches to a slot, under the name people use. */
+export function slotCommand(slug: string): string {
+  return `/${slotName(slug)}`;
+}
+
+/** Leading slash command, if the message is one. `/uncensored` is the
+ *  deep slot's user-facing name, so it resolves to `deep` — without
+ *  this the composer's slot chip would not follow a typed /uncensored
+ *  until the reply arrived. */
 export function slotFromCommand(text: string): SlotSlug | null {
-  const m = /^\s*\/(fast|balanced|deep|online)\b/i.exec(text ?? '');
-  return m ? (m[1].toLowerCase() as SlotSlug) : null;
+  const m = /^\s*\/(fast|balanced|deep|uncensored|online)\b/i.exec(text ?? '');
+  if (!m) return null;
+  const word = m[1].toLowerCase();
+  return (word === 'uncensored' ? 'deep' : word) as SlotSlug;
 }
 
 /**
