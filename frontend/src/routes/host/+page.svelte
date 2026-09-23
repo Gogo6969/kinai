@@ -801,7 +801,7 @@
         </div>
 
         <!--
-          Deep model — optional second slot routed via `/deep`. Same
+          Uncensored model — optional second slot routed via `/uncensored` (or `/deep`). Same
           field layout as Fast above; collapsed by default with a
           summary line when disabled, expands when the user clicks
           "Add" or assigns a detected backend.
@@ -809,7 +809,7 @@
         <div class="kin-card space-y-4">
           <div class="flex items-center justify-between gap-3">
             <div>
-              <h2 class="font-semibold text-lg">Deep model (optional)</h2>
+              <h2 class="font-semibold text-lg">Uncensored model (optional)</h2>
               <p class="text-xs text-white/50 mt-0.5">
                 A second, typically larger / slower model. Reachable as
                 <code class="bg-black/40 px-1 rounded">/deep &lt;prompt&gt;</code>

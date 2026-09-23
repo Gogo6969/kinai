@@ -147,8 +147,8 @@
   }
   const SLOT_MENU_TEXT: Record<string, { label: string; hint: string }> = {
     fast: { label: 'fast', hint: 'Plain messages already default to this model.' },
-    balanced: { label: 'balanced', hint: 'The middle ground — smarter than fast, quicker than deep.' },
-    deep: { label: 'deep', hint: 'Slower but typically higher quality.' },
+    balanced: { label: 'balanced', hint: 'The middle ground — smarter than fast, still quick.' },
+    deep: { label: 'uncensored', hint: 'Answers what the other models decline. Slower.' },
     online: {
       label: 'online',
       hint: 'Runs on the provider\u2019s servers, not at home \u2014 your message leaves the house.',

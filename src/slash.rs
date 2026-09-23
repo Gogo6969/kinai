@@ -57,6 +57,38 @@ pub struct ResolvedRoute<'cfg> {
 /// The three routable slots in fallback-priority order. One table
 /// instead of per-slot copy-paste blocks — the 0.2.75 client-parity bug
 /// came from exactly this kind of duplicated slot logic drifting apart.
+/// Command words that are a second name for a slot: the user types the
+/// left side, routing sees the right side.
+///
+/// 2026-09-23: the deep slot serves an uncensored model, so it is called
+/// "uncensored" everywhere a person reads it. Only the NAME changed — the
+/// slot key stays "deep" in config.toml, in every stored message row and
+/// in each thread's sticky slot, because renaming the key would mean
+/// migrating live family data for a cosmetic change. `/deep` keeps
+/// working for anyone with the habit.
+const COMMAND_ALIASES: &[(&str, &str)] = &[("uncensored", "deep")];
+
+/// Rewrite a leading `/alias` to that slot's own `/command`, keeping
+/// whatever followed it and any leading whitespace. `None` when the
+/// message does not start with an alias.
+fn rewrite_slot_alias(content: &str) -> Option<String> {
+    let trimmed = content.trim_start();
+    // to_ascii_lowercase is length-preserving, so byte offsets taken on
+    // the lowered copy are valid in `trimmed`.
+    let lower = trimmed.to_ascii_lowercase();
+    for (alias, slot) in COMMAND_ALIASES {
+        let p = format!("/{alias}");
+        let hit = lower == p
+            || lower.starts_with(&format!("{p} "))
+            || lower.starts_with(&format!("{p}\n"));
+        if hit {
+            let leading = &content[..content.len() - trimmed.len()];
+            return Some(format!("{leading}/{slot}{}", &trimmed[p.len()..]));
+        }
+    }
+    None
+}
+
 pub const SLOTS: &[&str] = &["fast", "balanced", "deep", "online"];
 
 /// The slots automatic failover is allowed to reach for when a routed
@@ -378,6 +410,10 @@ pub async fn route_for<'cfg>(
     thread_id: &str,
     content: &str,
 ) -> ResolvedRoute<'cfg> {
+    // Map `/uncensored` onto the internal `/deep` before anything else
+    // reads the text (see COMMAND_ALIASES).
+    let aliased = rewrite_slot_alias(content);
+    let content: &str = aliased.as_deref().unwrap_or(content);
     let lower = content.trim_start().to_ascii_lowercase();
 
     // Explicit `/fast …` / `/balanced …` / `/deep …` prefix: route there,
@@ -602,9 +638,9 @@ pub fn help_markdown(cfg: &AppConfig) -> String {
             let m = &slot_settings(cfg, slot).model;
             let line = match **slot {
                 "fast" => format!("`/fast` — the everyday model (`{m}`), answers instantly\n"),
-                "balanced" => format!("`/balanced` — the middle ground (`{m}`): smarter than fast, quicker than deep\n"),
+                "balanced" => format!("`/balanced` — the middle ground (`{m}`): smarter than fast, still quick\n"),
                 "online" => format!("`/online` — an online model (`{m}`) on someone else's servers: use it when the question needs more than the models at home can give. What you type goes over the internet\n"),
-                _ => format!("`/deep` — the reasoning model (`{m}`), slower but highest quality\n"),
+                _ => format!("`/uncensored` — the uncensored model (`{m}`): answers what the others decline, slower\n"),
             };
             out.push_str(&line);
         }
@@ -651,9 +687,9 @@ pub fn help_html(cfg: &AppConfig) -> String {
             let m = esc(&slot_settings(cfg, slot).model);
             let line = match **slot {
                 "fast" => format!("<code>/fast</code> — the everyday model (<code>{m}</code>), answers instantly\n"),
-                "balanced" => format!("<code>/balanced</code> — the middle ground (<code>{m}</code>): smarter than fast, quicker than deep\n"),
+                "balanced" => format!("<code>/balanced</code> — the middle ground (<code>{m}</code>): smarter than fast, still quick\n"),
                 "online" => format!("<code>/online</code> — an online model (<code>{m}</code>) on someone else's servers: use it when the question needs more than the models at home can give. What you type goes over the internet\n"),
-                _ => format!("<code>/deep</code> — the reasoning model (<code>{m}</code>), slower but highest quality\n"),
+                _ => format!("<code>/uncensored</code> — the uncensored model (<code>{m}</code>): answers what the others decline, slower\n"),
             };
             out.push_str(&line);
         }
@@ -691,6 +727,29 @@ fn telegram_html_escape(s: &str) -> String {
 mod routing_tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
+
+    #[test]
+    fn uncensored_is_another_name_for_the_deep_slot() {
+        // The user-facing rename (2026-09-23): typing /uncensored must land
+        // on the same slot as /deep, with the rest of the message intact.
+        assert_eq!(rewrite_slot_alias("/uncensored hello").as_deref(), Some("/deep hello"));
+        assert_eq!(rewrite_slot_alias("/UNCENSORED Hello There").as_deref(), Some("/deep Hello There"));
+        assert_eq!(rewrite_slot_alias("/uncensored").as_deref(), Some("/deep"));
+        assert_eq!(rewrite_slot_alias("/uncensored\nline two").as_deref(), Some("/deep\nline two"));
+        // Leading whitespace is the user's, keep it.
+        assert_eq!(rewrite_slot_alias("  /uncensored x").as_deref(), Some("  /deep x"));
+    }
+
+    #[test]
+    fn things_that_only_resemble_the_alias_are_left_alone() {
+        // Not a whole command word.
+        assert_eq!(rewrite_slot_alias("/uncensoredx hi"), None);
+        // Not at the start of the message.
+        assert_eq!(rewrite_slot_alias("please /uncensored this"), None);
+        // /deep routes on its own; it is not an alias of itself.
+        assert_eq!(rewrite_slot_alias("/deep hello"), None);
+        assert_eq!(rewrite_slot_alias("plain question"), None);
+    }
 
     async fn fresh_db() -> crate::db::Db {
         let pool = SqlitePoolOptions::new()
@@ -1018,10 +1077,15 @@ mod routing_tests {
     fn help_lists_all_three_when_active() {
         let cfg = cfg_three_slots();
         let md = help_markdown(&cfg);
-        assert!(md.contains("/fast") && md.contains("/balanced") && md.contains("/deep"));
+        assert!(md.contains("/fast") && md.contains("/balanced") && md.contains("/uncensored"));
+        // The deep slot is advertised under its user-facing name; /deep still
+        // routes (see COMMAND_ALIASES) but is no longer what the help teaches.
+        assert!(!md.contains("`/deep`"));
         assert!(md.contains("balanced-33b"));
         let html = help_html(&cfg);
         assert!(html.contains("/balanced") && html.contains("balanced-33b"));
+        // Telegram renders the HTML help — it must carry the rename too.
+        assert!(html.contains("/uncensored") && !html.contains("<code>/deep</code>"));
     }
 
     #[test]

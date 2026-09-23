@@ -35,7 +35,7 @@
     { id: 'role', label: 'How will you use it', skippable: false },
     { id: 'family', label: 'Family & you', skippable: true },
     { id: 'ai', label: 'Connect your AI', skippable: true },
-    { id: 'deep', label: 'Deep model', skippable: true },
+    { id: 'deep', label: 'Uncensored model', skippable: true },
     { id: 'vision', label: 'Vision (images)', skippable: true },
     { id: 'tools', label: 'Web search & tools', skippable: true },
     { id: 'imagegen', label: 'Image generation', skippable: true },

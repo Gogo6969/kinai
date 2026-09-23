@@ -1396,7 +1396,7 @@
 
     {@render modelCard(
       'Fast model',
-      'Your default model. Reachable as `/fast` in chat when the Deep model is also configured.',
+      'Your default model. Reachable as `/fast` in chat when the Uncensored model is also configured.',
       'fast',
       () => llm,
       (v) => (llm = v)
@@ -1411,7 +1411,7 @@
     )}
 
     {@render modelCard(
-      'Deep model (optional)',
+      'Uncensored model (optional)',
       'A second, typically larger model. Reachable as `/deep` in chat. Leave Base URL empty to disable.',
       'deep',
       () => llmDeep,

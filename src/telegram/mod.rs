@@ -334,7 +334,7 @@ fn slot_menu_description(slot: &str) -> &'static str {
     match slot {
         "fast" => "Switch this chat to the fast model (default)",
         "balanced" => "Switch this chat to the balanced model (middle ground)",
-        "deep" => "Switch this chat to the deep model (slower, smarter)",
+        "deep" => "Switch this chat to the uncensored model",
         "online" => "Switch this chat to the online model (leaves your home network)",
         _ => "Switch this chat to this model",
     }
