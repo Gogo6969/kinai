@@ -5,6 +5,41 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.134] — 2026-09-23
+
+### Changed
+
+- **The deep model is now called Uncensored.** Switch to it with
+  `/uncensored`; `/deep` still works if that is what your fingers know.
+  Only the name changed — the model behind it, its settings and every
+  existing conversation are exactly as they were.
+
+### Fixed
+
+- **Asking for a link always searches.** "What is the network speed of
+  this machine — with a link" is something only the web can answer, but
+  KinAI sometimes answered it from memory instead: it picked up a link
+  mentioned earlier in the conversation and repeated that earlier
+  answer's guess as though it were the official spec. A request for a
+  link, a URL or a source now always runs a real search.
+- **Telling KinAI a fact twice keeps one fact, not two.** Saying
+  something about yourself and later saying it again, worded a little
+  differently, could store it twice under two spellings — and KinAI then
+  believed both, with no way to tell which was current. Updating a fact
+  now replaces the old one, forgetting it removes it completely, and the
+  same holds for facts edited in Settings → Memory.
+- **Telegram shows it is typing right away.** The "typing…" dots used to
+  appear only after a second and a half, so every message looked ignored
+  for a moment. They now show within a quarter of a second.
+
+### Security
+
+- **`devalue` updated to 5.9.2** (GHSA-9rgm-9g3h-6x36, Dependabot #26).
+  A second copy of the library, pulled in by Svelte, was on a vulnerable
+  version. The affected code path was not reachable in KinAI — the app
+  ships as static files with no server-side rendering — but the fixed
+  version is the only one that ships now.
+
 ## [0.2.133] — 2026-09-20
 
 ### Fixed
