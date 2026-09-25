@@ -2770,9 +2770,12 @@ pub async fn reconnect_client(
             "No saved host. Open the Client page and enter an invite code first.".into(),
         );
     }
-    // If a supervisor is already running, wake it for an immediate retry
-    // — otherwise we'd be racing the next backoff tick.
-    state.net.lock().await.client_wake.notify_waiters();
+    // If a supervisor is already running, wake it for an immediate retry —
+    // mid-attempt too: it abandons a dial that is still hanging. `notify_one`,
+    // not `notify_waiters`: the latter only reaches a task that is waiting
+    // at that instant and forgets the press otherwise, which is how the
+    // button did nothing while an attempt was in flight.
+    state.net.lock().await.client_wake.notify_one();
 
     // If somehow there's no supervisor running (task crashed, etc.),
     // spawn one. Idempotent: the supervisor itself bails if a duplicate

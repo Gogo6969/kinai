@@ -254,8 +254,10 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
     let text = frame_text(&hello_frame)
         .ok_or_else(|| anyhow::anyhow!("hello not text"))?;
     let envelope: Envelope = serde_json::from_str(&text)?;
-    let (token, display_name, tz) = match envelope {
-        Envelope::Hello { token, display_name, tz, .. } => (token, display_name, tz),
+    let (token, display_name, tz, client_version) = match envelope {
+        Envelope::Hello { token, display_name, tz, client_version } => {
+            (token, display_name, tz, client_version)
+        }
         _ => return Err(anyhow::anyhow!("expected Hello frame")),
     };
     // Untrusted client input that later lands in a prompt: keep it only
@@ -390,6 +392,11 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
     {
         tracing::warn!("peer upsert failed: {e:#}");
     }
+    // One line per device session, so "a client couldn't connect" leaves
+    // evidence on the host: which device, which version, and when it came
+    // and went. (A refused handshake logs "ws conn ended" instead.)
+    let connected_at = std::time::Instant::now();
+    tracing::info!(peer = %claims.sub, client = %client_version, "client connected");
     let _ = s.tauri.emit(
         "kinai://peer-joined",
         serde_json::json!({"id": peer_id, "name": display_name}),
@@ -558,6 +565,11 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
         net.peers.remove(&peer_id);
         s.app.stats.write().peers_connected = net.peers.len();
     }
+    tracing::info!(
+        peer = %claims.sub,
+        minutes = connected_at.elapsed().as_secs() / 60,
+        "client disconnected"
+    );
     let _ = s.tauri.emit("kinai://peer-left", serde_json::json!({"id": peer_id}));
     Ok(())
 }

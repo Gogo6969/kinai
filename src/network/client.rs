@@ -4,9 +4,12 @@
 //! owns the reconnect loop with exponential backoff (2s → 4s → … capped
 //! at 30s) so a host that comes online after the client started, or that
 //! restarts mid-session, gets picked back up without user intervention.
-//! Manual "Reconnect now" actions wake the sleeper through the
-//! `NetState.client_wake` Notify.
+//! Manual "Reconnect now" wakes it through the `NetState.client_wake`
+//! Notify — both while it sleeps between attempts AND while an attempt is
+//! still dialing or waiting for the host, which it then abandons (see
+//! `attempt_or_wake`).
 
+use std::future::Future;
 use std::time::Duration;
 
 use anyhow::Result;
@@ -19,6 +22,45 @@ use crate::config::Mode;
 use crate::SharedState;
 
 use super::protocol::Envelope;
+
+/// How long dialing the host may take. Without a limit, a dial into
+/// silence (host restarting, Wi-Fi hiccup, a VPN dropping LAN packets)
+/// waited out the operating system's own connect timeout — about 75 s on
+/// macOS, two minutes on Linux — while the "Reconnect now" button could do
+/// nothing (2026-09-25: a client that had just updated stayed stuck until
+/// it was restarted).
+const DIAL_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long the host has to answer our Hello with a Welcome. A host that
+/// accepts the socket and then says nothing must not hold the attempt.
+const WELCOME_TIMEOUT: Duration = Duration::from_secs(15);
+
+type WsStream =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// Dial the host's WebSocket, giving up after `limit`.
+pub(crate) async fn dial(url: &str, limit: Duration) -> std::result::Result<WsStream, String> {
+    match tokio::time::timeout(limit, tokio_tungstenite::connect_async(url)).await {
+        Ok(Ok((ws, _))) => Ok(ws),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err(format!("no answer within {} s", limit.as_secs())),
+    }
+}
+
+/// Run one connection attempt unless a manual reconnect interrupts it;
+/// `None` = interrupted. The supervisor used to listen for the button only
+/// while sleeping between attempts, and the button used `notify_waiters`,
+/// which is not remembered — a press during an attempt was simply lost.
+/// The button now uses `notify_one`, whose press is kept until this picks
+/// it up.
+pub(crate) async fn attempt_or_wake<T>(
+    attempt: impl Future<Output = T>,
+    wake: &tokio::sync::Notify,
+) -> Option<T> {
+    tokio::select! {
+        r = attempt => Some(r),
+        _ = wake.notified() => None,
+    }
+}
 
 pub async fn auto_connect(state: SharedState, app: AppHandle) -> Result<()> {
     let (url, token) = {
@@ -73,7 +115,17 @@ pub async fn supervise(state: SharedState, app: AppHandle, url: String, token: S
             (cur_url, cur_token)
         };
 
-        let result = connect(state.clone(), app.clone(), try_url, try_token).await;
+        let Some(result) =
+            attempt_or_wake(connect(state.clone(), app.clone(), try_url, try_token), &wake).await
+        else {
+            // "Reconnect now" while the attempt was still dialing or
+            // waiting for the host: drop it and dial again at once.
+            tracing::info!("client supervise: reconnect pressed mid-attempt, dialing again");
+            end_session(&state).await;
+            let _ = app.emit("kinai://client-status", serde_json::json!({"connected": false}));
+            backoff = Duration::from_secs(2);
+            continue;
+        };
         match result {
             Ok(()) => {
                 tracing::info!("client supervise: WS closed cleanly, will retry");
@@ -121,7 +173,7 @@ pub async fn connect(
     let display_name = state.config.read().client.display_name.clone();
     let url_for_ws = url.trim_start_matches("kinai://").to_string();
 
-    let (ws, _) = match tokio_tungstenite::connect_async(&url_for_ws).await {
+    let ws = match dial(&url_for_ws, DIAL_TIMEOUT).await {
         Ok(v) => v,
         Err(e) => {
             // A LAN address that times out is very often a VPN with its
@@ -218,7 +270,24 @@ pub async fn connect(
         }
     });
 
-    while let Some(frame) = source.next().await {
+    // The host must answer the Hello within WELCOME_TIMEOUT; after that the
+    // session reads without a deadline.
+    let welcome_by = tokio::time::Instant::now() + WELCOME_TIMEOUT;
+    let mut welcomed = false;
+    let mut no_welcome = false;
+    loop {
+        let next = if welcomed {
+            source.next().await
+        } else {
+            match tokio::time::timeout_at(welcome_by, source.next()).await {
+                Ok(n) => n,
+                Err(_) => {
+                    no_welcome = true;
+                    break;
+                }
+            }
+        };
+        let Some(frame) = next else { break };
         let frame = match frame {
             Ok(f) => f,
             Err(e) => {
@@ -289,6 +358,7 @@ pub async fn connect(
                 host_thread_ops,
                 host_reminders,
             } => {
+                welcomed = true;
                 {
                     let mut stats = state.stats.write();
                     stats.host_info = Some(crate::HostInfo {
@@ -523,6 +593,29 @@ pub async fn connect(
     }
 
     writer.abort();
+    end_session(&state).await;
+    if no_welcome {
+        let msg = format!(
+            "The KinAI host at {url} accepted the connection but didn't answer within {} s.",
+            WELCOME_TIMEOUT.as_secs()
+        );
+        tracing::warn!("{msg}");
+        state.stats.write().client_error = Some(msg.clone());
+        let _ = app.emit(
+            "kinai://client-status",
+            serde_json::json!({"connected": false, "error": msg.clone()}),
+        );
+        return Err(anyhow::anyhow!(msg));
+    }
+    let _ = app.emit("kinai://client-status", serde_json::json!({"connected": false}));
+    Ok(())
+}
+
+/// Tear down what a session (or an abandoned attempt) left behind: the
+/// outbound channel — dropping it also ends the writer task and closes the
+/// socket — every command still waiting on the host, and the connected
+/// flag.
+async fn end_session(state: &SharedState) {
     {
         let mut net = state.net.lock().await;
         net.client_tx = None;
@@ -562,8 +655,6 @@ pub async fn connect(
         // the sidebar can surface "invite revoked" / "rate limit" / etc.
         // after a graceful close.
     }
-    let _ = app.emit("kinai://client-status", serde_json::json!({"connected": false}));
-    Ok(())
 }
 
 pub async fn disconnect(state: SharedState) -> Result<()> {
@@ -573,4 +664,69 @@ pub async fn disconnect(state: SharedState) -> Result<()> {
     }
     net.client_tx = None;
     Ok(())
+}
+
+#[cfg(test)]
+mod reconnect_tests {
+    use super::{attempt_or_wake, dial};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+    use tokio::sync::Notify;
+
+    /// A host that accepts the TCP connection and then says nothing — the
+    /// shape of a half-restarted host or a path that drops packets. The
+    /// dial must give up at its limit instead of waiting for the OS.
+    #[tokio::test]
+    async fn a_silent_host_times_out_the_dial() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let _hold = tokio::spawn(async move {
+            let (_sock, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        let started = Instant::now();
+        let err = dial(&format!("ws://127.0.0.1:{port}/kin"), Duration::from_millis(300))
+            .await
+            .expect_err("a silent host must not count as connected");
+        assert!(err.contains("no answer within"), "{err}");
+        assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
+    }
+
+    /// "Reconnect now" during an attempt that would otherwise hang forever.
+    #[tokio::test]
+    async fn reconnect_interrupts_a_hanging_attempt() {
+        let wake = Arc::new(Notify::new());
+        let w = wake.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            w.notify_one();
+        });
+        let out = tokio::time::timeout(
+            Duration::from_secs(2),
+            attempt_or_wake(std::future::pending::<()>(), &wake),
+        )
+        .await
+        .expect("the press must end the attempt");
+        assert_eq!(out, None);
+    }
+
+    /// A press that lands while nothing is listening yet is not lost.
+    #[tokio::test]
+    async fn a_press_made_before_anyone_listens_is_kept() {
+        let wake = Notify::new();
+        wake.notify_one();
+        let out = tokio::time::timeout(
+            Duration::from_secs(1),
+            attempt_or_wake(std::future::pending::<()>(), &wake),
+        )
+        .await
+        .expect("the stored press must be picked up");
+        assert_eq!(out, None);
+    }
+
+    #[tokio::test]
+    async fn a_finished_attempt_is_returned() {
+        let wake = Notify::new();
+        assert_eq!(attempt_or_wake(async { 7 }, &wake).await, Some(7));
+    }
 }
