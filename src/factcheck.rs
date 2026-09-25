@@ -102,7 +102,10 @@ strings, nothing else.\n\nQUESTION:\n{question}\n\nANSWER:\n{answer}"
             image_data_urls: vec![],
         },
     ];
-    let queries = match llm.complete(&qmsgs, &[], Some(QUERY_MAX_TOKENS)).await {
+    let queries = match llm
+        .complete_without_thinking(&qmsgs, &[], Some(QUERY_MAX_TOKENS))
+        .await
+    {
         Ok(r) => {
             tracing::info!(
                 model = %settings.model,
@@ -212,8 +215,13 @@ results gathered just now):\n{evidence}"
     ];
     let prompt_chars: usize = vmsgs.iter().map(|m| m.content().len()).sum();
     let started = std::time::Instant::now();
+    // Thinking is switched off where the provider allows it (see
+    // `LlmClient::complete_without_thinking`): the verdict is a reading of
+    // the evidence gathered above, and on DeepSeek the thinking had grown
+    // past the whole 8,192-token ceiling — 24k characters of reasoning and
+    // no verdict, twice in a row, on 2026-09-25.
     let mut result = llm
-        .complete(&vmsgs, &[], Some(FACT_CHECK_MAX_TOKENS))
+        .complete_without_thinking(&vmsgs, &[], Some(FACT_CHECK_MAX_TOKENS))
         .await?;
     // How long a reasoning model thinks varies run to run on identical
     // input, so a budget that fits nine times in ten still strands the
@@ -237,7 +245,7 @@ results gathered just now):\n{evidence}"
             anyhow::bail!("cancelled");
         }
         result = llm
-            .complete(&vmsgs, &[], Some(FACT_CHECK_MAX_TOKENS))
+            .complete_without_thinking(&vmsgs, &[], Some(FACT_CHECK_MAX_TOKENS))
             .await?;
     }
     let report = result.content.trim().to_string();

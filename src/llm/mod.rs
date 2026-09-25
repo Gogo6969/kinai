@@ -45,6 +45,36 @@ struct ChatRequest<'a> {
     /// ignore unknown fields depending on vendor mood.
     #[serde(skip_serializing_if = "Option::is_none")]
     cache_prompt: Option<bool>,
+    /// DeepSeek's switch for hidden thinking (`{"type":"disabled"}`).
+    /// Only [`LlmClient::complete_without_thinking`] sets it — see
+    /// `thinking_off` for which provider gets which field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<serde_json::Value>,
+    /// llama.cpp: arguments for the model's chat template. Qwen-style
+    /// templates read `enable_thinking`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    chat_template_kwargs: Option<serde_json::Value>,
+}
+
+/// The request fields that switch a reasoning model's hidden thinking off,
+/// in the dialect each provider understands: a chat-template argument for
+/// llama.cpp, `thinking.type` for DeepSeek's API. Every other provider
+/// gets neither — OpenAI-style APIs may reject a field they don't know.
+fn thinking_off(settings: &LlmSettings) -> (Option<serde_json::Value>, Option<serde_json::Value>) {
+    if settings.provider == "llamacpp" {
+        (None, Some(serde_json::json!({ "enable_thinking": false })))
+    } else if is_deepseek(&settings.base_url) {
+        (Some(serde_json::json!({ "type": "disabled" })), None)
+    } else {
+        (None, None)
+    }
+}
+
+/// `base_url` points at DeepSeek's own API (the host, not a path or query).
+fn is_deepseek(base_url: &str) -> bool {
+    let rest = base_url.split_once("://").map_or(base_url, |(_, r)| r);
+    let host = rest.split(['/', ':', '?']).next().unwrap_or("").to_ascii_lowercase();
+    host == "deepseek.com" || host.ends_with(".deepseek.com")
 }
 
 #[derive(Debug, Deserialize)]
@@ -146,6 +176,8 @@ impl LlmClient {
             tool_choice,
             max_tokens,
             cache_prompt,
+            thinking: None,
+            chat_template_kwargs: None,
         };
         let mut builder = self.http.post(&url).json(&req);
         // Only attach an Authorization header when there's actually a key.
@@ -167,6 +199,35 @@ impl LlmClient {
         tools: &[ToolDef],
         max_tokens: Option<usize>,
     ) -> Result<CompleteResult> {
+        self.complete_inner(messages, tools, max_tokens, false).await
+    }
+
+    /// [`complete`](Self::complete) with the model's hidden thinking
+    /// switched off, where the provider has a switch for it.
+    ///
+    /// For utility calls whose answer must fit a fixed output ceiling —
+    /// fact-check verdicts, conversation summaries. A reasoning model
+    /// charges its thinking against that ceiling first: on 2026-09-25
+    /// DeepSeek's checker spent all 8,192 tokens (~24k characters) of the
+    /// verdict call thinking and never wrote the verdict, and the retry
+    /// did the same. Providers without a known switch get a plain
+    /// `complete`.
+    pub async fn complete_without_thinking(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[ToolDef],
+        max_tokens: Option<usize>,
+    ) -> Result<CompleteResult> {
+        self.complete_inner(messages, tools, max_tokens, true).await
+    }
+
+    async fn complete_inner(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[ToolDef],
+        max_tokens: Option<usize>,
+        no_thinking: bool,
+    ) -> Result<CompleteResult> {
         let payload_messages: Vec<serde_json::Value> =
             normalize_for_strict_templates(messages.iter().map(serialize_message).collect());
         let tools_json: Vec<serde_json::Value> = tools.iter().map(|t| t.schema.clone()).collect();
@@ -176,6 +237,8 @@ impl LlmClient {
         );
         let tool_choice = if tools_json.is_empty() { None } else { Some("auto") };
         let cache_prompt = (self.settings.provider == "llamacpp").then_some(true);
+        let (thinking, chat_template_kwargs) =
+            if no_thinking { thinking_off(&self.settings) } else { (None, None) };
         let req = ChatRequest {
             model: &self.settings.model,
             messages: &payload_messages,
@@ -185,6 +248,8 @@ impl LlmClient {
             tool_choice,
             max_tokens,
             cache_prompt,
+            thinking,
+            chat_template_kwargs,
         };
         // Non-streaming call → keep a finite ceiling (the client itself no
         // longer sets one, since streaming requests must be uncapped).
@@ -612,5 +677,73 @@ mod strict_template_tests {
         ]);
         assert_eq!(roles(&out), vec!["system", "user", "user"]);
         assert!(out[1]["content"].is_array(), "image turn was mangled");
+    }
+}
+
+#[cfg(test)]
+mod thinking_off_tests {
+    use super::*;
+
+    fn settings(provider: &str, base_url: &str) -> LlmSettings {
+        LlmSettings {
+            provider: provider.into(),
+            base_url: base_url.into(),
+            ..LlmSettings::default()
+        }
+    }
+
+    /// Each provider gets the one switch it understands — and never the
+    /// other one: a strict OpenAI-style server may reject a field it does
+    /// not know, which would turn "no thinking" into "no answer".
+    #[test]
+    fn each_provider_gets_only_its_own_switch() {
+        let (t, k) = thinking_off(&settings("llamacpp", "http://192.0.2.10:8080"));
+        assert_eq!(t, None);
+        assert_eq!(k, Some(serde_json::json!({ "enable_thinking": false })));
+
+        let (t, k) = thinking_off(&settings("openai-compat", "https://api.deepseek.com"));
+        assert_eq!(t, Some(serde_json::json!({ "type": "disabled" })));
+        assert_eq!(k, None);
+
+        for (p, u) in [
+            ("openai-compat", "https://api.openai.com/v1"),
+            ("lmstudio", "http://localhost:1234"),
+            ("ollama", "http://localhost:11434"),
+        ] {
+            assert_eq!(thinking_off(&settings(p, u)), (None, None), "{p} {u}");
+        }
+    }
+
+    /// DeepSeek is recognised by its HOST, not by a substring anywhere in
+    /// the URL.
+    #[test]
+    fn deepseek_is_matched_on_the_host_only() {
+        assert!(is_deepseek("https://api.deepseek.com"));
+        assert!(is_deepseek("https://API.DeepSeek.com/v1"));
+        assert!(is_deepseek("https://deepseek.com:443/"));
+        assert!(!is_deepseek("https://proxy.example.com/deepseek.com"));
+        assert!(!is_deepseek("https://notdeepseek.com"));
+        assert!(!is_deepseek("http://localhost:8080?to=api.deepseek.com"));
+    }
+
+    /// The switch rides only on the request that asked for it: a normal
+    /// completion and every streamed chat turn serialize exactly as before.
+    #[test]
+    fn a_normal_request_carries_no_switch() {
+        let req = ChatRequest {
+            model: "m",
+            messages: &[],
+            temperature: 0.3,
+            stream: true,
+            tools: vec![],
+            tool_choice: None,
+            max_tokens: None,
+            cache_prompt: Some(true),
+            thinking: None,
+            chat_template_kwargs: None,
+        };
+        let v = serde_json::to_value(&req).unwrap();
+        assert!(v.get("thinking").is_none());
+        assert!(v.get("chat_template_kwargs").is_none());
     }
 }
