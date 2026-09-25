@@ -26,6 +26,9 @@ class AppStore {
   ttsSupported = $state(false);
   threads = $state<ThreadMeta[]>([]);
   activeThreadId = $state<string | null>(null);
+  /** A message a jump (search hit, reminder) is about to scroll to — the
+   *  chat window widens its page to include it (see ChatWindow `shown`). */
+  revealMessageId = $state<string | null>(null);
   messages = $state<Record<string, Message[]>>({});
   streaming = $state<Record<string, string>>({}); // client_msg_id -> partial content
   reasoning = $state<Record<string, string>>({}); // client_msg_id -> reasoning trace
@@ -245,7 +248,9 @@ class AppStore {
     this.activeThreadId = hit.thread_id;
     await this.loadActive();
     this.clearSearch();
+    this.revealMessageId = hit.message_id;
     requestAnimationFrame(() => {
+      this.revealMessageId = null;
       const el = document.getElementById(`msg-${hit.message_id}`);
       el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       el?.classList.add('kin-flash');
@@ -632,7 +637,9 @@ class AppStore {
     if (!r.thread_id) return;
     this.activeThreadId = r.thread_id;
     await this.loadActive();
+    this.revealMessageId = r.source_msg_id ?? null;
     requestAnimationFrame(() => {
+      this.revealMessageId = null;
       if (!r.source_msg_id) return;
       const el = document.getElementById(`msg-${r.source_msg_id}`);
       el?.scrollIntoView({ behavior: 'smooth', block: 'center' });

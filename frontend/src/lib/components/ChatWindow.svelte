@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick, untrack } from 'svelte';
   import MessageBubble from './MessageBubble.svelte';
   import MicButton from './MicButton.svelte';
   import ThinkingDots from './ThinkingDots.svelte';
@@ -429,13 +430,42 @@
     dragRingTimer = setTimeout(() => (dragging = false), DRAG_RING_LINGER_MS);
   }
 
+  // The composer grows with its text, measured on a hidden twin textarea
+  // (`sizerEl`), never on the live box. The old way — collapse the live box
+  // to `height: auto`, read its scrollHeight, set it back — resized the
+  // message list above on every keystroke and forced a synchronous layout
+  // of every loaded message, twice (the input handler and the effect below
+  // both ran it). Measured with 500 messages: 6 ms per keystroke against
+  // 1.1 ms on a short thread in Chromium, and far worse in the WebKitGTK the
+  // Linux app runs in — letters appeared behind the typing on a long
+  // family thread. Now the live box is touched only when its height
+  // actually changes (a line wraps), so typing costs the same on any thread.
+  let sizerEl: HTMLTextAreaElement | undefined = $state();
+  let lastHeight = -1;
+  let lastWidth = -1;
   function autoGrowTextarea(el?: HTMLTextAreaElement) {
     if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 200) + 'px';
+    let want: number;
+    if (sizerEl) {
+      const width = el.offsetWidth;
+      if (width !== lastWidth) {
+        sizerEl.style.width = width + 'px';
+        lastWidth = width;
+      }
+      sizerEl.value = el.value;
+      want = Math.min(sizerEl.scrollHeight, 200);
+    } else {
+      el.style.height = 'auto';
+      want = Math.min(el.scrollHeight, 200);
+      lastHeight = -1;
+    }
+    if (want !== lastHeight) {
+      el.style.height = want + 'px';
+      lastHeight = want;
+    }
   }
-  // Re-fit whenever the bound value changes (covers paste, programmatic
-  // changes, and submit-clears).
+  // Re-fit whenever the bound value changes (typing, paste, programmatic
+  // changes, submit-clears) — the one place the composer is measured.
   $effect(() => {
     void input;
     queueMicrotask(() => autoGrowTextarea(inputEl));
@@ -583,6 +613,57 @@
     stickToBottom();
   });
 
+  // Only the newest page of a thread is on the page. Rendering everything
+  // the client holds — the newest 500 plus every message since — made a
+  // long thread's typing fall behind on Linux while a new chat stayed
+  // smooth (field report, 2026-09-25): the browser re-walks the message
+  // list on every keystroke (measured 3.4 ms per keystroke with 500
+  // messages against 0.7 ms with none, in Chromium; WebKitGTK is several
+  // times slower). "Show earlier messages" adds a page at a time.
+  const PAGE = 100;
+  let shown = $state(PAGE);
+  let windowThread: string | null | undefined;
+  let windowLen = 0;
+  $effect(() => {
+    const thread = app.activeThreadId;
+    const reveal = app.revealMessageId;
+    const n = messages.length;
+    untrack(() => {
+      if (thread !== windowThread) {
+        windowThread = thread;
+        shown = PAGE;
+      } else if (!follow && windowLen > 0 && n > windowLen && n - windowLen <= 10) {
+        // Reading further up while new messages arrive: keep the same
+        // first message rather than sliding the window. WebKit has no
+        // scroll anchoring, so rows removed above the viewport would yank
+        // away the text being read.
+        shown += n - windowLen;
+      }
+      windowLen = n;
+      // A search hit or reminder jumping into older history: widen the
+      // window to include it before the jump looks the message up.
+      if (reveal) {
+        const i = messages.findIndex((m) => m.id === reveal);
+        if (i >= 0 && n - i > shown) shown = n - i + 5;
+      }
+    });
+  });
+  const firstShown = $derived(Math.max(0, messages.length - shown));
+  const visible = $derived(firstShown > 0 ? messages.slice(firstShown) : messages);
+
+  async function showEarlier() {
+    const el = scrollEl;
+    const fromBottom = el ? el.scrollHeight - el.scrollTop : 0;
+    shown += PAGE;
+    await tick();
+    if (el) {
+      // Keep the message the reader was looking at where it was.
+      el.scrollTop = el.scrollHeight - fromBottom;
+      selfScrolledTo = el.scrollTop;
+      lastTop = el.scrollTop;
+    }
+  }
+
   // `/newchat` → trailing question ('' if bare), or null if not the
   // command. Case-insensitive; `/newchatx` is treated as normal text.
   function parseNewchat(text: string): string | null {
@@ -676,11 +757,22 @@
         {/if}
       </div>
     {:else}
-      {#each messages as m, i (m.id)}
+      {#if firstShown > 0}
+        <div class="flex justify-center">
+          <button
+            type="button"
+            class="text-xs text-white/55 hover:text-white/85 px-3 py-1 rounded-full border border-white/10 hover:border-white/25 transition-colors"
+            onclick={showEarlier}
+          >
+            Show earlier messages · {firstShown} more
+          </button>
+        </div>
+      {/if}
+      {#each visible as m, i (m.id)}
         <MessageBubble
           message={m}
           metrics={app.metricsByMsgId[m.id] ?? m.metrics ?? null}
-          canRegenerate={i === messages.length - 1 &&
+          canRegenerate={i === visible.length - 1 &&
             m.role === 'assistant' &&
             streamingIds.length === 0}
         />
@@ -966,7 +1058,6 @@
           // starts again from the newest prompt — but a programmatic recall
           // write (guarded by recallingHistory) must not count as an edit.
           if (!recallingHistory) historyIndex = null;
-          autoGrowTextarea(e.currentTarget as HTMLTextAreaElement);
         }}
         onpaste={onPaste}
         onkeydown={(e) => {
@@ -1015,6 +1106,18 @@
           }
           if (e.key === 'Enter' && !e.shiftKey) submit(e);
         }}
+      ></textarea>
+      <!-- Hidden twin the composer is measured on (see autoGrowTextarea).
+           Fixed and off-screen so it can never add a scrollbar or move
+           anything. -->
+      <textarea
+        bind:this={sizerEl}
+        aria-hidden="true"
+        tabindex="-1"
+        readonly
+        rows="1"
+        class="kin-input resize-none leading-relaxed"
+        style="position: fixed; top: -9999px; left: 0; height: 0; min-height: 0; overflow: hidden; visibility: hidden; pointer-events: none;"
       ></textarea>
       <MicButton
         compact

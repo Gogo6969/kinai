@@ -155,7 +155,7 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
       base_url: 'https://api.deepseek.com', model: 'deepseek-v4-flash', api_key: 'sk-mock', enabled: true,
     });
     w.__mockSlotHealth = { fast: true, deep: true, online: true };
-  } else if (scenario === 'host-one-slot' || scenario === 'host-three-slots') {
+  } else if (scenario === 'host-one-slot' || scenario === 'host-three-slots' || scenario === 'long-thread') {
     // Host-mode scenarios for the slash menu's local-config path:
     // one active slot → no model switches (≥2 gate); three → all shown
     // (with `balanced` marked offline via the mocked slot_health).
@@ -177,8 +177,13 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
     }
   }
   // Both scenarios get one canned Q/A so message-level UI (fact-check
-  // button, panel) is exercisable in a plain browser.
-  const cannedMessages = scenario
+  // button, panel) is exercisable in a plain browser. `?mock=long-thread`
+  // instead loads 500 messages — the size a client really holds for a
+  // long-running family thread (the thread load returns the newest 500) —
+  // so typing and scrolling can be measured against a realistic page.
+  const cannedMessages = scenario === 'long-thread'
+    ? longThreadMessages(500)
+    : scenario
     ? [
         {
           id: 'mock-msg-user-1', thread_id: 'mock-thread-1', role: 'user', sender: 'You',
@@ -357,6 +362,13 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
       created_at: new Date().toISOString(), updated_at: new Date().toISOString(), peer_id: 'host',
     }),
     load_messages: () => cannedMessages,
+    // Long-thread scenario: one hit on an OLD message, far outside the
+    // rendered page, so the jump has to widen the window to land on it.
+    search_messages: () =>
+      scenario === 'long-thread'
+        ? [{ thread_id: 'mock-thread-1', thread_title: 'Eiffel Tower', message_id: 'mock-long-10',
+             snippet: 'Question 5: how would you plan a [weekend] trip…', created_at: cannedMessages[10]?.created_at ?? '' }]
+        : [],
     load_thread: () => cannedMessages,
     thread_active_slot: () => null,
     // Invites: served from `localStorage.__mockInvites` so the page can be
@@ -496,3 +508,29 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
 }
 
 export {};
+
+/** 500 messages shaped like a real long thread: short questions, answers
+ *  with paragraphs, a list and now and then a code block. */
+function longThreadMessages(n: number) {
+  const out: any[] = [];
+  const start = Date.now() - n * 60_000;
+  for (let i = 0; i < n; i++) {
+    const user = i % 2 === 0;
+    const k = Math.floor(i / 2);
+    const content = user
+      ? `Question ${k}: how would you plan a weekend trip with the family that includes a museum, a long walk and somewhere good to eat?`
+      : [
+          `Here is a plan for part ${k}. Start early, because museums are quietest in the first hour after opening, and keep the afternoon flexible in case the weather turns.`,
+          `- **Morning:** the museum, about two hours, with a coffee break halfway.\n- **Midday:** lunch somewhere close by, then the walk along the river.\n- **Evening:** dinner reserved in advance, since weekends fill up quickly.`,
+          `Pack water, a light jacket and comfortable shoes. If the children get tired, the walk can be shortened to the first loop without missing the best views.`,
+          k % 5 === 0 ? '```\nday 1: museum 9:00-11:00, lunch 12:00, walk 13:30\nday 2: market 10:00, park 14:00\n```' : '',
+        ].filter(Boolean).join('\n\n');
+    out.push({
+      id: `mock-long-${i}`, thread_id: 'mock-thread-1', role: user ? 'user' : 'assistant',
+      sender: user ? 'You' : 'KinAI', content, attachments: [],
+      created_at: new Date(start + i * 60_000).toISOString(), summarized_into: null,
+      ...(user ? {} : { metrics: { first_token_ms: 400, total_ms: 6000, output_tokens: 180, tps: 30, model: 'local-fast-8b', slot: 'fast' } }),
+    });
+  }
+  return out;
+}
