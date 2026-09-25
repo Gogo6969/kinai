@@ -1323,6 +1323,14 @@ async fn run_chat_turn(
     {
         tracing::warn!("summarizer: {e:?}");
     }
+    // Fold what is about to scroll out of view into the thread's digest —
+    // in the background, on the slot that answered (context::compaction).
+    context::compaction::spawn(
+        s.app.db.clone(),
+        served.settings.clone(),
+        context_peer.to_string(),
+        thread_id.to_string(),
+    );
     Ok(())
 }
 

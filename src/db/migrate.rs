@@ -350,6 +350,13 @@ const STATEMENTS: &[&str] = &[
     // `row_to_reminder` does a plain `get` — the query landing first is a
     // "no such column" error, which `run` does not swallow.
     r#"ALTER TABLE reminders ADD COLUMN occurrence_local TEXT NOT NULL DEFAULT ''"#,
+    // A thread's running summary of the messages that have scrolled out of
+    // the model's view (`context::compaction`), and the `created_at` of the
+    // newest message it covers. NULL on every existing thread, so there is
+    // no backfill: a thread's first fold starts it. Only compaction writes
+    // them; the context builder reads them.
+    r#"ALTER TABLE threads ADD COLUMN digest TEXT"#,
+    r#"ALTER TABLE threads ADD COLUMN digest_through TEXT"#,
 ];
 
 pub async fn run(pool: &SqlitePool) -> Result<()> {

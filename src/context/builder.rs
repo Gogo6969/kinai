@@ -7,7 +7,10 @@ use crate::db::{Db, Message};
 
 use super::{memory, system_prompt, token_guard, ChatMessage};
 
-const RECENT_TURNS: i64 = 50;
+/// Newest rows loaded as history candidates. Once a thread has a digest
+/// only rows after its coverage load, so this bounds old threads that
+/// have never been folded; the token cap decides what is actually kept.
+const RECENT_TURNS: i64 = 150;
 const TOP_MEMORIES: i64 = 8;
 
 pub async fn build_context(
@@ -26,8 +29,18 @@ pub async fn build_context(
     // threads), except the newest image within the carry window — a text
     // follow-up about the photo just sent must still see it. The current
     // message is excluded: it is appended below with its live attachments.
+    //
+    // A thread's digest (`context::compaction`) summarizes everything up to
+    // its coverage, so only the messages after it are history candidates.
+    let digest = db.thread_digest(peer_id, thread_id).await.unwrap_or(None);
     let recent = db
-        .load_messages_for_context(peer_id, thread_id, RECENT_TURNS, Some(&new_message.id))
+        .load_messages_for_context(
+            peer_id,
+            thread_id,
+            RECENT_TURNS,
+            Some(&new_message.id),
+            digest.as_ref().map(|d| d.through.as_str()),
+        )
         .await?;
     let memories = db
         .relevant_memories(peer_id, thread_id, &new_message.content, TOP_MEMORIES)
@@ -59,7 +72,7 @@ pub async fn build_context(
         .await
         .unwrap_or(recent.len() as i64) as usize;
     // Absolute ordinal of recent[i] within the whole thread — the
-    // LIMIT-50 load is a sliding tail, so slice indices alone are not
+    // `RECENT_TURNS` load is a sliding tail, so slice indices alone are not
     // stable identities.
     let slice_base = total_in_thread.saturating_sub(recent.len());
 
@@ -91,6 +104,21 @@ pub async fn build_context(
     let start = history_start_index(&costs, &roles, &ordinals, cap);
     messages.extend(chat_history.into_iter().skip(start));
 
+    // The digest rides with the FIRST kept history message, not in the
+    // system prompt: rewriting it then leaves the system prompt and the
+    // tool list byte-identical, so a fold costs the server a re-read of
+    // the digest and the history after it — never of everything. With no
+    // kept history to carry it, it joins the context note below.
+    let mut digest_for_note: Option<&str> = None;
+    if let Some(d) = &digest {
+        match messages.get_mut(1) {
+            Some(ChatMessage::User { content, .. }) => {
+                *content = format!("{}{}", digest_block(&d.text), content);
+            }
+            _ => digest_for_note = Some(d.text.as_str()),
+        }
+    }
+
     // Facts, retrieved memories and the precise clock ride WITH the
     // newest user message instead of sitting in system messages before
     // the history. Two reasons, one of them measured:
@@ -112,6 +140,12 @@ pub async fn build_context(
     // mistake it for something the user typed.
     let mut tail = message_to_chat(new_message);
     let mut note = String::new();
+    if let Some(d) = digest_for_note {
+        note.push_str("Summary of the earlier part of this conversation (the messages \
+themselves are no longer shown):\n");
+        note.push_str(d.trim());
+        note.push_str("\n\n");
+    }
     if !user_facts.is_empty() {
         note.push_str(&memory::format_user_facts(&user_facts));
         note.push('\n');
@@ -203,18 +237,50 @@ pub(crate) fn prompt_budget(context_window: usize, max_tokens: usize) -> usize {
         .max(context_window / 4)
 }
 
-/// Token cap for the HISTORY portion of the prompt (item: "prefill lasts
-/// longer than the answer", part two).
+/// Most history, in tokens, one turn carries verbatim — whatever the
+/// window in Settings.
 ///
-/// The prompt budget alone let history grow to ~15k tokens on a 32k
-/// slot: fine for the llama.cpp prefix cache on back-to-back turns by
-/// the same person, but the family SHARES one server slot — every time a
-/// different member speaks, the whole prompt re-prefills. Half the
-/// budget, capped at 6k, keeps the worst-case re-prefill bounded while
-/// leaving 25 - 40 turns of verbatim recall; memory notes and user facts
-/// carry the older gist.
+/// A server re-reads the history whenever the START of the prompt changes
+/// (a fold, a restart, another member's thread taking the slot), and the
+/// family's servers read ~850–1,200 tokens a second (measured 2026-09-25:
+/// 24k tokens in 20 s on the fast slot, 29 s on balanced). 12k bounds that
+/// worst case near 10–15 s. What no longer fits is not lost: it lives on
+/// in the thread's digest (`context::compaction`).
+pub(crate) const HISTORY_CEILING_TOKENS: usize = 12_000;
+
+/// Token cap for the HISTORY portion of the prompt: half the prompt budget
+/// (a quarter of the window on auto `max_tokens`), up to
+/// [`HISTORY_CEILING_TOKENS`].
+///
+/// Until 0.2.136 this was a flat 6k whatever the window — chosen when the
+/// whole family shared ONE server slot and every change of speaker
+/// re-read the prompt — so a 64k or 256k window in Settings changed
+/// nothing, and a long thread silently dropped its oldest messages with
+/// no summary to replace them. The servers now run four slots each, and
+/// compaction folds dropped messages into a digest instead.
 pub(crate) fn history_token_cap(prompt_budget: usize) -> usize {
-    (prompt_budget / 2).min(6000)
+    (prompt_budget / 2).min(HISTORY_CEILING_TOKENS)
+}
+
+/// What each history message costs in the prompt, in tokens — measured on
+/// what is SENT (attachment text included), plus per-message framing.
+/// Shared with `compaction` so the builder and the folder agree on when
+/// the history is full.
+pub(crate) fn sent_costs(msgs: &[Message]) -> Vec<usize> {
+    msgs.iter()
+        .map(|m| token_guard::count_tokens(message_to_chat(m).content()) + 4)
+        .collect()
+}
+
+/// How the thread's digest is shown to the model: KinAI's own notes,
+/// clearly not the member's words — the same convention as the context
+/// note on the newest turn.
+pub(crate) fn digest_block(digest: &str) -> String {
+    format!(
+        "(KinAI context — a summary of the earlier part of this conversation, \
+written by KinAI, not by the user. The messages it covers are no longer shown:\n{}\n)\n\n---\n",
+        digest.trim()
+    )
 }
 
 /// Where the kept history starts, anchored to a MESSAGE IDENTITY.
@@ -437,7 +503,10 @@ mod max_tokens_tests {
 
 #[cfg(test)]
 mod budget_tests {
-    use super::{history_keep_mask, history_start_index, history_token_cap, prompt_budget};
+    use super::{
+        history_keep_mask, history_start_index, history_token_cap, prompt_budget,
+        HISTORY_CEILING_TOKENS,
+    };
 
     #[test]
     fn small_windows_keep_context() {
@@ -466,9 +535,15 @@ mod budget_tests {
     }
 
     #[test]
-    fn history_cap_bounds_large_windows() {
-        // 32k window -> 16k budget -> history capped at 6k, not 15k.
-        assert_eq!(history_token_cap(16_384), 6000);
+    fn history_cap_grows_with_the_window_up_to_the_ceiling() {
+        // 32k window -> 16k budget -> 8k of history (was a flat 6k).
+        assert_eq!(history_token_cap(prompt_budget(32_768, 0)), 8_192);
+        // 48k and 64k windows reach the ceiling.
+        assert_eq!(history_token_cap(prompt_budget(49_152, 0)), 12_000);
+        assert_eq!(history_token_cap(prompt_budget(65_536, 0)), 12_000);
+        // A 256k or 1M window must not turn every re-read into minutes.
+        assert_eq!(history_token_cap(prompt_budget(262_144, 0)), HISTORY_CEILING_TOKENS);
+        assert_eq!(history_token_cap(prompt_budget(1_000_000, 0)), HISTORY_CEILING_TOKENS);
     }
 
     #[test]
@@ -757,5 +832,78 @@ mod cache_stability_tests {
         let tail = ctx2.last().unwrap().content();
         assert!(tail.contains("and the sky?"));
         assert!(tail.contains("Current time:"), "clock missing from tail");
+    }
+
+    /// With a digest (0.2.136): the messages it covers are gone from the
+    /// prompt, the digest rides with the FIRST kept history message, and
+    /// the system prompt is byte-identical to a thread without one — so a
+    /// fold never makes the server re-read the system prompt and tools.
+    #[tokio::test]
+    async fn digest_replaces_covered_history_and_leaves_the_system_prompt_alone() {
+        let db = fresh_db().await;
+        let cfg = crate::config::AppConfig::default();
+        let mut llm = cfg.llm.clone();
+        llm.context_window = 32768;
+        let t = db.create_thread("host", Some("t")).await.unwrap();
+        db.append_message(&t.id, "user", "Alex", "old question about the boat", &[]).await.unwrap();
+        let a1 = db
+            .append_message(&t.id, "assistant", "KinAI", "old answer about the boat", &[])
+            .await
+            .unwrap();
+        db.append_message(&t.id, "user", "Alex", "newer question", &[]).await.unwrap();
+        db.append_message(&t.id, "assistant", "KinAI", "newer answer", &[]).await.unwrap();
+        assert!(db
+            .set_thread_digest("host", &t.id, "- Alex's boat is called Blue Heron", &a1.created_at, None)
+            .await
+            .unwrap());
+        let m3 = db.append_message(&t.id, "user", "Alex", "and now?", &[]).await.unwrap();
+        let ctx = build_context(&db, &cfg, &llm, "host", &t.id, &m3).await.unwrap();
+
+        let all: Vec<&str> = ctx.iter().map(|m| m.content()).collect();
+        assert!(all.iter().all(|c| !c.contains("old question") && !c.contains("old answer")),
+            "covered messages leaked back into the prompt");
+        match &ctx[1] {
+            ChatMessage::User { content, .. } => {
+                assert!(content.contains("Blue Heron"), "digest missing: {content}");
+                assert!(content.contains("newer question"), "first kept message lost: {content}");
+                assert!(content.find("Blue Heron") < content.find("newer question"));
+            }
+            other => panic!("first history message should be the user turn, got {other:?}"),
+        }
+
+        // Same system prompt as a thread that has no digest at all.
+        let t2 = db.create_thread("host", Some("t2")).await.unwrap();
+        let q = db.append_message(&t2.id, "user", "Alex", "hi", &[]).await.unwrap();
+        let plain = build_context(&db, &cfg, &llm, "host", &t2.id, &q).await.unwrap();
+        assert_eq!(ctx[0].content(), plain[0].content(), "digest changed the system prompt");
+
+        // Between folds the prompt only grows at the end.
+        db.append_message(&t.id, "assistant", "KinAI", "an answer", &[]).await.unwrap();
+        let m4 = db.append_message(&t.id, "user", "Alex", "and then?", &[]).await.unwrap();
+        let ctx2 = build_context(&db, &cfg, &llm, "host", &t.id, &m4).await.unwrap();
+        for i in 0..ctx.len() - 1 {
+            assert_eq!(ctx[i].content(), ctx2[i].content(), "message {i} changed between turns");
+        }
+    }
+
+    /// A digest with no kept history left to carry it rides in the note on
+    /// the newest turn instead of disappearing.
+    #[tokio::test]
+    async fn digest_without_kept_history_joins_the_context_note() {
+        let db = fresh_db().await;
+        let cfg = crate::config::AppConfig::default();
+        let mut llm = cfg.llm.clone();
+        llm.context_window = 32768;
+        let t = db.create_thread("host", Some("t")).await.unwrap();
+        db.append_message(&t.id, "user", "Alex", "q", &[]).await.unwrap();
+        let a = db.append_message(&t.id, "assistant", "KinAI", "a", &[]).await.unwrap();
+        db.set_thread_digest("host", &t.id, "- prefers metric units", &a.created_at, None)
+            .await
+            .unwrap();
+        let m = db.append_message(&t.id, "user", "Alex", "next", &[]).await.unwrap();
+        let ctx = build_context(&db, &cfg, &llm, "host", &t.id, &m).await.unwrap();
+        assert_eq!(ctx.len(), 2, "system + newest turn only");
+        let tail = ctx[1].content();
+        assert!(tail.contains("prefers metric units") && tail.contains("next"), "{tail}");
     }
 }

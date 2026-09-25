@@ -9,6 +9,7 @@
 //! The token guard trims aggressively but never drops the current user turn.
 
 pub mod builder;
+pub mod compaction;
 pub mod extractor;
 pub mod memory;
 pub mod summarizer;

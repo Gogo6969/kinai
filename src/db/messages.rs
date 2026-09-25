@@ -245,6 +245,65 @@ pub async fn set_thread_active_slot(
     Ok(())
 }
 
+/// A thread's running summary of the messages that scrolled out of the
+/// model's view, and the `created_at` of the newest message it covers
+/// (`context::compaction`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadDigest {
+    pub text: String,
+    pub through: String,
+}
+
+/// The thread's digest, if a fold ever happened. Peer-scoped like every
+/// other thread read.
+pub async fn thread_digest(
+    pool: &SqlitePool,
+    peer_id: &str,
+    id: &str,
+) -> Result<Option<ThreadDigest>> {
+    let row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT digest, digest_through FROM threads WHERE id = ?1 AND peer_id = ?2",
+    )
+    .bind(id)
+    .bind(peer_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(match row {
+        Some((Some(text), Some(through))) if !text.trim().is_empty() => {
+            Some(ThreadDigest { text, through })
+        }
+        _ => None,
+    })
+}
+
+/// Store a new digest — only if the stored coverage is still
+/// `expected_through` (what the caller read before summarizing). Two
+/// folds of one thread racing must not overwrite each other: the loser's
+/// summary was built on a stale base. Returns whether this write won.
+/// Never touches `updated_at` — a fold is not activity, and the sidebar
+/// orders by it.
+pub async fn set_thread_digest(
+    pool: &SqlitePool,
+    peer_id: &str,
+    id: &str,
+    text: &str,
+    through: &str,
+    expected_through: Option<&str>,
+) -> Result<bool> {
+    let res = sqlx::query(
+        "UPDATE threads SET digest = ?1, digest_through = ?2
+         WHERE id = ?3 AND peer_id = ?4 AND digest_through IS ?5",
+    )
+    .bind(text)
+    .bind(through)
+    .bind(id)
+    .bind(peer_id)
+    .bind(expected_through)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected() == 1)
+}
+
 pub async fn load(
     pool: &SqlitePool,
     peer_id: &str,
@@ -338,6 +397,9 @@ pub async fn load_for_context(
     thread_id: &str,
     limit: i64,
     current_msg_id: Option<&str>,
+    // Only rows newer than this `created_at` — the thread's digest covers
+    // everything up to it (`context::compaction`). `None` = the whole tail.
+    after: Option<&str>,
 ) -> Result<Vec<Message>> {
     // PDF detection matches the serialized `"mime":"application/pdf"` field
     // or a PDF data-URL prefix — NOT the bare substring 'application/pdf',
@@ -356,11 +418,13 @@ pub async fn load_for_context(
          FROM messages m
          JOIN threads t ON t.id = m.thread_id
          WHERE m.thread_id = ?1 AND t.peer_id = ?2
+           AND (?4 IS NULL OR m.created_at > ?4)
          ORDER BY m.created_at DESC LIMIT ?3",
     )
     .bind(thread_id)
     .bind(peer_id)
     .bind(limit)
+    .bind(after)
     .fetch_all(pool)
     .await?;
     let mut messages: Vec<Message> = rows.into_iter().map(row_to_message).collect();
@@ -546,6 +610,18 @@ pub async fn delete_from(
     .bind(thread_id)
     .bind(from_created_at)
     .bind(peer_id)
+    .execute(pool)
+    .await?;
+    // A deletion reaching into what the digest already summarizes would
+    // leave it describing messages that no longer exist, so the digest
+    // goes too; the next fold rebuilds it from what remains.
+    sqlx::query(
+        "UPDATE threads SET digest = NULL, digest_through = NULL
+         WHERE id = ?1 AND peer_id = ?2 AND digest_through >= ?3",
+    )
+    .bind(thread_id)
+    .bind(peer_id)
+    .bind(from_created_at)
     .execute(pool)
     .await?;
     sqlx::query("UPDATE threads SET updated_at = ?1 WHERE id = ?2 AND peer_id = ?3")
@@ -834,7 +910,7 @@ mod tests {
         .await
         .unwrap();
 
-        let msgs = load_for_context(&pool, HOST_PEER, &tid, 50, Some(&current.id))
+        let msgs = load_for_context(&pool, HOST_PEER, &tid, 50, Some(&current.id), None)
             .await
             .unwrap();
         assert_eq!(msgs.len(), 4);
@@ -887,7 +963,7 @@ mod tests {
             .unwrap();
         let current = append(&pool, &tid, "user", "me", "Continue", &[]).await.unwrap();
 
-        let msgs = load_for_context(&pool, HOST_PEER, &tid, 50, Some(&current.id))
+        let msgs = load_for_context(&pool, HOST_PEER, &tid, 50, Some(&current.id), None)
             .await
             .unwrap();
         assert_eq!(msgs.len(), 5);
@@ -912,7 +988,7 @@ mod tests {
             append(&pool, &tid, role, sender, "…", &[]).await.unwrap();
         }
         let current = append(&pool, &tid, "user", "me", "unrelated", &[]).await.unwrap();
-        let msgs = load_for_context(&pool, HOST_PEER, &tid, 50, Some(&current.id))
+        let msgs = load_for_context(&pool, HOST_PEER, &tid, 50, Some(&current.id), None)
             .await
             .unwrap();
         assert!(
@@ -929,10 +1005,74 @@ mod tests {
             append(&pool, &tid, role, sender, "…", &[]).await.unwrap();
         }
         let current = append(&pool, &tid, "user", "me", "and the photo?", &[]).await.unwrap();
-        let msgs = load_for_context(&pool, HOST_PEER, &tid, 50, Some(&current.id))
+        let msgs = load_for_context(&pool, HOST_PEER, &tid, 50, Some(&current.id), None)
             .await
             .unwrap();
         assert!(msgs[0].attachments[0].data_url.is_some(), "just inside the window: carried");
+    }
+
+    /// Digest round trip, compare-and-set, and peer scoping: the second
+    /// of two racing folds (built on the same stale base) must lose, and
+    /// another peer can neither read nor write the thread's digest.
+    #[tokio::test]
+    async fn digest_is_compare_and_set_and_peer_scoped() {
+        let pool = fresh_pool().await;
+        let tid = seed_thread(&pool, HOST_PEER, "t").await;
+        assert_eq!(thread_digest(&pool, HOST_PEER, &tid).await.unwrap(), None);
+
+        assert!(set_thread_digest(&pool, HOST_PEER, &tid, "- likes tea", "T1", None).await.unwrap());
+        // A second writer that also read "no digest yet" loses.
+        assert!(!set_thread_digest(&pool, HOST_PEER, &tid, "- other", "T9", None).await.unwrap());
+        let d = thread_digest(&pool, HOST_PEER, &tid).await.unwrap().unwrap();
+        assert_eq!(d, ThreadDigest { text: "- likes tea".into(), through: "T1".into() });
+
+        // The next fold names the coverage it built on.
+        assert!(set_thread_digest(&pool, HOST_PEER, &tid, "- likes tea\n- has a dog", "T2", Some("T1"))
+            .await
+            .unwrap());
+
+        // Other peers see nothing and change nothing.
+        assert_eq!(thread_digest(&pool, "BOB", &tid).await.unwrap(), None);
+        assert!(!set_thread_digest(&pool, "BOB", &tid, "x", "T3", Some("T2")).await.unwrap());
+        assert_eq!(thread_digest(&pool, HOST_PEER, &tid).await.unwrap().unwrap().through, "T2");
+    }
+
+    /// `after` hides exactly the messages the digest covers.
+    #[tokio::test]
+    async fn context_load_skips_what_the_digest_covers() {
+        let pool = fresh_pool().await;
+        let tid = seed_thread(&pool, HOST_PEER, "t").await;
+        let a = append(&pool, &tid, "user", "me", "one", &[]).await.unwrap();
+        let b = append(&pool, &tid, "assistant", "KinAI", "two", &[]).await.unwrap();
+        let c = append(&pool, &tid, "user", "me", "three", &[]).await.unwrap();
+        let all = load_for_context(&pool, HOST_PEER, &tid, 50, None, None).await.unwrap();
+        assert_eq!(all.len(), 3);
+        let tail = load_for_context(&pool, HOST_PEER, &tid, 50, None, Some(&b.created_at))
+            .await
+            .unwrap();
+        assert_eq!(tail.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), vec![c.id.as_str()]);
+        assert!(tail.iter().all(|m| m.id != a.id));
+    }
+
+    /// Deleting into summarized history clears the digest; deleting only
+    /// newer messages keeps it.
+    #[tokio::test]
+    async fn deleting_into_summarized_history_clears_the_digest() {
+        let pool = fresh_pool().await;
+        let tid = seed_thread(&pool, HOST_PEER, "t").await;
+        let _a = append(&pool, &tid, "user", "me", "one", &[]).await.unwrap();
+        let b = append(&pool, &tid, "assistant", "KinAI", "two", &[]).await.unwrap();
+        let c = append(&pool, &tid, "user", "me", "three", &[]).await.unwrap();
+        let _d = append(&pool, &tid, "assistant", "KinAI", "four", &[]).await.unwrap();
+        set_thread_digest(&pool, HOST_PEER, &tid, "- one, two", &b.created_at, None)
+            .await
+            .unwrap();
+
+        delete_from(&pool, HOST_PEER, &tid, &c.created_at).await.unwrap();
+        assert!(thread_digest(&pool, HOST_PEER, &tid).await.unwrap().is_some(), "newer-only delete kept it");
+
+        delete_from(&pool, HOST_PEER, &tid, &b.created_at).await.unwrap();
+        assert_eq!(thread_digest(&pool, HOST_PEER, &tid).await.unwrap(), None);
     }
 }
 

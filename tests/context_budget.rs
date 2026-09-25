@@ -86,17 +86,18 @@ async fn build_context_reserves_generation_headroom() {
 
     // And the HISTORY CAP must actually have been exercised (0.2.102):
     // ~78k tokens of history went in, and the cap holds the kept slice
-    // near history_token_cap (6k on this window) plus system prompt and
-    // the current turn. Well under the old ~16k, well over zero.
+    // near history_token_cap (8k on this window since 0.2.136 — a quarter
+    // of the window, up to a 12k ceiling; a flat 6k before) plus system
+    // prompt and the current turn. Well under the old ~16k, well over zero.
     //
     // The lower bound proves history is genuinely present — the 8k-window
     // hazard was exactly "prompt fits but history silently vanished", and
     // a prompt of only system+tail would pass every headroom check while
     // the model forgets the whole conversation.
     assert!(
-        (3000..=8500).contains(&prompt_tokens),
-        "prompt should be capped history (~6k) + system + tail; got \
-         {prompt_tokens}. Below 3000 means history vanished; above 8500 \
+        (3000..=11_000).contains(&prompt_tokens),
+        "prompt should be capped history (≤8k) + system + tail; got \
+         {prompt_tokens}. Below 3000 means history vanished; above 11000 \
          means the history cap is not being applied."
     );
 }

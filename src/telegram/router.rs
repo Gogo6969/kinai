@@ -911,6 +911,14 @@ back, unless you switch model yourself.",
     {
         tracing::warn!("telegram summarizer: {e:?}");
     }
+    // Fold what is about to scroll out of view into the thread's digest —
+    // in the background, on the slot that answered (context::compaction).
+    crate::context::compaction::spawn(
+        state.db.clone(),
+        served.settings.clone(),
+        peer_id.to_string(),
+        thread_id.clone(),
+    );
     Ok(())
 }
 

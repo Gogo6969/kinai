@@ -2413,6 +2413,14 @@ async fn run_assistant_turn(
     {
         tracing::warn!("summarizer: {e:?}");
     }
+    // Fold what is about to scroll out of view into the thread's digest —
+    // in the background, on the slot that answered (context::compaction).
+    context::compaction::spawn(
+        state.db.clone(),
+        served.settings.clone(),
+        db::HOST_PEER.to_string(),
+        thread_id.to_string(),
+    );
 
     // Passive fact extraction — fire-and-forget so a slow extractor
     // call can never delay the user's reply (which has already been

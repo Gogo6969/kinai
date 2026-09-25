@@ -17,7 +17,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 pub use memory::MemoryNote;
 pub use reminders::Reminder;
 pub use reports::Report;
-pub use messages::{Attachment, Message, SearchHit, ThreadMeta, HOST_PEER};
+pub use messages::{Attachment, Message, SearchHit, ThreadDigest, ThreadMeta, HOST_PEER};
 pub use user_facts::UserFact;
 
 #[derive(Clone)]
@@ -105,8 +105,26 @@ impl Db {
         thread_id: &str,
         limit: i64,
         current_msg_id: Option<&str>,
+        after: Option<&str>,
     ) -> Result<Vec<Message>> {
-        messages::load_for_context(&self.pool, peer_id, thread_id, limit, current_msg_id).await
+        messages::load_for_context(&self.pool, peer_id, thread_id, limit, current_msg_id, after)
+            .await
+    }
+    /// The thread's running summary (`context::compaction`), if any.
+    pub async fn thread_digest(&self, peer_id: &str, id: &str) -> Result<Option<ThreadDigest>> {
+        messages::thread_digest(&self.pool, peer_id, id).await
+    }
+    /// Compare-and-set the thread's digest; see `messages::set_thread_digest`.
+    pub async fn set_thread_digest(
+        &self,
+        peer_id: &str,
+        id: &str,
+        text: &str,
+        through: &str,
+        expected_through: Option<&str>,
+    ) -> Result<bool> {
+        messages::set_thread_digest(&self.pool, peer_id, id, text, through, expected_through)
+            .await
     }
     pub async fn search_messages(
         &self,
