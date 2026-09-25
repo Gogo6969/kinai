@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-09-23T19:41:11+00:00",
-  "version": "0.2.135",
+  "generated_at": "2026-09-25T18:22:03+00:00",
+  "version": "0.2.136",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 368,
-    "head": "15fa2fa"
+    "commits": 372,
+    "head": "f3a46f0"
   },
   "totals": {
-    "rust_files": 69,
-    "rust_lines": 34776,
+    "rust_files": 70,
+    "rust_lines": 35829,
     "frontend_files": 37,
     "frontend_lines": 14193,
-    "unit_tests": 373,
-    "integration_test_files": 19,
-    "releases": 127,
-    "tags": 122
+    "unit_tests": 392,
+    "integration_test_files": 20,
+    "releases": 128,
+    "tags": 123
   },
   "areas": [
     {
@@ -115,7 +115,7 @@
     {
       "path": "src/commands.rs",
       "area": "entry",
-      "lines": 3482,
+      "lines": 3490,
       "doc": "Tauri command surface — every IPC entrypoint the frontend can call.",
       "tests": 0
     },
@@ -129,9 +129,16 @@
     {
       "path": "src/context/builder.rs",
       "area": "context",
-      "lines": 762,
+      "lines": 910,
       "doc": "Build the per-request message list from system prompt + memory + history.",
-      "tests": 17
+      "tests": 19
+    },
+    {
+      "path": "src/context/compaction.rs",
+      "area": "context",
+      "lines": 574,
+      "doc": "Conversation compaction: fold the messages that are about to scroll out of the model's view into a running per-thread summary, the *digest*.",
+      "tests": 11
     },
     {
       "path": "src/context/extractor.rs",
@@ -150,7 +157,7 @@
     {
       "path": "src/context/mod.rs",
       "area": "context",
-      "lines": 588,
+      "lines": 589,
       "doc": "The never-lose-context system.",
       "tests": 5
     },
@@ -178,21 +185,21 @@
     {
       "path": "src/db/messages.rs",
       "area": "db",
-      "lines": 1125,
+      "lines": 1265,
       "doc": "Thread + message persistence (async via SQLx).",
-      "tests": 17
+      "tests": 20
     },
     {
       "path": "src/db/migrate.rs",
       "area": "db",
-      "lines": 431,
+      "lines": 438,
       "doc": "Hand-rolled migrations — kept inline so a fresh user just runs `pnpm tauri dev`.",
       "tests": 0
     },
     {
       "path": "src/db/mod.rs",
       "area": "db",
-      "lines": 403,
+      "lines": 421,
       "doc": "SQLx-backed SQLite layer.",
       "tests": 0
     },
@@ -241,7 +248,7 @@
     {
       "path": "src/factcheck.rs",
       "area": "routing",
-      "lines": 337,
+      "lines": 345,
       "doc": "Independent fact-check of a single assistant reply.",
       "tests": 2
     },
@@ -269,9 +276,9 @@
     {
       "path": "src/llm/mod.rs",
       "area": "llm",
-      "lines": 617,
+      "lines": 750,
       "doc": "Local LLM client.",
-      "tests": 11
+      "tests": 14
     },
     {
       "path": "src/llm/stream.rs",
@@ -346,7 +353,7 @@
     {
       "path": "src/network/server.rs",
       "area": "network",
-      "lines": 1548,
+      "lines": 1556,
       "doc": "Host-side Axum HTTP+WebSocket server.",
       "tests": 0
     },
@@ -430,7 +437,7 @@
     {
       "path": "src/telegram/router.rs",
       "area": "telegram",
-      "lines": 1701,
+      "lines": 1709,
       "doc": "Route incoming Telegram updates into KinAI's chat pipeline.",
       "tests": 13
     },
@@ -824,6 +831,16 @@
         },
         {
           "name": "unknown_fact_deep",
+          "ignored": true
+        }
+      ]
+    },
+    {
+      "file": "tests/compaction_live.rs",
+      "doc": "Live: conversation compaction against the REAL fast-slot model.",
+      "tests": [
+        {
+          "name": "a_fold_keeps_an_early_fact_the_window_had_lost",
           "ignored": true
         }
       ]
@@ -1233,6 +1250,26 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.136",
+      "date": "2026-09-25",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "Long conversations no longer forget how they started.",
+            "detail": "KinAI sent the model only about the last 6,000 tokens of a conversation, whatever context window was set in Settings, and once a thread grew past that it dropped the oldest messages in blocks of up to eight with nothing kept — a long thread could suddenly be down to its last few messages. Now the history grows with the model's context window (a quarter of it, up to 12,000 tokens), and when a thread outgrows that, the model folds the oldest messages into a running summary of the conversation that goes along with every message. The summary is written in the background after a reply, by the same model that answered, so a conversation on a local model is summarized locally."
+          },
+          {
+            "title": "Long threads keep the model server's memory.",
+            "detail": "Between summaries a conversation only ever grows at the end, so the server keeps reusing what it has already read and reads just the new messages — measured on the household's servers: 275 tokens instead of all ~4,300. Updating the summary never makes it re-read KinAI's instructions or tool list."
+          },
+          {
+            "title": "Fact checks produce a verdict again.",
+            "detail": "With DeepSeek as the checker, a check could fail with an error: the model spent its whole answer budget thinking and never wrote the verdict. Fact checks now switch that thinking off (on DeepSeek and llama.cpp servers), so the verdict is always written — in seconds instead of a minute or more."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.135",
       "date": "2026-09-23",
@@ -3844,6 +3881,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.136",
+      "date": "2026-09-25"
+    },
     {
       "tag": "v0.2.135",
       "date": "2026-09-23"
