@@ -5,6 +5,31 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.137] — 2026-09-25
+
+### Fixed
+
+- **Typing keeps up in long conversations.** In a thread with hundreds of
+  messages, letters could appear later than they were typed — worst on
+  Linux — because the chat window kept every loaded message on the page
+  and the browser went over all of them on every keystroke. The window
+  now shows the newest 100 messages, with **Show earlier messages** at the
+  top to load more; search results and reminders still jump straight to
+  older messages. Measured on a 500-message conversation: a keystroke went
+  from 6 ms of work to 0.7 ms.
+- **"Reconnect now" works when a connection is stuck.** The button was
+  only heard in the pause between two connection attempts, so while an
+  attempt hung it did nothing and only restarting the app helped. It now
+  interrupts the stuck attempt and dials again at once, and an attempt
+  gives up after 10 seconds (15 for the host's reply) instead of waiting
+  out the operating system's limit of one to two minutes.
+
+### Changed
+
+- The host now notes in its log when each device connects and
+  disconnects, with its app version, so a connection problem leaves
+  evidence behind.
+
 ## [0.2.136] — 2026-09-25
 
 ### Fixed

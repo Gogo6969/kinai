@@ -2865,7 +2865,7 @@ dependencies = [
 
 [[package]]
 name = "kinai"
-version = "0.2.136"
+version = "0.2.137"
 dependencies = [
  "anyhow",
  "axum",
