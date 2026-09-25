@@ -5,6 +5,32 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.136] — 2026-09-25
+
+### Fixed
+
+- **Long conversations no longer forget how they started.** KinAI sent
+  the model only about the last 6,000 tokens of a conversation, whatever
+  context window was set in Settings, and once a thread grew past that it
+  dropped the oldest messages in blocks of up to eight with nothing kept —
+  a long thread could suddenly be down to its last few messages. Now the
+  history grows with the model's context window (a quarter of it, up to
+  12,000 tokens), and when a thread outgrows that, the model folds the
+  oldest messages into a running summary of the conversation that goes
+  along with every message. The summary is written in the background after
+  a reply, by the same model that answered, so a conversation on a local
+  model is summarized locally.
+- **Long threads keep the model server's memory.** Between summaries a
+  conversation only ever grows at the end, so the server keeps reusing
+  what it has already read and reads just the new messages — measured on
+  the household's servers: 275 tokens instead of all ~4,300. Updating the
+  summary never makes it re-read KinAI's instructions or tool list.
+- **Fact checks produce a verdict again.** With DeepSeek as the checker, a
+  check could fail with an error: the model spent its whole answer budget
+  thinking and never wrote the verdict. Fact checks now switch that
+  thinking off (on DeepSeek and llama.cpp servers), so the verdict is
+  always written — in seconds instead of a minute or more.
+
 ## [0.2.135] — 2026-09-23
 
 ### Changed
