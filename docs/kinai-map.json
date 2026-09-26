@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-09-26T14:47:39+00:00",
-  "version": "0.2.138",
+  "generated_at": "2026-09-26T19:16:50+00:00",
+  "version": "0.2.139",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 379,
-    "head": "b50a375"
+    "commits": 383,
+    "head": "032bdab"
   },
   "totals": {
     "rust_files": 70,
-    "rust_lines": 36000,
+    "rust_lines": 36248,
     "frontend_files": 38,
-    "frontend_lines": 14445,
-    "unit_tests": 396,
+    "frontend_lines": 14614,
+    "unit_tests": 401,
     "integration_test_files": 20,
-    "releases": 130,
-    "tags": 125
+    "releases": 131,
+    "tags": 126
   },
   "areas": [
     {
@@ -115,7 +115,7 @@
     {
       "path": "src/commands.rs",
       "area": "entry",
-      "lines": 3493,
+      "lines": 3538,
       "doc": "Tauri command surface — every IPC entrypoint the frontend can call.",
       "tests": 0
     },
@@ -185,9 +185,9 @@
     {
       "path": "src/db/messages.rs",
       "area": "db",
-      "lines": 1265,
+      "lines": 1399,
       "doc": "Thread + message persistence (async via SQLx).",
-      "tests": 20
+      "tests": 24
     },
     {
       "path": "src/db/migrate.rs",
@@ -199,7 +199,7 @@
     {
       "path": "src/db/mod.rs",
       "area": "db",
-      "lines": 421,
+      "lines": 431,
       "doc": "SQLx-backed SQLite layer.",
       "tests": 0
     },
@@ -262,7 +262,7 @@
     {
       "path": "src/lib.rs",
       "area": "entry",
-      "lines": 598,
+      "lines": 602,
       "doc": "KinAI library entrypoint — wires Tauri shell, Axum HTTP/WS server, tray, global hotkey, LLM client, and the never-lose-context pipeline.",
       "tests": 0
     },
@@ -311,7 +311,7 @@
     {
       "path": "src/network/client.rs",
       "area": "network",
-      "lines": 733,
+      "lines": 736,
       "doc": "Client-side WebSocket dialer.",
       "tests": 4
     },
@@ -339,9 +339,9 @@
     {
       "path": "src/network/protocol.rs",
       "area": "network",
-      "lines": 336,
+      "lines": 370,
       "doc": "Envelope shared between Host and Client over WebSocket.",
-      "tests": 0
+      "tests": 1
     },
     {
       "path": "src/network/ratelimit.rs",
@@ -353,7 +353,7 @@
     {
       "path": "src/network/server.rs",
       "area": "network",
-      "lines": 1568,
+      "lines": 1586,
       "doc": "Host-side Axum HTTP+WebSocket server.",
       "tests": 0
     },
@@ -578,7 +578,7 @@
     {
       "path": "frontend/src/lib/api.ts",
       "kind": "lib",
-      "lines": 768,
+      "lines": 774,
       "doc": "Pause toggle. When `false` this slot is hidden from slash menus and skipped during message routing. Defaults to `true` for the fast slot, `false` for the deep slot (until the user fills it)."
     },
     {
@@ -608,7 +608,7 @@
     {
       "path": "frontend/src/lib/components/MessageBubble.svelte",
       "kind": "component",
-      "lines": 556,
+      "lines": 664,
       "doc": "True only for the last assistant message — gates the regenerate affordance so older replies don't show it."
     },
     {
@@ -662,7 +662,7 @@
     {
       "path": "frontend/src/lib/dev-tauri-mock.ts",
       "kind": "lib",
-      "lines": 558,
+      "lines": 569,
       "doc": "DEV-ONLY Tauri IPC mock. When the frontend runs in a plain browser (`pnpm dev` + localhost:1420, no Tauri shell), `window.__TAURI_INTERNALS__` doesn't exist and every invoke() rejects — the UI is untestable outside the app. This module installs a minimal in-memory backend so the whole UI (most importantly the /setup wizard) can be driven end-to-end in a browser: config mutations persist for the se"
     },
     {
@@ -698,7 +698,7 @@
     {
       "path": "frontend/src/lib/stores/app.svelte.ts",
       "kind": "lib",
-      "lines": 1169,
+      "lines": 1188,
       "doc": "This machine can synthesize speech (macOS). Mac CLIENTS speak locally with their own voices; hosts are always Macs today."
     },
     {
@@ -740,8 +740,8 @@
     {
       "path": "frontend/src/routes/calendar/+page.svelte",
       "kind": "route",
-      "lines": 339,
-      "doc": "Reminders bucketed by the day of `due_local`, chronological. Ordered by `due_at` — the real instant — so a member who set reminders in two zones still sees them in the order they fire, and grouped by day AND zone so a heading is never a claim about the wrong day."
+      "lines": 364,
+      "doc": "Reminders bucketed by the day of `due_local`. Within a day they are ordered by `due_at` — the real instant — so a member who set reminders in two zones still sees them in the order they fire, and grouped by day AND zone so a heading is never a claim about the wrong day. Days run latest first: the page used to be oldest-first, which put today's reminders under every past day (owner, 2026-09-26)."
     },
     {
       "path": "frontend/src/routes/client/+page.svelte",
@@ -1112,6 +1112,7 @@
       "PromptDebug",
       "DeleteThread",
       "RenameThread",
+      "DeleteMessage",
       "ThreadOpAck",
       "ReportAnswer",
       "ReportAck",
@@ -1167,6 +1168,7 @@
       "consume_invite",
       "create_api_key",
       "create_thread",
+      "delete_message",
       "delete_report",
       "delete_reviewed_reports",
       "delete_thread",
@@ -1256,6 +1258,18 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.139",
+      "date": "2026-09-26",
+      "sections": {
+        "Added": [
+          {
+            "title": "Delete your own messages.",
+            "detail": "Every prompt you wrote now has a **delete** action next to edit and copy, on the host and on family devices. It removes the prompt together with KinAI's reply to it — a dialog says so before anything happens, and asks you to confirm. Only your own conversations can be touched, and if the deleted exchange was already folded into the conversation's running summary, that summary is rebuilt without it. One thing to know: a fact KinAI already saved to long-term memory from that prompt stays until you remove it in Settings → Memory — the confirmation says so."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.138",
       "date": "2026-09-26",
@@ -3921,6 +3935,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.139",
+      "date": "2026-09-26"
+    },
     {
       "tag": "v0.2.138",
       "date": "2026-09-26"
