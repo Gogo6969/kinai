@@ -193,15 +193,33 @@
   const canDelete = $derived(
     !!message.id && !!message.thread_id && (isHost || !!app.hostInfo?.host_message_delete)
   );
-  async function deleteMessage() {
-    if (!message.id || !message.thread_id) return;
-    if (
-      !confirm(
-        "Delete this message and KinAI's reply to it?\n\nAnything KinAI already saved to memory from it stays until you remove it in Settings → Memory."
-      )
-    )
-      return;
-    await app.deleteMessage(message.thread_id, message.id);
+  // The confirmation is KinAI's own dialog, not the web engine's
+  // confirm(): that one is a bare one-liner the owner found unclear (field
+  // report, 2026-09-26), and wry has no native handler for it on macOS, so
+  // what it shows differs by platform. This one states what goes — the
+  // question AND its answer — and what stays.
+  let confirmingDelete = $state(false);
+  let deleting = $state(false);
+  let cancelBtn: HTMLButtonElement | undefined = $state();
+  $effect(() => {
+    if (confirmingDelete) queueMicrotask(() => cancelBtn?.focus());
+  });
+  function askDelete() {
+    if (!message.id || !message.thread_id || app.busy) return;
+    confirmingDelete = true;
+  }
+  function cancelDelete() {
+    if (!deleting) confirmingDelete = false;
+  }
+  async function confirmDelete() {
+    if (!message.id || !message.thread_id || deleting) return;
+    deleting = true;
+    try {
+      await app.deleteMessage(message.thread_id, message.id);
+    } finally {
+      deleting = false;
+      confirmingDelete = false;
+    }
   }
   async function copyMessage() {
     try {
@@ -373,14 +391,74 @@
         <button
           type="button"
           class="inline-flex items-center gap-1 hover:text-red-300 transition-colors cursor-pointer disabled:opacity-50"
-          onclick={deleteMessage}
+          onclick={askDelete}
           disabled={app.busy}
-          title="Delete this message and KinAI's reply to it"
+          title="Delete this question and its answer"
           aria-label="Delete message"
         >
           <Trash2 size={11} />
           <span>delete</span>
         </button>
+      {/if}
+      {#if confirmingDelete}
+        <!-- Backdrop: click outside the card cancels. Same shell as the
+             What's-new dialog so it reads as part of the app. -->
+        <div
+          class="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
+          role="presentation"
+          onclick={cancelDelete}
+          onkeydown={(e) => {
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              cancelDelete();
+            }
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-msg-title"
+            aria-describedby="delete-msg-body"
+            class="kin-card max-w-md w-full p-0 cursor-default text-left"
+            onclick={(e) => e.stopPropagation()}
+            onkeydown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                cancelDelete();
+              }
+            }}
+            tabindex="-1"
+          >
+            <header class="px-5 py-4 border-b border-white/10">
+              <h2 id="delete-msg-title" class="text-base font-semibold text-white">
+                Delete this question and its answer?
+              </h2>
+            </header>
+            <div id="delete-msg-body" class="px-5 py-4 text-sm text-white/80 space-y-3">
+              <p>
+                Your message <strong>and KinAI's reply to it</strong> will be removed from this
+                conversation. This can't be undone.
+              </p>
+              <p class="text-white/55">
+                Anything KinAI already saved to memory from it stays until you remove it in
+                Settings → Memory.
+              </p>
+            </div>
+            <footer class="px-5 py-3 border-t border-white/10 flex items-center justify-end gap-2">
+              <button type="button" class="kin-btn" bind:this={cancelBtn} onclick={cancelDelete} disabled={deleting}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                class="kin-btn-primary !bg-red-500/80 hover:!bg-red-500"
+                onclick={confirmDelete}
+                disabled={deleting}
+              >
+                {deleting ? 'Deleting…' : 'Delete both'}
+              </button>
+            </footer>
+          </div>
+        </div>
       {/if}
       <button
         type="button"

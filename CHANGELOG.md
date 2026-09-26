@@ -11,8 +11,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - **Delete your own messages.** Every prompt you wrote now has a
   **delete** action next to edit and copy, on the host and on family
-  devices. It removes the prompt together with KinAI's reply to it, after
-  a confirmation. Only your own conversations can be touched, and if the
+  devices. It removes the prompt together with KinAI's reply to it — a
+  dialog says so before anything happens, and asks you to confirm. Only
+  your own conversations can be touched, and if the
   deleted exchange was already folded into the conversation's running
   summary, that summary is rebuilt without it. One thing to know: a fact
   KinAI already saved to long-term memory from that prompt stays until you
