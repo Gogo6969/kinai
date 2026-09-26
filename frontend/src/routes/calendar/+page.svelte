@@ -31,9 +31,10 @@
    *  ordered by `due_at` — the real instant — so a member who set
    *  reminders in two zones still sees them in the order they fire, and
    *  grouped by day AND zone so a heading is never a claim about the
-   *  wrong day. Days run latest first: the page used to be oldest-first,
-   *  which put today's reminders under every past day (owner, 2026-09-26). */
-  function groupByDay(list: Reminder[]): Day[] {
+   *  wrong day. `newestFirst` orders the days: true walks back from today
+   *  (for what is overdue or done), false walks forward (for what is
+   *  still to come) — today on top either way. */
+  function groupByDay(list: Reminder[], newestFirst: boolean): Day[] {
     const byDay = new Map<string, { key: string; tz: string; items: Reminder[] }>();
     const sorted = [...list].sort((a, b) => a.due_at.localeCompare(b.due_at));
     for (const r of sorted) {
@@ -44,7 +45,11 @@
       else byDay.set(mapKey, { key, tz: r.tz, items: [r] });
     }
     return [...byDay.values()]
-      .sort((a, b) => b.items[0].due_at.localeCompare(a.items[0].due_at))
+      .sort((a, b) =>
+        newestFirst
+          ? b.items[0].due_at.localeCompare(a.items[0].due_at)
+          : a.items[0].due_at.localeCompare(b.items[0].due_at)
+      )
       .map((g) => ({
         key: `${g.key}|${g.tz}`,
         label: dayLabel(g.key, new Date(), g.tz),
@@ -52,15 +57,18 @@
       }));
   }
 
-  /** Open reminders (waiting to fire, or fired and waiting for Done) on
-   *  top; the done ones below, under their own heading, so what still
-   *  needs attention is never buried under the archive. */
+  /** The owner's order (2026-09-26): what is overdue on top, then what is
+   *  still to come, then what is done — and inside each, today first. The
+   *  page used to run oldest-first with done rows mixed in, which put
+   *  today's reminders under every past day. */
   const sections = $derived.by(() => {
-    const open = app.reminders.filter((r) => r.status !== 'done' && r.status !== 'cancelled');
+    const overdue = app.reminders.filter((r) => r.status === 'fired' || r.status === 'firing');
+    const upcoming = app.reminders.filter((r) => r.status === 'scheduled');
     const done = app.reminders.filter((r) => r.status === 'done');
     return [
-      { key: 'open', title: null as string | null, days: groupByDay(open) },
-      { key: 'done', title: 'Done', days: groupByDay(done) },
+      { key: 'overdue', title: 'Overdue', tone: 'text-amber-300', days: groupByDay(overdue, true) },
+      { key: 'upcoming', title: 'Upcoming', tone: 'text-white/40', days: groupByDay(upcoming, false) },
+      { key: 'done', title: 'Done', tone: 'text-white/40', days: groupByDay(done, true) },
     ].filter((s) => s.days.length > 0);
   });
 
@@ -325,16 +333,18 @@
       </div>
     {/snippet}
 
-    {#each sections as sec (sec.key)}
-      {#if sec.title}
-        <h2 class="text-xs uppercase tracking-wider text-white/40 pt-4 border-t border-white/10">
-          {sec.title}
-        </h2>
-      {/if}
+    {#each sections as sec, i (sec.key)}
+      <h2
+        class="text-xs uppercase tracking-wider {sec.tone} {i > 0
+          ? 'pt-4 border-t border-white/10'
+          : ''}"
+      >
+        {sec.title}
+      </h2>
       {#each sec.days as day (`${sec.key}|${day.key}`)}
         <section class="space-y-2">
           <h2
-            class="text-sm font-semibold {sec.title === null &&
+            class="text-sm font-semibold {sec.key !== 'done' &&
             (day.label === 'Today' || day.label === 'Tomorrow')
               ? 'text-teal-300'
               : 'text-white/50'}"

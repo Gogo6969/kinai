@@ -9,13 +9,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Changed
 
-- **The Calendar shows what still matters first.** Reminders that are
-  still open — waiting to fire, or fired and waiting for Done — now sit at
-  the top, with the latest day first, and the ones you have marked done
-  follow under their own **Done** heading at the bottom. Until now the
-  list ran oldest-first with done reminders mixed in, so today's
-  reminders ended up under every past day. Asking KinAI in chat what your
-  reminders are is unchanged: it lists the open ones, soonest first.
+- **The Calendar shows what still matters first.** Reminders are now in
+  three groups: **Overdue** on top (fired, waiting for Done), then
+  **Upcoming** (not due yet), then **Done** at the bottom — and inside
+  each group today comes first. Until now the list ran oldest-first with
+  done reminders mixed in, so today's reminders ended up under every past
+  day. Asking KinAI in chat what your reminders are is unchanged: it lists
+  the open ones, soonest first.
 
 ## [0.2.139] — 2026-09-26
 
