@@ -5,6 +5,19 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.138] — 2026-09-26
+
+### Fixed
+
+- **Pasting a screenshot works on Linux.** Copying a screenshot (for
+  example with the Copy button of KDE's screenshot tool) and pressing
+  Ctrl+V in the message box attached nothing on Linux, while text and the
+  attach button worked. The web engine the Linux app runs in hands over
+  neither a file nor text for an image on the clipboard, so KinAI now
+  reads the image from the system clipboard directly and attaches it as
+  a PNG — in the chat window and in the overlay. macOS and Windows
+  already received the image from the engine and are unchanged.
+
 ## [0.2.137] — 2026-09-25
 
 ### Fixed
