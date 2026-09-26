@@ -25,14 +25,17 @@
     void app.loadReminders();
   });
 
-  /** Reminders bucketed by the day of `due_local`, chronological.
-   *  Ordered by `due_at` — the real instant — so a member who set
+  type Day = { key: string; label: string; items: Reminder[] };
+
+  /** Reminders bucketed by the day of `due_local`. Within a day they are
+   *  ordered by `due_at` — the real instant — so a member who set
    *  reminders in two zones still sees them in the order they fire, and
    *  grouped by day AND zone so a heading is never a claim about the
-   *  wrong day. */
-  const days = $derived.by(() => {
+   *  wrong day. Days run latest first: the page used to be oldest-first,
+   *  which put today's reminders under every past day (owner, 2026-09-26). */
+  function groupByDay(list: Reminder[]): Day[] {
     const byDay = new Map<string, { key: string; tz: string; items: Reminder[] }>();
-    const sorted = [...app.reminders].sort((a, b) => a.due_at.localeCompare(b.due_at));
+    const sorted = [...list].sort((a, b) => a.due_at.localeCompare(b.due_at));
     for (const r of sorted) {
       const key = dayOf(r.due_local);
       const mapKey = `${key}|${r.tz}`;
@@ -40,11 +43,25 @@
       if (group) group.items.push(r);
       else byDay.set(mapKey, { key, tz: r.tz, items: [r] });
     }
-    return [...byDay.values()].map((g) => ({
-      key: `${g.key}|${g.tz}`,
-      label: dayLabel(g.key, new Date(), g.tz),
-      items: g.items,
-    }));
+    return [...byDay.values()]
+      .sort((a, b) => b.items[0].due_at.localeCompare(a.items[0].due_at))
+      .map((g) => ({
+        key: `${g.key}|${g.tz}`,
+        label: dayLabel(g.key, new Date(), g.tz),
+        items: g.items,
+      }));
+  }
+
+  /** Open reminders (waiting to fire, or fired and waiting for Done) on
+   *  top; the done ones below, under their own heading, so what still
+   *  needs attention is never buried under the archive. */
+  const sections = $derived.by(() => {
+    const open = app.reminders.filter((r) => r.status !== 'done' && r.status !== 'cancelled');
+    const done = app.reminders.filter((r) => r.status === 'done');
+    return [
+      { key: 'open', title: null as string | null, days: groupByDay(open) },
+      { key: 'done', title: 'Done', days: groupByDay(done) },
+    ].filter((s) => s.days.length > 0);
   });
 
   /** The device's own zone, so a row set elsewhere can say where its
@@ -308,19 +325,27 @@
       </div>
     {/snippet}
 
-    {#each days as day (day.key)}
-      <section class="space-y-2">
-        <h2
-          class="text-sm font-semibold {day.label === 'Today' || day.label === 'Tomorrow'
-            ? 'text-teal-300'
-            : 'text-white/50'}"
-        >
-          {day.label}
+    {#each sections as sec (sec.key)}
+      {#if sec.title}
+        <h2 class="text-xs uppercase tracking-wider text-white/40 pt-4 border-t border-white/10">
+          {sec.title}
         </h2>
-        {#each day.items as r (r.id)}
-          {@render row(r)}
-        {/each}
-      </section>
+      {/if}
+      {#each sec.days as day (`${sec.key}|${day.key}`)}
+        <section class="space-y-2">
+          <h2
+            class="text-sm font-semibold {sec.title === null &&
+            (day.label === 'Today' || day.label === 'Tomorrow')
+              ? 'text-teal-300'
+              : 'text-white/50'}"
+          >
+            {day.label}
+          </h2>
+          {#each day.items as r (r.id)}
+            {@render row(r)}
+          {/each}
+        </section>
+      {/each}
     {/each}
   </div>
 </main>
