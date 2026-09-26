@@ -3,15 +3,7 @@
   import type { Reminder } from '$lib/api';
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import {
-    Check,
-    Clock,
-    Link as LinkIcon,
-    MessageSquare,
-    RefreshCw,
-    Repeat2,
-    Trash2,
-  } from '@lucide/svelte';
+  import { Check, Clock, Link as LinkIcon, MessageSquare, RefreshCw, Repeat2, Trash2, Search, X } from '@lucide/svelte';
   import {
     dayLabel,
     dayOf,
@@ -57,14 +49,28 @@
       }));
   }
 
+  /** Search across every reminder on the page, done ones included — the
+   *  point is finding an old one to revisit (owner, 2026-09-26). Matches
+   *  the text and the day it was set for (its date, or the day heading
+   *  such as "Tomorrow" / "Fri, Oct 2"), case-insensitively. */
+  let query = $state('');
+  let searchEl: HTMLInputElement | undefined = $state();
+  const needle = $derived(query.trim().toLowerCase());
+  function matches(r: Reminder): boolean {
+    if (!needle) return true;
+    const hay = `${r.text} ${r.due_local} ${dayLabel(dayOf(r.due_local), new Date(), r.tz)}`.toLowerCase();
+    return hay.includes(needle);
+  }
+  const shown = $derived(needle ? app.reminders.filter(matches) : app.reminders);
+
   /** The owner's order (2026-09-26): what is overdue on top, then what is
    *  still to come, then what is done — and inside each, today first. The
    *  page used to run oldest-first with done rows mixed in, which put
    *  today's reminders under every past day. */
   const sections = $derived.by(() => {
-    const overdue = app.reminders.filter((r) => r.status === 'fired' || r.status === 'firing');
-    const upcoming = app.reminders.filter((r) => r.status === 'scheduled');
-    const done = app.reminders.filter((r) => r.status === 'done');
+    const overdue = shown.filter((r) => r.status === 'fired' || r.status === 'firing');
+    const upcoming = shown.filter((r) => r.status === 'scheduled');
+    const done = shown.filter((r) => r.status === 'done');
     return [
       { key: 'overdue', title: 'Overdue', tone: 'text-amber-300', days: groupByDay(overdue, true) },
       { key: 'upcoming', title: 'Upcoming', tone: 'text-white/40', days: groupByDay(upcoming, false) },
@@ -149,10 +155,48 @@
       Reminders you asked KinAI to keep. Times are shown the way you set them.
     </p>
 
+    {#if app.reminders.length > 0}
+      <!-- Search: finds any reminder, the done ones too. Escape clears. -->
+      <div class="relative">
+        <Search size={14} class="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/40 pointer-events-none" />
+        <input
+          type="text"
+          placeholder="Search reminders…"
+          aria-label="Search reminders"
+          class="w-full bg-white/5 rounded-md pl-8 pr-8 py-1.5 text-sm text-white placeholder:text-white/40 outline-none focus:ring-1 focus:ring-teal-400/60"
+          bind:this={searchEl}
+          bind:value={query}
+          onkeydown={(e) => {
+            if (e.key === 'Escape') {
+              e.preventDefault();
+              query = '';
+            }
+          }}
+        />
+        {#if query}
+          <button
+            type="button"
+            class="absolute right-2 top-1/2 -translate-y-1/2 text-white/40 hover:text-white"
+            onclick={() => {
+              query = '';
+              searchEl?.focus();
+            }}
+            aria-label="Clear search"
+          >
+            <X size={14} />
+          </button>
+        {/if}
+      </div>
+    {/if}
+
     {#if app.reminders.length === 0}
       <div class="kin-card text-center text-white/50">
         Nothing scheduled. Ask KinAI:
         <span class="text-white/70">“Remind me tomorrow at 9 to …”</span>
+      </div>
+    {:else if needle && shown.length === 0}
+      <div class="kin-card text-center text-white/50">
+        No reminders match “{query.trim()}”.
       </div>
     {/if}
 
