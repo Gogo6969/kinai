@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-09-25T18:22:03+00:00",
-  "version": "0.2.136",
+  "generated_at": "2026-09-26T01:02:21+00:00",
+  "version": "0.2.137",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 372,
-    "head": "f3a46f0"
+    "commits": 376,
+    "head": "0daf3a6"
   },
   "totals": {
     "rust_files": 70,
-    "rust_lines": 35829,
+    "rust_lines": 36000,
     "frontend_files": 37,
-    "frontend_lines": 14193,
-    "unit_tests": 392,
+    "frontend_lines": 14341,
+    "unit_tests": 396,
     "integration_test_files": 20,
-    "releases": 128,
-    "tags": 123
+    "releases": 129,
+    "tags": 124
   },
   "areas": [
     {
@@ -115,7 +115,7 @@
     {
       "path": "src/commands.rs",
       "area": "entry",
-      "lines": 3490,
+      "lines": 3493,
       "doc": "Tauri command surface — every IPC entrypoint the frontend can call.",
       "tests": 0
     },
@@ -311,9 +311,9 @@
     {
       "path": "src/network/client.rs",
       "area": "network",
-      "lines": 577,
+      "lines": 733,
       "doc": "Client-side WebSocket dialer.",
-      "tests": 0
+      "tests": 4
     },
     {
       "path": "src/network/invite.rs",
@@ -353,7 +353,7 @@
     {
       "path": "src/network/server.rs",
       "area": "network",
-      "lines": 1556,
+      "lines": 1568,
       "doc": "Host-side Axum HTTP+WebSocket server.",
       "tests": 0
     },
@@ -590,7 +590,7 @@
     {
       "path": "frontend/src/lib/components/ChatWindow.svelte",
       "kind": "component",
-      "lines": 1059,
+      "lines": 1162,
       "doc": "Status line of the most recent tool for a streaming message, if any."
     },
     {
@@ -656,7 +656,7 @@
     {
       "path": "frontend/src/lib/dev-tauri-mock.ts",
       "kind": "lib",
-      "lines": 499,
+      "lines": 537,
       "doc": "DEV-ONLY Tauri IPC mock. When the frontend runs in a plain browser (`pnpm dev` + localhost:1420, no Tauri shell), `window.__TAURI_INTERNALS__` doesn't exist and every invoke() rejects — the UI is untestable outside the app. This module installs a minimal in-memory backend so the whole UI (most importantly the /setup wizard) can be driven end-to-end in a browser: config mutations persist for the se"
     },
     {
@@ -692,7 +692,7 @@
     {
       "path": "frontend/src/lib/stores/app.svelte.ts",
       "kind": "lib",
-      "lines": 1162,
+      "lines": 1169,
       "doc": "This machine can synthesize speech (macOS). Mac CLIENTS speak locally with their own voices; hosts are always Macs today."
     },
     {
@@ -1250,6 +1250,28 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.137",
+      "date": "2026-09-25",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "Typing keeps up in long conversations.",
+            "detail": "In a thread with hundreds of messages, letters could appear later than they were typed — worst on Linux — because the chat window kept every loaded message on the page and the browser went over all of them on every keystroke. The window now shows the newest 100 messages, with **Show earlier messages** at the top to load more; search results and reminders still jump straight to older messages. Measured on a 500-message conversation: a keystroke went from 6 ms of work to 0.7 ms."
+          },
+          {
+            "title": "\"Reconnect now\" works when a connection is stuck.",
+            "detail": "The button was only heard in the pause between two connection attempts, so while an attempt hung it did nothing and only restarting the app helped. It now interrupts the stuck attempt and dials again at once, and an attempt gives up after 10 seconds (15 for the host's reply) instead of waiting out the operating system's limit of one to two minutes."
+          }
+        ],
+        "Changed": [
+          {
+            "title": "The host now notes in its log when each device connects and disconnects, with its app version, so a connection problem l",
+            "detail": ""
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.136",
       "date": "2026-09-25",
@@ -3881,6 +3903,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.137",
+      "date": "2026-09-25"
+    },
     {
       "tag": "v0.2.136",
       "date": "2026-09-25"
