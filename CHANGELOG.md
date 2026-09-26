@@ -5,6 +5,18 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.140] — 2026-09-26
+
+### Changed
+
+- **The Calendar shows what still matters first.** Reminders that are
+  still open — waiting to fire, or fired and waiting for Done — now sit at
+  the top, with the latest day first, and the ones you have marked done
+  follow under their own **Done** heading at the bottom. Until now the
+  list ran oldest-first with done reminders mixed in, so today's
+  reminders ended up under every past day. Asking KinAI in chat what your
+  reminders are is unchanged: it lists the open ones, soonest first.
+
 ## [0.2.139] — 2026-09-26
 
 ### Added
