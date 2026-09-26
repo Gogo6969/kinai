@@ -6,6 +6,7 @@
   import ThinkingPanel from './ThinkingPanel.svelte';
   import ToolPill from './ToolPill.svelte';
   import { app } from '$lib/stores/app.svelte';
+  import { imageFromNativeClipboard, pastedFiles, pasteHasText } from '$lib/clipboardImage';
 
   /** Status line of the most recent tool for a streaming message, if any. */
   function lastToolNote(id: string): string | undefined {
@@ -356,19 +357,20 @@
   }
 
   function onPaste(e: ClipboardEvent) {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    const files: File[] = [];
-    for (const item of Array.from(items)) {
-      if (item.kind === 'file') {
-        const f = item.getAsFile();
-        if (f) files.push(f);
-      }
-    }
+    const files = pastedFiles(e);
     if (files.length > 0) {
       e.preventDefault();
       void ingestFiles(files);
+      return;
     }
+    // Text: the native paste inserts it.
+    if (pasteHasText(e)) return;
+    // Neither a file nor text — what the Linux engine hands over for a
+    // screenshot on the clipboard. Read the OS clipboard directly (see
+    // clipboardImage.ts); nothing to prevent, the native paste is empty.
+    void imageFromNativeClipboard().then((f) => {
+      if (f) void ingestFiles([f]);
+    });
   }
 
   function onDragOver(e: DragEvent) {

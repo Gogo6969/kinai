@@ -496,6 +496,27 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
           if (typeof args?.eventId === 'number') listeners.delete(args.eventId);
           return null;
         }
+        // A screenshot on the OS clipboard, for the composers' paste
+        // fallback (`clipboardImage.ts`): set `window.__mockClipboardImage`
+        // to `{ width, height }` and the native read returns a solid teal
+        // image of that size; unset, it rejects like an empty clipboard.
+        if (cmd === 'plugin:clipboard-manager|read_image') {
+          if (!w.__mockClipboardImage) throw new Error('no image on the clipboard');
+          return 4242;
+        }
+        if (cmd === 'plugin:image|size') {
+          const m = w.__mockClipboardImage;
+          return m ? { width: m.width, height: m.height } : null;
+        }
+        if (cmd === 'plugin:image|rgba') {
+          const m = w.__mockClipboardImage;
+          if (!m) return [];
+          const px = new Array(m.width * m.height * 4);
+          for (let i = 0; i < px.length; i += 4) {
+            px[i] = 45; px[i + 1] = 212; px[i + 2] = 191; px[i + 3] = 255;
+          }
+          return px;
+        }
         return null;
       }
       const h = handlers[cmd];

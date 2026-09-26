@@ -20,6 +20,7 @@
     "global-shortcut:allow-is-registered",
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-write-text",
+    "clipboard-manager:allow-read-image",
     "dialog:allow-open",
     "dialog:allow-save",
     "fs:allow-read-text-file",

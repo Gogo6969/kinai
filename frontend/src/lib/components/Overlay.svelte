@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { imageFromNativeClipboard, pastedFiles, pasteHasText } from '$lib/clipboardImage';
   import { api, events, type Attachment } from '$lib/api';
   import { streamMarkdown } from '$lib/stream-html';
   import { fileToDataUrl } from '$lib/image';
@@ -87,19 +88,20 @@
    *  but I missed adding it to the overlay when the quick-chat surface
    *  was introduced. */
   function onPaste(e: ClipboardEvent) {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    const files: File[] = [];
-    for (const item of Array.from(items)) {
-      if (item.kind === 'file') {
-        const f = item.getAsFile();
-        if (f) files.push(f);
-      }
-    }
+    const files = pastedFiles(e);
     if (files.length > 0) {
       e.preventDefault();
       void ingestFiles(files);
+      return;
     }
+    // Text: the native paste inserts it.
+    if (pasteHasText(e)) return;
+    // Neither a file nor text — what the Linux engine hands over for a
+    // screenshot on the clipboard. Read the OS clipboard directly (see
+    // clipboardImage.ts); nothing to prevent, the native paste is empty.
+    void imageFromNativeClipboard().then((f) => {
+      if (f) void ingestFiles([f]);
+    });
   }
 
   function removeAttachment(idx: number) {
