@@ -5,6 +5,19 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.139] — 2026-09-26
+
+### Added
+
+- **Delete your own messages.** Every prompt you wrote now has a
+  **delete** action next to edit and copy, on the host and on family
+  devices. It removes the prompt together with KinAI's reply to it, after
+  a confirmation. Only your own conversations can be touched, and if the
+  deleted exchange was already folded into the conversation's running
+  summary, that summary is rebuilt without it. One thing to know: a fact
+  KinAI already saved to long-term memory from that prompt stays until you
+  remove it in Settings → Memory — the confirmation says so.
+
 ## [0.2.138] — 2026-09-26
 
 ### Fixed
