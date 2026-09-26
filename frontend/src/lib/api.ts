@@ -334,6 +334,9 @@ export interface HostInfo {
    *  `reminder_action` over the WS. Absent/false on older hosts — the
    *  Calendar entry stays hidden on client peers rather than hanging. */
   host_reminders?: boolean;
+  /** Host applies a client's own-prompt delete (0.2.139+). Absent/false
+   *  on older hosts — the delete action stays hidden rather than hanging. */
+  host_message_delete?: boolean;
 }
 
 /** An answer a family member flagged with the Report button. The host
@@ -562,6 +565,9 @@ export const api = {
   loadThread: (threadId: string) => invoke<Message[]>('load_thread', { threadId }),
   createThread: (title?: string) => invoke<ThreadMeta>('create_thread', { title: title ?? null }),
   deleteThread: (threadId: string) => invoke<void>('delete_thread', { threadId }),
+  /** Delete one of your own prompts together with the reply it got. */
+  deleteMessage: (threadId: string, messageId: string) =>
+    invoke<number>('delete_message', { threadId, messageId }),
   renameThread: (threadId: string, title: string) =>
     invoke<void>('rename_thread', { threadId, title }),
 

@@ -370,6 +370,17 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
              snippet: 'Question 5: how would you plan a [weekend] trip…', created_at: cannedMessages[10]?.created_at ?? '' }]
         : [],
     load_thread: () => cannedMessages,
+    // Own-prompt delete (0.2.139): drop the prompt and the rows up to the
+    // next prompt, like the host does, so the reload shows the pair gone.
+    delete_message: (a: any) => {
+      const id = a?.messageId ?? a?.message_id;
+      const i = cannedMessages.findIndex((m: any) => m.id === id);
+      if (i < 0 || cannedMessages[i].role !== 'user') throw new Error("That message isn't yours to delete.");
+      let end = i + 1;
+      while (end < cannedMessages.length && cannedMessages[end].role !== 'user') end++;
+      cannedMessages.splice(i, end - i);
+      return end - i;
+    },
     thread_active_slot: () => null,
     // Invites: served from `localStorage.__mockInvites` so the page can be
     // driven in a browser (rename, revoke, the active-only filter) with no

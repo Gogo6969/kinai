@@ -110,6 +110,10 @@ pub enum Envelope {
         /// Calendar entry and the reminder envelopes on the client.
         #[serde(default)]
         host_reminders: bool,
+        /// Host applies a client's own-prompt delete (0.2.139+) — gates the
+        /// delete action on client peers so it never hangs against an older host.
+        #[serde(default)]
+        host_message_delete: bool,
     },
     /// Client → Host: please mint a pairing token for me (the requesting
     /// client peer). The host responds with `TelegramPair`. No payload —
@@ -240,6 +244,13 @@ pub enum Envelope {
         thread_id: String,
         title: String,
     },
+    /// Client → Host: delete one of MY prompts together with the reply it
+    /// got (0.2.139+). Same authority reasoning as `DeleteThread`; the
+    /// host answers with `ThreadOpAck` for the thread.
+    DeleteMessage {
+        thread_id: String,
+        message_id: String,
+    },
     /// Host → Client: the thread operation landed (or why it didn't).
     ThreadOpAck {
         thread_id: String,
@@ -332,4 +343,27 @@ pub enum Envelope {
     Reminder {
         reminder: crate::db::Reminder,
     },
+}
+
+#[cfg(test)]
+mod delete_message_wire_tests {
+    use super::Envelope;
+
+    /// The wire shape a client sends and the host parses.
+    #[test]
+    fn delete_message_round_trips() {
+        let raw = r#"{"type":"delete_message","thread_id":"t1","message_id":"m1"}"#;
+        match serde_json::from_str::<Envelope>(raw).unwrap() {
+            Envelope::DeleteMessage { thread_id, message_id } => {
+                assert_eq!((thread_id.as_str(), message_id.as_str()), ("t1", "m1"));
+            }
+            other => panic!("parsed as {other:?}"),
+        }
+        let back = serde_json::to_string(&Envelope::DeleteMessage {
+            thread_id: "t1".into(),
+            message_id: "m1".into(),
+        })
+        .unwrap();
+        assert!(back.contains(r#""type":"delete_message""#), "{back}");
+    }
 }

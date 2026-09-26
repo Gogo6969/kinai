@@ -185,6 +185,16 @@ impl Db {
     pub async fn update_message(&self, id: &str, new_content: &str) -> Result<()> {
         messages::update_content(&self.pool, id, new_content).await
     }
+    /// Delete one of the peer's own prompts together with its reply; see
+    /// `messages::delete_pair`. Returns rows removed (0 = not theirs).
+    pub async fn delete_message_pair(
+        &self,
+        peer_id: &str,
+        thread_id: &str,
+        message_id: &str,
+    ) -> Result<u64> {
+        messages::delete_pair(&self.pool, peer_id, thread_id, message_id).await
+    }
     /// Truncate a thread at `from_created_at` (inclusive), peer-scoped.
     /// Returns rows removed. Backs regenerate/edit-and-resend.
     pub async fn delete_messages_from(

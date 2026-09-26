@@ -447,6 +447,77 @@ pub async fn load_for_context(
     Ok(messages)
 }
 
+/// Delete one of the member's own prompts together with the reply it got:
+/// the `user` row `message_id` and every row after it up to (not
+/// including) the next `user` row — the assistant's answer plus anything
+/// that belonged to that turn. Deleting only the question would leave the
+/// model reading an answer to nothing, and leak what was asked.
+///
+/// Peer-scoped through the `threads` join: a member cannot delete a row
+/// in another member's thread by guessing an id (0 rows). Only `user`
+/// rows qualify — a reply is deleted with its question, never alone.
+/// Like `delete_from`, a delete that reaches into what the thread's digest
+/// summarizes clears the digest; the next fold rebuilds it from what is
+/// left, so the model does not keep quoting a deleted exchange.
+pub async fn delete_pair(
+    pool: &SqlitePool,
+    peer_id: &str,
+    thread_id: &str,
+    message_id: &str,
+) -> Result<u64> {
+    let target: Option<(String, String)> = sqlx::query_as(
+        "SELECT m.created_at, m.role FROM messages m
+         JOIN threads t ON t.id = m.thread_id
+         WHERE m.id = ?1 AND m.thread_id = ?2 AND t.peer_id = ?3",
+    )
+    .bind(message_id)
+    .bind(thread_id)
+    .bind(peer_id)
+    .fetch_optional(pool)
+    .await?;
+    let Some((at, role)) = target else { return Ok(0) };
+    if role != "user" {
+        anyhow::bail!("only a prompt of your own can be deleted (a reply goes with its question)");
+    }
+    let next_user: Option<String> = sqlx::query_scalar(
+        "SELECT created_at FROM messages
+         WHERE thread_id = ?1 AND role = 'user' AND created_at > ?2
+         ORDER BY created_at ASC LIMIT 1",
+    )
+    .bind(thread_id)
+    .bind(&at)
+    .fetch_optional(pool)
+    .await?;
+    let res = sqlx::query(
+        "DELETE FROM messages
+         WHERE thread_id = ?1 AND created_at >= ?2
+           AND (?3 IS NULL OR created_at < ?3)
+           AND thread_id IN (SELECT id FROM threads WHERE id = ?1 AND peer_id = ?4)",
+    )
+    .bind(thread_id)
+    .bind(&at)
+    .bind(next_user.as_deref())
+    .bind(peer_id)
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "UPDATE threads SET digest = NULL, digest_through = NULL
+         WHERE id = ?1 AND peer_id = ?2 AND digest_through >= ?3",
+    )
+    .bind(thread_id)
+    .bind(peer_id)
+    .bind(&at)
+    .execute(pool)
+    .await?;
+    sqlx::query("UPDATE threads SET updated_at = ?1 WHERE id = ?2 AND peer_id = ?3")
+        .bind(Utc::now().to_rfc3339())
+        .bind(thread_id)
+        .bind(peer_id)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected())
+}
+
 /// An image attachment whose payload the context load stripped.
 fn has_stripped_image(m: &Message) -> bool {
     m.attachments
@@ -1073,6 +1144,69 @@ mod tests {
 
         delete_from(&pool, HOST_PEER, &tid, &b.created_at).await.unwrap();
         assert_eq!(thread_digest(&pool, HOST_PEER, &tid).await.unwrap(), None);
+    }
+
+    /// Deleting a prompt takes its reply and nothing else — the next
+    /// exchange is untouched, whether the pair sits in the middle or at
+    /// the end of the thread.
+    #[tokio::test]
+    async fn deleting_a_prompt_takes_its_reply_and_nothing_else() {
+        let pool = fresh_pool().await;
+        let tid = seed_thread(&pool, HOST_PEER, "t").await;
+        let u1 = append(&pool, &tid, "user", "me", "first question", &[]).await.unwrap();
+        let _a1 = append(&pool, &tid, "assistant", "KinAI", "first answer", &[]).await.unwrap();
+        let u2 = append(&pool, &tid, "user", "me", "second question", &[]).await.unwrap();
+        let a2 = append(&pool, &tid, "assistant", "KinAI", "second answer", &[]).await.unwrap();
+
+        assert_eq!(delete_pair(&pool, HOST_PEER, &tid, &u1.id).await.unwrap(), 2);
+        let left: Vec<String> = load(&pool, HOST_PEER, &tid, 50).await.unwrap().into_iter().map(|m| m.id).collect();
+        assert_eq!(left, vec![u2.id.clone(), a2.id.clone()]);
+
+        assert_eq!(delete_pair(&pool, HOST_PEER, &tid, &u2.id).await.unwrap(), 2, "last pair goes too");
+        assert!(load(&pool, HOST_PEER, &tid, 50).await.unwrap().is_empty());
+    }
+
+    /// Only the member's own `user` rows qualify, and only in their own
+    /// thread: a reply alone is refused, another peer removes nothing.
+    #[tokio::test]
+    async fn only_own_prompts_can_be_deleted() {
+        let pool = fresh_pool().await;
+        let tid = seed_thread(&pool, HOST_PEER, "t").await;
+        let u1 = append(&pool, &tid, "user", "me", "q", &[]).await.unwrap();
+        let a1 = append(&pool, &tid, "assistant", "KinAI", "a", &[]).await.unwrap();
+        assert!(delete_pair(&pool, HOST_PEER, &tid, &a1.id).await.is_err(), "a reply alone is refused");
+        assert_eq!(delete_pair(&pool, "BOB", &tid, &u1.id).await.unwrap(), 0, "another peer removes nothing");
+        assert_eq!(load(&pool, HOST_PEER, &tid, 50).await.unwrap().len(), 2);
+    }
+
+    /// A delete that reaches into summarized history clears the digest;
+    /// one entirely after the digest's coverage keeps it.
+    #[tokio::test]
+    async fn deleting_a_summarized_pair_clears_the_digest() {
+        let pool = fresh_pool().await;
+        let tid = seed_thread(&pool, HOST_PEER, "t").await;
+        let u1 = append(&pool, &tid, "user", "me", "old q", &[]).await.unwrap();
+        let a1 = append(&pool, &tid, "assistant", "KinAI", "old a", &[]).await.unwrap();
+        let u2 = append(&pool, &tid, "user", "me", "new q", &[]).await.unwrap();
+        let _a2 = append(&pool, &tid, "assistant", "KinAI", "new a", &[]).await.unwrap();
+        set_thread_digest(&pool, HOST_PEER, &tid, "- old q was asked", &a1.created_at, None).await.unwrap();
+
+        delete_pair(&pool, HOST_PEER, &tid, &u2.id).await.unwrap();
+        assert!(thread_digest(&pool, HOST_PEER, &tid).await.unwrap().is_some(), "a delete after the coverage keeps the digest");
+        delete_pair(&pool, HOST_PEER, &tid, &u1.id).await.unwrap();
+        assert_eq!(thread_digest(&pool, HOST_PEER, &tid).await.unwrap(), None, "a delete inside the coverage clears it");
+    }
+
+    /// The deleted prompt leaves the search index with it.
+    #[tokio::test]
+    async fn a_deleted_prompt_is_gone_from_search() {
+        let pool = fresh_pool().await;
+        let tid = seed_thread(&pool, HOST_PEER, "t").await;
+        let u1 = append(&pool, &tid, "user", "me", "the zebrafinch question", &[]).await.unwrap();
+        append(&pool, &tid, "assistant", "KinAI", "an answer", &[]).await.unwrap();
+        assert_eq!(search(&pool, HOST_PEER, "zebrafinch", 10).await.unwrap().len(), 1);
+        delete_pair(&pool, HOST_PEER, &tid, &u1.id).await.unwrap();
+        assert!(search(&pool, HOST_PEER, "zebrafinch", 10).await.unwrap().is_empty());
     }
 }
 

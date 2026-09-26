@@ -357,6 +357,7 @@ pub async fn connect(
                 host_reports,
                 host_thread_ops,
                 host_reminders,
+                host_message_delete,
             } => {
                 welcomed = true;
                 {
@@ -373,6 +374,7 @@ pub async fn connect(
                         host_reports,
                         host_thread_ops,
                         host_reminders,
+                        host_message_delete,
                     });
                 }
                 let _ = app.emit(
@@ -389,6 +391,7 @@ pub async fn connect(
                         "host_reports": host_reports,
                         "host_thread_ops": host_thread_ops,
                         "host_reminders": host_reminders,
+                        "host_message_delete": host_message_delete,
                     }),
                 );
             }

@@ -115,6 +115,9 @@ pub struct HostInfo {
     /// Host schedules and delivers reminders (0.2.120+) — gates the
     /// Calendar entry and the reminder round-trips on the client.
     pub host_reminders: bool,
+    /// Host applies a client's own-prompt delete (0.2.139+) — gates the
+    /// delete action on client peers.
+    pub host_message_delete: bool,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -395,6 +398,7 @@ pub fn run() {
             commands::load_thread,
             commands::create_thread,
             commands::delete_thread,
+            commands::delete_message,
             commands::rename_thread,
             commands::list_user_facts,
             commands::save_user_fact,

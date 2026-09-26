@@ -465,6 +465,7 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
         host_reports: true,
         host_thread_ops: true,
         host_reminders: true,
+        host_message_delete: true,
     });
 
     let writer = tokio::spawn(async move {
@@ -512,7 +513,8 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
         // decorative for anything a client can trigger in a loop.
         if matches!(env, Envelope::SendMessage { .. } | Envelope::FactCheckRequest { .. }
             | Envelope::ReportAnswer { .. } | Envelope::DeleteThread { .. }
-            | Envelope::RenameThread { .. } | Envelope::ReminderAction { .. })
+            | Envelope::RenameThread { .. } | Envelope::DeleteMessage { .. }
+            | Envelope::ReminderAction { .. })
             && !s.rate.allow(&claims.sub) {
             // Same for a reminder action: the popup waits for this ack.
             if let Envelope::ReminderAction { id, .. } = &env {
@@ -533,8 +535,9 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
                     message: "Too many requests just now — wait a moment and try again.".into(),
                 });
             }
-            if let Envelope::DeleteThread { thread_id } | Envelope::RenameThread { thread_id, .. } =
-                &env
+            if let Envelope::DeleteThread { thread_id }
+            | Envelope::RenameThread { thread_id, .. }
+            | Envelope::DeleteMessage { thread_id, .. } = &env
             {
                 let _ = tx.send(Envelope::ThreadOpAck {
                     thread_id: thread_id.clone(),
@@ -796,6 +799,21 @@ async fn dispatch(
                     (false, "The host couldn't delete that conversation.".to_string())
                 }
             };
+            let _ = tx.send(Envelope::ThreadOpAck { thread_id, ok, message });
+        }
+        Envelope::DeleteMessage { thread_id, message_id } => {
+            // Scoped by context_peer like DeleteThread: the SQL only touches
+            // rows in a thread that belongs to this peer, and only a `user`
+            // row (the reply goes with its question).
+            let (ok, message) =
+                match s.app.db.delete_message_pair(context_peer, &thread_id, &message_id).await {
+                    Ok(0) => (false, "That message isn't yours to delete.".to_string()),
+                    Ok(_) => (true, "Message deleted.".to_string()),
+                    Err(e) => {
+                        tracing::warn!("client message delete failed: {e:#}");
+                        (false, "The host couldn't delete that message.".to_string())
+                    }
+                };
             let _ = tx.send(Envelope::ThreadOpAck { thread_id, ok, message });
         }
         Envelope::RenameThread { thread_id, title } => {

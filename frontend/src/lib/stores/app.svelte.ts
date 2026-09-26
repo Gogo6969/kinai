@@ -127,6 +127,8 @@ class AppStore {
     host_thread_ops?: boolean;
     /** Host runs the reminder scheduler + answers the reminder calls. */
     host_reminders?: boolean;
+    /** Host applies a client's own-prompt delete (0.2.139+). */
+    host_message_delete?: boolean;
   } | null>(null);
   /** mDNS-discovered KinAI hosts on the local network. Kept at the store
    *  level (not inside /client/+page.svelte) because the discovery event
@@ -331,6 +333,23 @@ class AppStore {
       this.activeThreadId = this.threads[0]?.id ?? null;
       if (this.activeThreadId) await this.loadActive();
     }
+  }
+
+  /** Delete one of the member's own prompts together with its reply. The
+   *  host (or, on the host itself, the database) is the authority, so the
+   *  thread is reloaded from it afterwards instead of edited in place. */
+  async deleteMessage(threadId: string, messageId: string) {
+    try {
+      await api.deleteMessage(threadId, messageId);
+    } catch (e) {
+      window.dispatchEvent(
+        new CustomEvent('kin-toast', {
+          detail: { msg: `✗ ${String(e).replace(/^Error:\s*/, '')}`, ms: 6000 },
+        })
+      );
+      return;
+    }
+    if (this.activeThreadId === threadId) await this.loadActive();
   }
 
   async send(

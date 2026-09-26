@@ -1499,6 +1499,51 @@ pub async fn delete_thread(
         .map_err(err)
 }
 
+/// Delete one of the user's own prompts together with the reply it got.
+/// Mode-aware like `delete_thread`: a client's messages live on the host,
+/// so the host performs the delete and acks; the local mirror is dropped
+/// afterwards so an offline view cannot show the exchange again.
+#[tauri::command]
+pub async fn delete_message(
+    state: tauri::State<'_, SharedState>,
+    thread_id: String,
+    message_id: String,
+) -> Result<u64> {
+    if matches!(state.config.read().mode, Mode::Client) {
+        let host_ok = state
+            .stats
+            .read()
+            .host_info
+            .as_ref()
+            .map(|h| h.host_message_delete)
+            .unwrap_or(false);
+        if !host_ok {
+            return Err("Your family's KinAI host needs updating before messages can be deleted from this device."
+                .into());
+        }
+        client_thread_op(
+            &state,
+            &thread_id,
+            crate::network::protocol::Envelope::DeleteMessage {
+                thread_id: thread_id.clone(),
+                message_id: message_id.clone(),
+            },
+        )
+        .await?;
+        let _ = state.db.delete_message_pair(db::HOST_PEER, &thread_id, &message_id).await;
+        return Ok(1);
+    }
+    let removed = state
+        .db
+        .delete_message_pair(db::HOST_PEER, &thread_id, &message_id)
+        .await
+        .map_err(err)?;
+    if removed == 0 {
+        return Err("That message isn't yours to delete.".into());
+    }
+    Ok(removed)
+}
+
 /// Send a thread delete/rename to the host and wait for its ack. The
 /// host is the only authority on a client's threads, so a failure here
 /// must surface — silently "succeeding" is what made the original bug

@@ -4,7 +4,7 @@
   import { app } from '$lib/stores/app.svelte';
   import { slotName } from '$lib/activeModel';
   import { invoke } from '@tauri-apps/api/core';
-  import { Check, Copy, FileText, Search, RefreshCw, Pencil, Volume2, Square, ShieldCheck, Loader2, Flag } from '@lucide/svelte';
+  import { Check, Copy, FileText, Search, RefreshCw, Pencil, Trash2, Volume2, Square, ShieldCheck, Loader2, Flag } from '@lucide/svelte';
 
   let {
     message,
@@ -186,6 +186,23 @@
   // our WKWebView/WebView2 targets, but defensive).
   let copyState = $state<'idle' | 'copied' | 'failed'>('idle');
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
+  // Delete this prompt and the reply it got (0.2.139). Shown on the
+  // member's own prompts; on a client only when the host applies it, so
+  // the action never hangs against an older host. Pairs, not single
+  // messages: an orphaned answer would leak what was asked.
+  const canDelete = $derived(
+    !!message.id && !!message.thread_id && (isHost || !!app.hostInfo?.host_message_delete)
+  );
+  async function deleteMessage() {
+    if (!message.id || !message.thread_id) return;
+    if (
+      !confirm(
+        "Delete this message and KinAI's reply to it?\n\nAnything KinAI already saved to memory from it stays until you remove it in Settings → Memory."
+      )
+    )
+      return;
+    await app.deleteMessage(message.thread_id, message.id);
+  }
   async function copyMessage() {
     try {
       const plain = message.content;
@@ -350,6 +367,19 @@
         >
           <Pencil size={11} />
           <span>edit</span>
+        </button>
+      {/if}
+      {#if canDelete}
+        <button
+          type="button"
+          class="inline-flex items-center gap-1 hover:text-red-300 transition-colors cursor-pointer disabled:opacity-50"
+          onclick={deleteMessage}
+          disabled={app.busy}
+          title="Delete this message and KinAI's reply to it"
+          aria-label="Delete message"
+        >
+          <Trash2 size={11} />
+          <span>delete</span>
         </button>
       {/if}
       <button
