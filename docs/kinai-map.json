@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-09-26T19:16:50+00:00",
-  "version": "0.2.139",
+  "generated_at": "2026-09-27T00:19:06+00:00",
+  "version": "0.2.140",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 383,
-    "head": "032bdab"
+    "commits": 388,
+    "head": "426aabf"
   },
   "totals": {
     "rust_files": 70,
     "rust_lines": 36248,
     "frontend_files": 38,
-    "frontend_lines": 14614,
+    "frontend_lines": 14668,
     "unit_tests": 401,
     "integration_test_files": 20,
-    "releases": 131,
-    "tags": 126
+    "releases": 132,
+    "tags": 127
   },
   "areas": [
     {
@@ -740,8 +740,8 @@
     {
       "path": "frontend/src/routes/calendar/+page.svelte",
       "kind": "route",
-      "lines": 364,
-      "doc": "Reminders bucketed by the day of `due_local`. Within a day they are ordered by `due_at` — the real instant — so a member who set reminders in two zones still sees them in the order they fire, and grouped by day AND zone so a heading is never a claim about the wrong day. Days run latest first: the page used to be oldest-first, which put today's reminders under every past day (owner, 2026-09-26)."
+      "lines": 418,
+      "doc": "Reminders bucketed by the day of `due_local`. Within a day they are ordered by `due_at` — the real instant — so a member who set reminders in two zones still sees them in the order they fire, and grouped by day AND zone so a heading is never a claim about the wrong day. `newestFirst` orders the days: true walks back from today (for what is overdue or done), false walks forward (for what is still t"
     },
     {
       "path": "frontend/src/routes/client/+page.svelte",
@@ -1258,6 +1258,18 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.140",
+      "date": "2026-09-26",
+      "sections": {
+        "Changed": [
+          {
+            "title": "The Calendar shows what still matters first.",
+            "detail": "Reminders are now in three groups: **Overdue** on top (fired, waiting for Done), then **Upcoming** (not due yet), then **Done** at the bottom — and inside each group today comes first. Until now the list ran oldest-first with done reminders mixed in, so today's reminders ended up under every past day. Asking KinAI in chat what your reminders are is unchanged: it lists the open ones, soonest first."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.139",
       "date": "2026-09-26",
@@ -3935,6 +3947,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.140",
+      "date": "2026-09-26"
+    },
     {
       "tag": "v0.2.139",
       "date": "2026-09-26"
