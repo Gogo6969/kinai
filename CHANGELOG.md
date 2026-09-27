@@ -5,6 +5,16 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.141] — 2026-09-27
+
+### Added
+
+- **Search your reminders.** The Calendar has a search box that finds any
+  reminder — the done ones too, so an old one is easy to find and pick up
+  again — by its text or by the day it was set for (its date, or "Tomorrow",
+  "Fri, Oct 2"…). The groups keep their order while you search; Escape or
+  the ✕ clears it.
+
 ## [0.2.140] — 2026-09-26
 
 ### Changed
