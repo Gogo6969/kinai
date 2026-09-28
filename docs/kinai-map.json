@@ -1,12 +1,12 @@
 {
-  "generated_at": "2026-09-27T00:19:06+00:00",
-  "version": "0.2.140",
+  "generated_at": "2026-09-28T01:38:19+00:00",
+  "version": "0.2.141",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 388,
-    "head": "426aabf"
+    "commits": 390,
+    "head": "6c43741"
   },
   "totals": {
     "rust_files": 70,
@@ -15,8 +15,8 @@
     "frontend_lines": 14668,
     "unit_tests": 401,
     "integration_test_files": 20,
-    "releases": 132,
-    "tags": 127
+    "releases": 133,
+    "tags": 128
   },
   "areas": [
     {
@@ -1258,6 +1258,18 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.141",
+      "date": "2026-09-27",
+      "sections": {
+        "Added": [
+          {
+            "title": "Search your reminders.",
+            "detail": "The Calendar has a search box that finds any reminder — the done ones too, so an old one is easy to find and pick up again — by its text or by the day it was set for (its date, or \"Tomorrow\", \"Fri, Oct 2\"…). The groups keep their order while you search; Escape or the ✕ clears it."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.140",
       "date": "2026-09-26",
@@ -3947,6 +3959,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.141",
+      "date": "2026-09-27"
+    },
     {
       "tag": "v0.2.140",
       "date": "2026-09-26"
