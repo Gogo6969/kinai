@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-10-02T20:24:16+00:00",
-  "version": "0.2.142",
+  "generated_at": "2026-10-02T22:52:58+00:00",
+  "version": "0.2.143",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 393,
-    "head": "268085f"
+    "commits": 396,
+    "head": "44170da"
   },
   "totals": {
     "rust_files": 70,
-    "rust_lines": 36284,
+    "rust_lines": 36514,
     "frontend_files": 38,
     "frontend_lines": 14685,
-    "unit_tests": 402,
+    "unit_tests": 408,
     "integration_test_files": 20,
-    "releases": 134,
-    "tags": 129
+    "releases": 135,
+    "tags": 130
   },
   "areas": [
     {
@@ -199,7 +199,7 @@
     {
       "path": "src/db/mod.rs",
       "area": "db",
-      "lines": 431,
+      "lines": 442,
       "doc": "SQLx-backed SQLite layer.",
       "tests": 0
     },
@@ -234,9 +234,9 @@
     {
       "path": "src/db/user_facts.rs",
       "area": "db",
-      "lines": 443,
+      "lines": 613,
       "doc": "Long-term per-user facts — the persistent memory layer that survives across threads and sessions.",
-      "tests": 10
+      "tests": 15
     },
     {
       "path": "src/discovery.rs",
@@ -500,9 +500,9 @@
     {
       "path": "src/tools/registry.rs",
       "area": "tools",
-      "lines": 1013,
+      "lines": 1062,
       "doc": "Tool catalogue — generated dynamically from `ToolSettings` so users can disable tools their model shouldn't be allowed to call.",
-      "tests": 11
+      "tests": 12
     },
     {
       "path": "src/tools/status_phrases.rs",
@@ -1258,6 +1258,18 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.143",
+      "date": "2026-10-02",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "Changing something KinAI remembers no longer erases it.",
+            "detail": "Ask KinAI to update a remembered fact (\"my favorite color is now green\") and some models saved the new value, then \"cleaned up\" the old spelling of the same note, which deleted what they had just saved, while still answering \"Done\". A fact saved in a reply now survives a delete in that same reply, the model is told it was kept, and saving and deleting stay correct even when the model does both at the same moment."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.142",
       "date": "2026-10-02",
@@ -3971,6 +3983,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.143",
+      "date": "2026-10-02"
+    },
     {
       "tag": "v0.2.142",
       "date": "2026-10-02"
