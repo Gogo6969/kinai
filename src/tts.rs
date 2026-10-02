@@ -132,8 +132,16 @@ pub fn detect_lang(text: &str) -> &'static str {
 /// Parse the output of `say -v '?'`. Each line looks like:
 /// `Zoe (Premium)       en_US    # Hello! My name is Zoe.`
 /// Name may contain spaces/parens; locale is the last token before `#`.
+///
+/// Each voice NAME appears once in the result. macOS 27 lists some voices
+/// twice, line for line identical (`Samantha (English (US))`, `Anna (German
+/// (Germany))`). The name is how a voice is picked (`say -v NAME`), so a
+/// second copy can never be chosen separately — and the Settings dropdowns
+/// use the name as the list key, where a repeat throws and freezes the whole
+/// Voice replies card (empty English box, spinner that never stops).
 pub fn parse_voice_listing(listing: &str) -> Vec<TtsVoice> {
-    let mut voices = Vec::new();
+    let mut voices: Vec<TtsVoice> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for line in listing.lines() {
         let meta = line.split('#').next().unwrap_or("").trim_end();
         let Some(lang) = meta.split_whitespace().last() else {
@@ -148,6 +156,9 @@ pub fn parse_voice_listing(listing: &str) -> Vec<TtsVoice> {
         }
         if NOVELTY_VOICES.contains(&name) {
             continue;
+        }
+        if !seen.insert(name.to_string()) {
+            continue; // already listed — keep the first, in listing order
         }
         voices.push(TtsVoice {
             name: name.to_string(),
@@ -422,5 +433,30 @@ mod tests {
         assert!(!names.contains(&"Bubbles"), "novelty voices filtered");
         assert_eq!(v[0].lang, "en_US");
         assert_eq!(v[1].lang, "de_DE");
+    }
+
+    /// The 2026-10-02 failure: the Mac's own listing carried a voice twice,
+    /// and the Voice replies card froze on the repeated name. Each name must
+    /// come out once, first copy kept, order untouched.
+    #[test]
+    fn a_voice_listed_twice_comes_out_once() {
+        let listing = "Anna (German (Germany)) de_DE    # Hallo! Ich heiße Anna.\n\
+                       Anna (German (Germany)) de_DE    # Hallo! Ich heiße Anna.\n\
+                       Anna (Premium)      de_DE    # Hallo! Ich heiße Anna.\n\
+                       Samantha (English (US)) en_US    # Hello! My name is Samantha.\n\
+                       Zoe (Premium)       en_US    # Hello! My name is Zoe.\n\
+                       Samantha (English (US)) en_US    # Hello! My name is Samantha.\n";
+        let v = parse_voice_listing(listing);
+        let names: Vec<&str> = v.iter().map(|x| x.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec![
+                "Anna (German (Germany))",
+                "Anna (Premium)",
+                "Samantha (English (US))",
+                "Zoe (Premium)",
+            ],
+            "every name once, first occurrence wins"
+        );
     }
 }

@@ -182,7 +182,13 @@
   async function refreshTtsVoices() {
     ttsVoicesLoading = true;
     try {
-      ttsVoices = await api.listTtsVoices();
+      const listed = await api.listTtsVoices();
+      // One entry per name. The dropdowns key their options by name, and a
+      // repeated key throws inside Svelte's list renderer — which froze this
+      // whole card on 2026-10-02 when macOS listed a voice twice. The host
+      // dedupes as well; this keeps the page alive whatever the source.
+      const seen = new Set<string>();
+      ttsVoices = listed.filter((v) => (seen.has(v.name) ? false : (seen.add(v.name), true)));
     } catch (e) {
       console.warn('listTtsVoices failed', e);
     } finally {

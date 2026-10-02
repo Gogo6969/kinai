@@ -276,10 +276,21 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
     kinai_version: () => ({ version: 'dev-mock', build_time: 0, git_commit: 'mock', target: 'browser', repository: '' }),
     get_changelog_payload: () => changelogPayload,
     tts_supported: () => true,
-    list_tts_voices: () => [
-      { name: 'Zoe (Premium)', lang: 'en_US' }, { name: 'Samantha', lang: 'en_US' },
-      { name: 'Anna (Premium)', lang: 'de_DE' }, { name: 'Markus', lang: 'de_DE' },
-    ],
+    // `localStorage.__mockVoices` (a JSON array of {name, lang}) replaces the
+    // list, so a test can feed the page exactly what `say -v ?` printed —
+    // including the duplicate names macOS 27 lists.
+    list_tts_voices: () => {
+      try {
+        const raw = localStorage.getItem('__mockVoices');
+        if (raw) return JSON.parse(raw);
+      } catch {
+        /* blocked storage — fall through to the default list */
+      }
+      return [
+        { name: 'Zoe (Premium)', lang: 'en_US' }, { name: 'Samantha', lang: 'en_US' },
+        { name: 'Anna (Premium)', lang: 'de_DE' }, { name: 'Markus', lang: 'de_DE' },
+      ];
+    },
     stt_status: () => ({ enabled: cfg.stt.enabled, model: cfg.stt.model, ready: cfg.stt.enabled, models: [
       { id: 'small-q5_1', label: 'Standard (good accuracy, fast)', size_mb: 190, downloaded: false },
       { id: 'medium-q5_0', label: 'High accuracy (bigger, slower)', size_mb: 574, downloaded: false },
