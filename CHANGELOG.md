@@ -5,6 +5,18 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.143] — 2026-10-02
+
+### Fixed
+
+- **Changing something KinAI remembers no longer erases it.** Ask KinAI to
+  update a remembered fact ("my favorite color is now green") and some models
+  saved the new value, then "cleaned up" the old spelling of the same note,
+  which deleted what they had just saved, while still answering "Done". A fact
+  saved in a reply now survives a delete in that same reply, the model is told
+  it was kept, and saving and deleting stay correct even when the model does
+  both at the same moment.
+
 ## [0.2.142] — 2026-10-02
 
 ### Fixed
