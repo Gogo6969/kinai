@@ -93,66 +93,42 @@ pub async fn upsert(
     }
 
     let now = Utc::now().to_rfc3339();
+    let new_id = Uuid::new_v4().to_string();
 
-    // Try to find an existing row first so we can preserve the original
-    // created_at (and id, so any UI that linked to it doesn't 404).
-    let existing = sqlx::query(
-        "SELECT id, created_at FROM user_facts WHERE peer_id = ?1 AND key = ?2",
-    )
-    .bind(peer_id)
-    .bind(key.as_str())
-    .fetch_optional(pool)
-    .await?;
-
-    if let Some(row) = existing {
-        let id: String = row.get("id");
-        let created_at: String = row.get("created_at");
-        sqlx::query(
-            "UPDATE user_facts
-             SET value = ?1, source = ?2, source_msg_id = ?3, updated_at = ?4
-             WHERE id = ?5",
-        )
-        .bind(value)
-        .bind(source)
-        .bind(source_msg_id)
-        .bind(&now)
-        .bind(&id)
-        .execute(pool)
-        .await?;
-        return Ok(UserFact {
-            id,
-            peer_id: peer_id.into(),
-            key: key.clone(),
-            value: value.into(),
-            source: source.into(),
-            source_msg_id: source_msg_id.map(|s| s.into()),
-            created_at,
-            updated_at: now,
-        });
-    }
-
-    let id = Uuid::new_v4().to_string();
-    sqlx::query(
+    // ONE statement: insert, or overwrite the row that already holds this
+    // (peer_id, key) — keeping its id and created_at, so any UI that linked
+    // to it doesn't 404. It used to be "SELECT the row, then UPDATE it",
+    // two statements, and a `forget` of the same fact running in parallel
+    // (the tool loop runs a round's calls concurrently) could delete the
+    // row between them: the UPDATE then hit nothing, returned success, and
+    // the value was silently lost.
+    let row = sqlx::query(
         "INSERT INTO user_facts (id, peer_id, key, value, source, source_msg_id, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+         ON CONFLICT(peer_id, key) DO UPDATE SET
+             value = excluded.value,
+             source = excluded.source,
+             source_msg_id = excluded.source_msg_id,
+             updated_at = excluded.updated_at
+         RETURNING id, created_at",
     )
-    .bind(&id)
+    .bind(&new_id)
     .bind(peer_id)
     .bind(key.as_str())
     .bind(value)
     .bind(source)
     .bind(source_msg_id)
     .bind(&now)
-    .execute(pool)
+    .fetch_one(pool)
     .await?;
     Ok(UserFact {
-        id,
+        id: row.get("id"),
         peer_id: peer_id.into(),
         key,
         value: value.into(),
         source: source.into(),
         source_msg_id: source_msg_id.map(|s| s.into()),
-        created_at: now.clone(),
+        created_at: row.get("created_at"),
         updated_at: now,
     })
 }
@@ -203,6 +179,66 @@ pub async fn delete_by_key(pool: &SqlitePool, peer_id: &str, key: &str) -> Resul
         .execute(pool)
         .await?;
     Ok(result.rows_affected())
+}
+
+/// What [`forget_unless_saved_in_turn`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Forget {
+    /// The row existed and is gone.
+    Deleted,
+    /// Nothing was stored under that key.
+    NothingStored,
+    /// The row exists, was saved by THIS turn's `remember`, and was left
+    /// alone. Carries the stored (normalized) key and its value.
+    KeptSavedThisTurn { key: String, value: String },
+}
+
+/// The `forget` tool's delete: like [`delete_by_key`], except it will not
+/// delete a fact the model itself saved with `remember` during the SAME turn
+/// (`turn_msg_id` is the user message that started the turn; `remember`
+/// stamps it on the row as `source_msg_id`).
+///
+/// Why: on 2026-10-02 the GLM models, asked to "update that memory under this
+/// other spelling of the key", called `remember(new spelling)` and
+/// `forget(old spelling)` in one round. Every spelling normalizes to the same
+/// row, so the forget erased the value just written — and the model reported
+/// "Done". Within one turn "forget the old spelling" can only ever mean a
+/// rename, and a rename must keep the new value. A LATER turn (a different
+/// message id) forgets normally, and so does a call with no turn id.
+///
+/// The guard sits inside the DELETE itself, so it holds under any
+/// interleaving with a concurrent `remember` — the row is judged as it is at
+/// the moment of deletion, not as it was when the tool call began.
+pub async fn forget_unless_saved_in_turn(
+    pool: &SqlitePool,
+    peer_id: &str,
+    key: &str,
+    turn_msg_id: Option<&str>,
+) -> Result<Forget> {
+    let key = normalize_key(key);
+    let result = sqlx::query(
+        "DELETE FROM user_facts
+         WHERE peer_id = ?1 AND key = ?2
+           AND NOT (?3 IS NOT NULL AND source = 'tool' AND source_msg_id IS ?3)",
+    )
+    .bind(peer_id)
+    .bind(&key)
+    .bind(turn_msg_id)
+    .execute(pool)
+    .await?;
+    if result.rows_affected() > 0 {
+        return Ok(Forget::Deleted);
+    }
+    // Nothing deleted: no such fact, or the guard protected it.
+    let kept = sqlx::query("SELECT key, value FROM user_facts WHERE peer_id = ?1 AND key = ?2")
+        .bind(peer_id)
+        .bind(&key)
+        .fetch_optional(pool)
+        .await?;
+    Ok(match kept {
+        Some(row) => Forget::KeptSavedThisTurn { key: row.get("key"), value: row.get("value") },
+        None => Forget::NothingStored,
+    })
 }
 
 /// Wipe every fact for this peer. Exposed via the Settings page as a
@@ -425,6 +461,140 @@ mod tests {
         assert_eq!(wiped, 2);
         assert!(list(&pool, "ALICE").await.unwrap().is_empty());
         assert_eq!(list(&pool, "BOB").await.unwrap().len(), 1, "BOB's fact survives ALICE's clear_all");
+    }
+    // ---- remember + forget in one turn (2026-10-02, GLM models) ----------
+
+    /// The same turn's `forget` of a fact its own `remember` just wrote is
+    /// refused; the value stays. The result says what was kept.
+    #[tokio::test]
+    async fn a_fact_saved_this_turn_survives_a_forget_in_the_same_turn() {
+        let pool = fresh_pool().await;
+        upsert(&pool, "ALICE", "Favorite Color", "blue", "tool", Some("turn-0")).await.unwrap();
+        // This turn (turn-1): save the new spelling, then "forget the old one".
+        upsert(&pool, "ALICE", "favorite-color", "green", "tool", Some("turn-1")).await.unwrap();
+        let out = forget_unless_saved_in_turn(&pool, "ALICE", "Favorite Color", Some("turn-1"))
+            .await
+            .unwrap();
+        assert_eq!(
+            out,
+            Forget::KeptSavedThisTurn { key: "favorite_color".into(), value: "green".into() }
+        );
+        let facts = list(&pool, "ALICE").await.unwrap();
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].value, "green");
+    }
+
+    /// Only the turn that wrote the fact is held back. A later turn, a call
+    /// without a turn id, and a fact nobody saved all behave as before.
+    #[tokio::test]
+    async fn a_later_turn_or_no_turn_forgets_normally() {
+        let pool = fresh_pool().await;
+        upsert(&pool, "ALICE", "city", "Berlin", "tool", Some("turn-1")).await.unwrap();
+
+        assert_eq!(
+            forget_unless_saved_in_turn(&pool, "ALICE", "city", Some("turn-2")).await.unwrap(),
+            Forget::Deleted,
+            "a later turn may forget it"
+        );
+        upsert(&pool, "ALICE", "city", "Munich", "tool", Some("turn-3")).await.unwrap();
+        assert_eq!(
+            forget_unless_saved_in_turn(&pool, "ALICE", "CITY", None).await.unwrap(),
+            Forget::Deleted,
+            "no turn id, no guard"
+        );
+        assert_eq!(
+            forget_unless_saved_in_turn(&pool, "ALICE", "city", Some("turn-3")).await.unwrap(),
+            Forget::NothingStored
+        );
+        assert!(list(&pool, "ALICE").await.unwrap().is_empty());
+    }
+
+    /// The guard protects what the model's own `remember` wrote. A fact the
+    /// extractor or the user's Settings page wrote is not "saved by this
+    /// turn's remember", even under the same message id.
+    #[tokio::test]
+    async fn only_facts_saved_by_the_tool_are_protected() {
+        let pool = fresh_pool().await;
+        upsert(&pool, "ALICE", "diet", "vegetarian", "extractor", Some("turn-1")).await.unwrap();
+        upsert(&pool, "ALICE", "city", "Berlin", "manual", Some("turn-1")).await.unwrap();
+        assert_eq!(
+            forget_unless_saved_in_turn(&pool, "ALICE", "diet", Some("turn-1")).await.unwrap(),
+            Forget::Deleted
+        );
+        assert_eq!(
+            forget_unless_saved_in_turn(&pool, "ALICE", "city", Some("turn-1")).await.unwrap(),
+            Forget::Deleted
+        );
+    }
+
+    /// The guard never reaches across peers: another member's fact is
+    /// invisible to it, exactly as for every other query here.
+    #[tokio::test]
+    async fn the_guard_is_peer_scoped() {
+        let pool = fresh_pool().await;
+        upsert(&pool, "BOB", "city", "Munich", "tool", Some("turn-1")).await.unwrap();
+        assert_eq!(
+            forget_unless_saved_in_turn(&pool, "ALICE", "city", Some("turn-1")).await.unwrap(),
+            Forget::NothingStored,
+            "ALICE has no such fact; BOB's must not even be reported"
+        );
+        assert_eq!(list(&pool, "BOB").await.unwrap().len(), 1);
+    }
+
+    /// An overwrite keeps the row's id AND its creation time, and the
+    /// returned row says so (the single-statement upsert reads them back
+    /// from the database rather than guessing).
+    #[tokio::test]
+    async fn an_overwrite_keeps_id_and_created_at() {
+        let pool = fresh_pool().await;
+        let first = upsert(&pool, "ALICE", "city", "Berlin", "tool", Some("turn-1")).await.unwrap();
+        let second = upsert(&pool, "ALICE", "City", "Munich", "tool", Some("turn-2")).await.unwrap();
+        assert_eq!(first.id, second.id);
+        assert_eq!(first.created_at, second.created_at, "created_at is the original");
+        let stored = &list(&pool, "ALICE").await.unwrap()[0];
+        assert_eq!(stored.value, "Munich");
+        assert_eq!(stored.source_msg_id.as_deref(), Some("turn-2"));
+        assert_eq!(stored.created_at, first.created_at);
+    }
+
+    /// The tool loop runs a round's calls in PARALLEL, so the model's
+    /// `remember(new spelling)` and `forget(old spelling)` really do race.
+    /// Whatever order the database sees them in, the new value must be what
+    /// is left: 400 rounds on a file-backed pool with several connections.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn remember_and_forget_racing_never_lose_the_new_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let url = format!("sqlite://{}?mode=rwc", dir.path().join("race.db").display());
+        let pool = SqlitePoolOptions::new().max_connections(6).connect(&url).await.unwrap();
+        sqlx::query(
+            "CREATE TABLE user_facts (
+                id TEXT PRIMARY KEY, peer_id TEXT NOT NULL, key TEXT NOT NULL,
+                value TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'tool',
+                source_msg_id TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+                UNIQUE(peer_id, key))",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        for round in 0..400 {
+            let peer = format!("PEER{round}");
+            upsert(&pool, &peer, "Favorite Color", "blue", "tool", Some("turn-0")).await.unwrap();
+            let (p1, p2) = (pool.clone(), pool.clone());
+            let (peer1, peer2) = (peer.clone(), peer.clone());
+            let remember = tokio::spawn(async move {
+                upsert(&p1, &peer1, "favorite-color", "green", "tool", Some("turn-1")).await
+            });
+            let forget = tokio::spawn(async move {
+                forget_unless_saved_in_turn(&p2, &peer2, "Favorite Color", Some("turn-1")).await
+            });
+            remember.await.unwrap().unwrap();
+            forget.await.unwrap().unwrap();
+
+            let facts = list(&pool, &peer).await.unwrap();
+            assert_eq!(facts.len(), 1, "round {round}: expected one fact, got {facts:?}");
+            assert_eq!(facts[0].value, "green", "round {round}: the new value was lost");
+        }
     }
 }
 

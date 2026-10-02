@@ -288,6 +288,17 @@ impl Db {
         user_facts::delete_by_key(&self.pool, peer_id, key).await
     }
 
+    /// The `forget` tool's delete: refuses to erase a fact that the same
+    /// turn's `remember` just saved (see `user_facts::forget_unless_saved_in_turn`).
+    pub async fn forget_user_fact(
+        &self,
+        peer_id: &str,
+        key: &str,
+        turn_msg_id: Option<&str>,
+    ) -> Result<user_facts::Forget> {
+        user_facts::forget_unless_saved_in_turn(&self.pool, peer_id, key, turn_msg_id).await
+    }
+
     pub async fn clear_user_facts(&self, peer_id: &str) -> Result<u64> {
         user_facts::clear_all(&self.pool, peer_id).await
     }

@@ -434,11 +434,23 @@ pub async fn execute(name: &str, args_json: &str, runtime: &ToolRuntime) -> Resu
                 .peer_id
                 .as_deref()
                 .ok_or_else(|| anyhow!("memory tools require peer_id"))?;
-            let deleted = db.delete_user_fact_by_key(peer, key).await?;
-            if deleted == 0 {
-                Ok(format!("I had nothing stored under '{}'.", key))
-            } else {
-                Ok(format!("Forgotten: {}.", key))
+            use crate::db::user_facts::Forget;
+            match db
+                .forget_user_fact(peer, key, runtime.source_msg_id.as_deref())
+                .await?
+            {
+                Forget::NothingStored => Ok(format!("I had nothing stored under '{}'.", key)),
+                Forget::Deleted => Ok(format!("Forgotten: {}.", key)),
+                // The model saved this very fact a moment ago under another
+                // spelling and is now "cleaning up the old key". Tell it the
+                // truth, so its reply doesn't claim a deletion that did not
+                // happen and doesn't mourn a value that is still there.
+                Forget::KeptSavedThisTurn { key: stored, value } => Ok(format!(
+                    "Kept, not deleted: '{key}' is the same fact you just saved in this reply \
+                     ({stored} = {value}) — keys match whatever their capitals, spaces or \
+                     hyphens. It now holds the new value. To change a fact, just call remember \
+                     again with the new value; never forget the old spelling first."
+                )),
             }
         }
         "image_search" => {
@@ -638,7 +650,7 @@ fn forget_def() -> ToolDef {
             "type": "function",
             "function": {
                 "name": "forget",
-                "description": "Delete a previously-saved fact identified by its `key`. Use when the user explicitly asks you to forget something they told you before. If you're unsure which key to forget, ask the user — listing keys you can see in your system context is fine.",
+                "description": "Delete a previously-saved fact identified by its `key`. Use when the user explicitly asks you to forget something they told you before. If you're unsure which key to forget, ask the user — listing keys you can see in your system context is fine. Never use it to CHANGE a fact: to change one, call remember again with the new value (a differently spelled key is the same fact).",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -983,13 +995,50 @@ mod reminder_tool_tests {
         assert_eq!(facts[0].key, "coffee_order");
         assert_eq!(facts[0].value, "espresso", "the last remember overwrites");
 
-        // forget with a spelling that matches none of the writes verbatim.
-        let out = execute("forget", r#"{"key":"Coffee  Order"}"#, &rt).await.unwrap();
+        // forget with a spelling that matches none of the writes verbatim —
+        // from a LATER turn: a fact saved in this turn survives a forget in
+        // the same turn (see the test below).
+        let later = rt.clone().with_source_msg("msg-2");
+        let out = execute("forget", r#"{"key":"Coffee  Order"}"#, &later).await.unwrap();
         assert!(out.starts_with("Forgotten:"), "{out}");
         assert!(
             db.list_user_facts("ALICE").await.unwrap().is_empty(),
             "forget must clear the row whichever spelling it is handed"
         );
+    }
+
+    /// 2026-10-02, found in the 0.2.142 release smoke: on the GLM models,
+    /// "update that memory, using this other spelling of the key" made the
+    /// model call `remember` (new spelling) and `forget` (old spelling) in
+    /// the SAME round. Both spellings are one stored row, so the forget
+    /// erased the value `remember` had just written — and the reply said
+    /// "Done". A fact saved during this turn must survive a forget issued
+    /// in the same turn; a LATER turn may still forget it.
+    #[tokio::test]
+    async fn forgetting_the_old_spelling_in_the_same_turn_keeps_the_new_value() {
+        let rt = runtime().await; // this turn is msg-1
+        let db = rt.db.clone().unwrap();
+
+        // An earlier turn (msg-0) saved the fact.
+        let earlier = rt.clone().with_source_msg("msg-0");
+        execute("remember", r#"{"key":"Favorite Color","value":"blue"}"#, &earlier).await.unwrap();
+
+        // This turn: the model "renames" the key — saves the new spelling,
+        // then forgets the old one.
+        execute("remember", r#"{"key":"favorite-color","value":"green"}"#, &rt).await.unwrap();
+        let out = execute("forget", r#"{"key":"Favorite Color"}"#, &rt).await.unwrap();
+        assert!(!out.starts_with("Forgotten"), "must not claim it deleted the new value: {out}");
+        assert!(out.contains("remember"), "the model is told how to change a fact: {out}");
+
+        let facts = db.list_user_facts("ALICE").await.unwrap();
+        assert_eq!(facts.len(), 1, "one fact, got {facts:?}");
+        assert_eq!(facts[0].value, "green", "the new value must survive");
+
+        // A later turn (msg-2) asking to forget it is honoured.
+        let later = rt.clone().with_source_msg("msg-2");
+        let out = execute("forget", r#"{"key":"favorite color"}"#, &later).await.unwrap();
+        assert!(out.starts_with("Forgotten:"), "{out}");
+        assert!(db.list_user_facts("ALICE").await.unwrap().is_empty());
     }
 
     #[tokio::test]
