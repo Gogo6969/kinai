@@ -5,6 +5,16 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.142] — 2026-10-02
+
+### Fixed
+
+- **Settings → Voice replies no longer freezes.** On a Mac whose voice list
+  names the same voice twice, the card could stop half-way: the English voice
+  box stayed empty, the German box said "(not installed)", and "Refreshing…"
+  spun forever. Each voice is now listed once, so the English and German
+  dropdowns fill in and the refresh finishes.
+
 ## [0.2.141] — 2026-09-27
 
 ### Added
