@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-09-28T01:38:19+00:00",
-  "version": "0.2.141",
+  "generated_at": "2026-10-02T20:24:16+00:00",
+  "version": "0.2.142",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 390,
-    "head": "6c43741"
+    "commits": 393,
+    "head": "268085f"
   },
   "totals": {
     "rust_files": 70,
-    "rust_lines": 36248,
+    "rust_lines": 36284,
     "frontend_files": 38,
-    "frontend_lines": 14668,
-    "unit_tests": 401,
+    "frontend_lines": 14685,
+    "unit_tests": 402,
     "integration_test_files": 20,
-    "releases": 133,
-    "tags": 128
+    "releases": 134,
+    "tags": 129
   },
   "areas": [
     {
@@ -542,9 +542,9 @@
     {
       "path": "src/tts.rs",
       "area": "media",
-      "lines": 427,
+      "lines": 463,
       "doc": "Local text-to-speech for voice replies.",
-      "tests": 6
+      "tests": 7
     },
     {
       "path": "src/update_sync.rs",
@@ -662,7 +662,7 @@
     {
       "path": "frontend/src/lib/dev-tauri-mock.ts",
       "kind": "lib",
-      "lines": 569,
+      "lines": 580,
       "doc": "DEV-ONLY Tauri IPC mock. When the frontend runs in a plain browser (`pnpm dev` + localhost:1420, no Tauri shell), `window.__TAURI_INTERNALS__` doesn't exist and every invoke() rejects — the UI is untestable outside the app. This module installs a minimal in-memory backend so the whole UI (most importantly the /setup wizard) can be driven end-to-end in a browser: config mutations persist for the se"
     },
     {
@@ -782,7 +782,7 @@
     {
       "path": "frontend/src/routes/settings/+page.svelte",
       "kind": "route",
-      "lines": 2369,
+      "lines": 2375,
       "doc": "Fast model — the existing single slot. Reachable as `/fast` once the deep slot is also configured; the default routing target for plain (non-slash) messages."
     },
     {
@@ -1258,6 +1258,18 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.142",
+      "date": "2026-10-02",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "Settings → Voice replies no longer freezes.",
+            "detail": "On a Mac whose voice list names the same voice twice, the card could stop half-way: the English voice box stayed empty, the German box said \"(not installed)\", and \"Refreshing…\" spun forever. Each voice is now listed once, so the English and German dropdowns fill in and the refresh finishes."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.141",
       "date": "2026-09-27",
@@ -3959,6 +3971,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.142",
+      "date": "2026-10-02"
+    },
     {
       "tag": "v0.2.141",
       "date": "2026-09-27"
