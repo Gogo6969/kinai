@@ -5,6 +5,29 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.144] — 2026-10-07
+
+### Fixed
+
+- **"What does this video say?" works again for videos with automatic
+  captions.** Many YouTube videos only have the captions YouTube made
+  itself, and the transcript service asked YouTube for the wrong copy of
+  them. YouTube refused that copy every time, so KinAI said it couldn't
+  read the video right now, and asking again later never helped. The
+  service now reads the original captions first and only says YouTube is
+  busy when no captions came back at all. If your household runs the
+  transcript service, copy the new `services/transcriptd.py` to it and
+  restart it; the app itself needs nothing.
+
+### Security
+
+- **Security updates for how answers are shown and how KinAI connects.**
+  The parts that clean up answers before they appear (DOMPurify), draw
+  math (KaTeX) and make KinAI's secure connections (rustls) are updated,
+  along with three build tools, to versions that close published security
+  advisories. KinAI did not use DOMPurify in the affected way, and math
+  looks exactly as before.
+
 ## [0.2.143] — 2026-10-02
 
 ### Fixed
