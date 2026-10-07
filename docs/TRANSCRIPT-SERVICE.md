@@ -98,6 +98,16 @@ Then paste `http://192.168.1.210:8099` into Settings → Tools.
   ones fail until `yt-dlp` is updated (`uv tool upgrade yt-dlp`). This is
   the standing cost of the feature and was accepted knowingly.
 - **YouTube only.** Other sites need a host added to both allowlists.
+- **Never ask for the translated `en` track alone.** A video with only
+  auto-captions lists `en-orig` (what the speech recogniser heard) and
+  `en` (that track run through YouTube's translator, English to
+  English). YouTube refuses the translated one with 429 every time, so a
+  service asking for `en` reports "rate limited" for a video that will
+  never work. The service asks for `en-orig` first, lets one refused
+  track fail (`--ignore-errors`, which is why `--no-warnings` is off),
+  and only says `rate_limited` when no caption file arrived at all.
+  Captions the uploader wrote still win over `en-orig`. Found
+  2026-10-07, when an auto-captioned video failed this way.
 
 ## When something goes wrong
 
@@ -111,4 +121,9 @@ outage by two days. **If you add a failure message, add it there too.**
 ```bash
 sudo systemctl status kinai-transcript
 sudo journalctl -u kinai-transcript -n 50
+python3 services/test_transcriptd.py        # fake yt-dlp, no network
 ```
+
+A "rate limited" that never lifts on one video: run the same `yt-dlp`
+by hand with `--list-subs` and fetch each English track on its own. If
+only one track is refused, it is the track choice, not the IP.

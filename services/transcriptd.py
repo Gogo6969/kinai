@@ -76,22 +76,42 @@ def vtt_to_text(vtt: str) -> str:
     return " ".join(out)[:MAX_TEXT]
 
 
+def pick_captions(vid: str, manual: set[str]) -> str | None:
+    """The best caption file yt-dlp wrote for this video, or None.
+
+    Captions the uploader wrote (`manual`, the languages in yt-dlp's
+    `subtitles`) beat en-orig, the speech recogniser's own track, which
+    beats anything else that matched (en-GB, en-US, ...)."""
+    prefix = f".tmp-{vid}."
+    langs = sorted(f[len(prefix):-len(".vtt")] for f in os.listdir(CACHE)
+                   if f.startswith(prefix) and f.endswith(".vtt"))
+    if not langs:
+        return None
+    best = min(langs, key=lambda lang: (lang not in manual, lang != "en-orig"))
+    return os.path.join(CACHE, f"{prefix}{best}.vtt")
+
+
 def fetch(url: str, vid: str) -> dict:
-    """Run yt-dlp for metadata + auto-captions. Raises RuntimeError(kind, msg)."""
+    """Run yt-dlp for metadata + captions. Raises RuntimeError(kind, msg)."""
     tmp = os.path.join(CACHE, f".tmp-{vid}")
+    # en-orig first. A video with only auto-captions lists two English
+    # tracks: en-orig, what the speech recogniser heard, and en, that same
+    # track run through YouTube's translator (English to English). YouTube
+    # answers the translated one with 429 every time while en-orig
+    # downloads fine, so asking for en alone looked like a rate limit that
+    # never lifted. --ignore-errors lets one refused track fail without
+    # losing the others; it turns that failure into a WARNING, which is
+    # why --no-warnings must stay off or a real 429 would read as "no
+    # captions".
     cmd = [
-        YTDLP, "--skip-download", "--no-playlist", "--no-warnings",
-        "--write-auto-subs", "--write-subs", "--sub-langs", "en.*,en",
+        YTDLP, "--skip-download", "--no-playlist", "--ignore-errors",
+        "--write-auto-subs", "--write-subs", "--sub-langs", "en-orig,en.*,en",
         "--sub-format", "vtt", "--print-json", "-o", tmp + ".%(ext)s", url,
     ]
     try:
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=FETCH_TIMEOUT)
     except subprocess.TimeoutExpired:
         raise RuntimeError("failed", f"the transcript service timed out after {FETCH_TIMEOUT}s")
-    err = (p.stderr or "").lower()
-    if "429" in err or "too many requests" in err:
-        raise RuntimeError("rate_limited",
-                           "YouTube is rate-limiting transcript downloads right now; try again in a few minutes")
     meta = {}
     for line in (p.stdout or "").splitlines():
         if line.startswith("{"):
@@ -100,19 +120,25 @@ def fetch(url: str, vid: str) -> dict:
                 break
             except json.JSONDecodeError:
                 pass
-    # yt-dlp names the file <tmp>.<lang>.vtt; take the first match.
-    vtt_path = next((os.path.join(CACHE, f) for f in sorted(os.listdir(CACHE))
-                     if f.startswith(f".tmp-{vid}") and f.endswith(".vtt")), None)
-    if not vtt_path:
-        if p.returncode != 0:
-            raise RuntimeError("failed", (p.stderr or "yt-dlp failed").strip().splitlines()[-1][:300])
-        raise RuntimeError("no_captions", "this video has no captions available")
     try:
+        # A file on disk wins over anything in stderr: a 429 on one track
+        # says nothing about the track that did arrive.
+        vtt_path = pick_captions(vid, set(meta.get("subtitles") or {}))
+        if not vtt_path:
+            err = (p.stderr or "").lower()
+            if "429" in err or "too many requests" in err:
+                raise RuntimeError("rate_limited",
+                                   "YouTube is rate-limiting transcript downloads right now; try again in a few minutes")
+            if p.returncode != 0:
+                lines = (p.stderr or "").strip().splitlines()
+                errors = [l for l in lines if l.startswith("ERROR:")]
+                raise RuntimeError("failed", (errors or lines or ["yt-dlp failed"])[-1][:300])
+            raise RuntimeError("no_captions", "this video has no captions available")
         with open(vtt_path, encoding="utf-8", errors="replace") as fh:
             text = vtt_to_text(fh.read())
     finally:
         for f in os.listdir(CACHE):
-            if f.startswith(f".tmp-{vid}"):
+            if f.startswith(f".tmp-{vid}."):
                 try:
                     os.remove(os.path.join(CACHE, f))
                 except OSError:
