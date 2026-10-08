@@ -65,7 +65,7 @@ function defaultConfig() {
     host: { bind_addr: '0.0.0.0', port: 4847, family_name: 'Our Family', mdns_enabled: true, rate_limit_rpm: 60 },
     client: { host_url: null, host_token: null, host_label: null, display_name: 'You', pinned_hosts: [] },
     overlay: { hotkey: 'CmdOrCtrl+Space', always_on_top: true, font_size: 14, auto_close_on_blur: true },
-    tools: { web_search: true, x_search: true, calculator: true, datetime: true, image_search: true, search_engine: 'duckduckgo', search_api_key: null, searxng_url: 'http://127.0.0.1:8888', search_fallback_searxng: true },
+    tools: { web_search: true, x_search: true, calculator: true, datetime: true, image_search: true, search_engine: 'duckduckgo', search_api_key: null, searxng_url: 'http://127.0.0.1:8888', search_fallback_searxng: true, transcript_url: '' },
     vision: {
       enabled: false,
       primary: { label: '', base_url: '', model: '', api_key: null },
@@ -209,6 +209,16 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
   let changelogPayload: any = { version: 'dev', markdown: null, should_show: false };
   if (w.__mockPreset?.changelog) changelogPayload = w.__mockPreset.changelog;
 
+  // `?transcripts=installed|unsupported` does the same from the URL, for
+  // the browser pane where no init script can run first.
+  const transcriptsUrl = new URLSearchParams(location.search).get('transcripts');
+  let transcriptsState: { supported: boolean; installed: boolean; version: string | null } = {
+    supported: transcriptsUrl !== 'unsupported',
+    installed: transcriptsUrl === 'installed',
+    version: transcriptsUrl === 'installed' ? '2026.08.19' : null,
+    ...(w.__mockPreset?.transcripts ?? {}),
+  };
+
   const handlers: Record<string, (args: any) => any> = {
     get_config: () => cfg,
     runtime_stats: () => stats,
@@ -296,6 +306,20 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
       { id: 'medium-q5_0', label: 'High accuracy (bigger, slower)', size_mb: 574, downloaded: false },
     ] }),
     download_stt_model: () => { cfg.stt.enabled = true; return null; },
+    // Built-in video transcripts. `__mockPreset.transcripts` can start them
+    // installed or unsupported; `__mockTranscriptsFail` makes the install
+    // throw that message, as a checksum mismatch or a refused sandbox would.
+    transcripts_status: () => ({ ...transcriptsState }),
+    transcripts_install: async () => {
+      await new Promise((r) => setTimeout(r, 1200));
+      if (w.__mockTranscriptsFail) throw new Error(w.__mockTranscriptsFail);
+      transcriptsState = { ...transcriptsState, installed: true, version: '2026.08.19' };
+      return { ...transcriptsState };
+    },
+    transcripts_remove: () => {
+      transcriptsState = { ...transcriptsState, installed: false, version: null };
+      return { ...transcriptsState };
+    },
     set_stt_config: (a) => { Object.assign(cfg.stt, a.stt); return cfg; },
     set_tts_config: (a) => { Object.assign(cfg.tts, a.tts); return cfg; },
     detect_backends: () => [

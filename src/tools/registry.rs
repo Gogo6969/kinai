@@ -22,7 +22,8 @@ pub struct ToolRuntime {
     pub searxng_url: String,
     /// Use SearXNG when the paid engine is permanently unavailable.
     pub search_fallback_searxng: bool,
-    /// Base URL of the family's transcript service; empty = the
+    /// Base URL of the family's transcript service; empty = use the
+    /// host's built-in transcripts if they are set up, else the
     /// `video_transcript` tool is not offered at all.
     pub transcript_url: String,
     /// DB handle for memory tools (remember, forget). Set only when the
@@ -101,9 +102,10 @@ pub fn enabled(settings: &ToolSettings) -> Vec<ToolDef> {
         // linked is no more of a network disclosure than searching for it.
         out.push(fetch_page_def());
     }
-    // Only offered when the household actually runs the service. A tool
-    // the model can call but that can never succeed is worse than none.
-    if !settings.transcript_url.trim().is_empty() {
+    // Only offered when transcripts can actually be fetched: a household
+    // service is configured, or the host's built-in one is installed. A
+    // tool the model can call but that can never succeed is worse than none.
+    if !settings.transcript_url.trim().is_empty() || crate::transcripts::available() {
         out.push(video_transcript_def());
     }
     if settings.x_search {

@@ -131,6 +131,16 @@ export interface SttStatus {
   models: SttModelStatus[];
 }
 
+/** Built-in video transcripts on the host Mac (yt-dlp in macOS's
+ *  sandbox). Installed means on — there is no separate switch. */
+export interface TranscriptsStatus {
+  /** macOS with its sandbox: the only place they can run. */
+  supported: boolean;
+  installed: boolean;
+  /** yt-dlp version recorded at install or the last daily update. */
+  version: string | null;
+}
+
 /** Telegram bot integration — host-side. Empty bot_token means
  *  the feature is off (no long-poll loop, no UI for clients). */
 export interface TelegramConfig {
@@ -503,6 +513,9 @@ export const api = {
   ttsSupported: () => invoke<boolean>('tts_supported'),
   setSttConfig: (stt: SttConfig) => invoke<AppConfig>('set_stt_config', { stt }),
   sttStatus: () => invoke<SttStatus>('stt_status'),
+  transcriptsStatus: () => invoke<TranscriptsStatus>('transcripts_status'),
+  transcriptsInstall: () => invoke<TranscriptsStatus>('transcripts_install'),
+  transcriptsRemove: () => invoke<TranscriptsStatus>('transcripts_remove'),
   downloadSttModel: (modelId: string) =>
     invoke<AppConfig>('download_stt_model', { args: { model_id: modelId } }),
   listTtsVoices: () => invoke<TtsVoice[]>('list_tts_voices'),

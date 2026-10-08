@@ -10,6 +10,7 @@
     type Theme,
     type ToolSettings,
     type SttStatus,
+    type TranscriptsStatus,
     type TtsConfig,
     type TtsVoice,
     type VisionEndpoint,
@@ -223,6 +224,44 @@
       stt = await api.sttStatus();
     } catch (e) {
       console.warn('sttStatus failed', e);
+    }
+  }
+
+  // Built-in video transcripts — yt-dlp in macOS's sandbox on the host.
+  // Installed means on, so these buttons never touch the Save form.
+  let transcripts = $state<TranscriptsStatus | null>(null);
+  let transcriptsBusy = $state<'install' | 'remove' | null>(null);
+  let transcriptsError = $state('');
+
+  async function refreshTranscripts() {
+    try {
+      transcripts = await api.transcriptsStatus();
+    } catch (e) {
+      console.warn('transcriptsStatus failed', e);
+    }
+  }
+
+  async function setUpTranscripts() {
+    transcriptsError = '';
+    transcriptsBusy = 'install';
+    try {
+      transcripts = await api.transcriptsInstall();
+    } catch (e) {
+      transcriptsError = String(e);
+    } finally {
+      transcriptsBusy = null;
+    }
+  }
+
+  async function removeTranscripts() {
+    transcriptsError = '';
+    transcriptsBusy = 'remove';
+    try {
+      transcripts = await api.transcriptsRemove();
+    } catch (e) {
+      transcriptsError = String(e);
+    } finally {
+      transcriptsBusy = null;
     }
   }
 
@@ -583,6 +622,7 @@
     if (app.config?.mode === 'host') {
       void refreshTtsVoices();
       void refreshStt();
+      void refreshTranscripts();
     } else if (app.ttsSupported) {
       void refreshTtsVoices();
     }
@@ -1468,21 +1508,73 @@
             </p>
           {/if}
         </label>
-        <label class="block">
-          <span class="text-sm text-white/70">Video transcript service</span>
-          <input
-            class="kin-field font-mono w-full mt-1"
-            bind:value={tools.transcript_url}
-            placeholder="http://192.168.1.210:8099 (leave empty to disable)"
-            autocomplete="off"
-            spellcheck="false"
-          />
+        <div class="block" data-testid="video-transcripts">
+          <span class="text-sm text-white/70">Video transcripts</span>
           <p class="text-xs text-white/40 mt-1">
-            Lets KinAI read what a YouTube video says, from its captions. Runs on
-            your own hardware — see docs/TRANSCRIPT-SERVICE.md to set one up.
-            Leave empty and KinAI simply won't offer it.
+            Lets KinAI read what a YouTube video says, from its captions.
           </p>
-        </label>
+          {#if isHost && transcripts}
+            {#if !transcripts.supported}
+              <p class="text-xs text-red-300/80 mt-2">
+                Built-in transcripts need a Mac host: they run inside macOS's sandbox.
+              </p>
+            {:else if transcripts.installed}
+              <div class="flex items-center gap-2 mt-2">
+                <span class="text-xs text-teal-300 flex-1">
+                  ✓ Built in{transcripts.version ? ` · yt-dlp ${transcripts.version}` : ''}
+                </span>
+                <button
+                  type="button"
+                  class="kin-btn shrink-0"
+                  disabled={transcriptsBusy !== null}
+                  onclick={removeTranscripts}
+                >
+                  {transcriptsBusy === 'remove' ? 'Removing…' : 'Remove'}
+                </button>
+              </div>
+              {#if (tools.transcript_url ?? '').trim()}
+                <p class="text-xs text-white/40 mt-1">
+                  Your own service below is used while its address is filled in.
+                </p>
+              {/if}
+            {:else}
+              <button
+                type="button"
+                class="kin-btn-primary mt-2"
+                disabled={transcriptsBusy !== null}
+                onclick={setUpTranscripts}
+              >
+                {#if transcriptsBusy === 'install'}
+                  <Loader2 size={14} class="animate-spin" /> Setting up…
+                {:else}
+                  Set up video transcripts
+                {/if}
+              </button>
+              <p class="text-xs text-white/40 mt-1">
+                Downloads the official yt-dlp (about 37 MB), checks it against its
+                published checksum, and runs it in a macOS sandbox that can't see
+                your family's chats. It keeps itself up to date.
+              </p>
+            {/if}
+            {#if transcriptsError}
+              <p class="text-xs text-red-300 mt-1">{transcriptsError}</p>
+            {/if}
+          {/if}
+          <label class="block mt-3">
+            <span class="text-xs text-white/50">Or your own transcript service (optional)</span>
+            <input
+              class="kin-field font-mono w-full mt-1"
+              bind:value={tools.transcript_url}
+              placeholder="http://192.168.1.210:8099"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </label>
+          <p class="text-xs text-white/40 mt-1">
+            For a household that runs <code>services/transcriptd.py</code> on its own
+            server (see docs/TRANSCRIPT-SERVICE.md). Leave empty to use the built-in one.
+          </p>
+        </div>
         {#if tools.search_engine === 'searxng'}
           <label class="block">
             <span class="text-sm text-white/70">SearXNG address</span>

@@ -1,23 +1,54 @@
-# Video transcript service
+# Video transcripts
 
 Lets KinAI answer "watch this" for a YouTube link by reading the video's
-captions. Optional: leave **Settings → Tools → Video transcript service**
-empty and KinAI never offers the tool at all.
+captions. There are two ways to turn it on; with neither, KinAI simply
+doesn't offer it.
 
-## Why it is a separate service
+1. **Built in (any host Mac) — the usual way.** Settings → Tools →
+   **Set up video transcripts**. Nothing else to install.
+2. **Your own transcript service** (a Linux box on your network) — the
+   rest of this document. Fill in its address under Settings → Tools and
+   it is used instead of the built-in one.
 
-KinAI does not run `yt-dlp` itself, for two reasons.
+## Built in
 
-`yt-dlp` is in a permanent arms race with YouTube and updates constantly;
-bundling it into a notarized desktop app means shipping a Python runtime
-and re-releasing whenever YouTube changes. And KinAI's host process holds
-every family member's conversations — it should not be executing
-third-party code that takes untrusted URLs.
+The button downloads the official standalone yt-dlp for macOS
+(`yt-dlp_macos`, a universal binary that needs no Python), checks it
+against the `SHA2-256SUMS` file of the same release, and proves it starts
+before calling it installed. It lives in
+`~/Library/Application Support/KinAI/yt-dlp/`, deliberately outside
+`~/.kinai`. Installed means on: there is no separate switch. **Remove**
+deletes it again.
 
-So the capability lives where the family already runs services, and KinAI
-calls it the same way it calls SearXNG.
+**The separation.** KinAI's host holds every family member's
+conversations, and yt-dlp is third-party code handed URLs that ultimately
+come from chat. So yt-dlp never runs inside KinAI, and never runs plainly
+either: every call goes through macOS's `sandbox-exec` with a profile that
+cannot read or write `~/.kinai` (conversations, keys, config), `~/.ssh` or
+the keychains, and cannot write login items or `KinAI.app`. It keeps the
+network (it has to reach YouTube), the temp folder it unpacks into, and its
+own folder (it updates itself there). If the sandbox is missing, nothing
+runs. A unit test runs the real sandbox against a fake `.kinai` on every
+macOS build.
 
-## What it is
+**Keeping up with YouTube.** yt-dlp loses to YouTube within weeks on a
+stale build, so the host runs `yt-dlp -U` once a day while it is
+installed (its own updater verifies the release). Transcripts are cached
+for good in `~/.kinai/transcripts`; a repeat question never touches
+YouTube. The caption logic, including the `en-orig` trap below, is the
+same as the service's (`src/transcripts.rs`).
+
+## Your own service: why it is a separate machine
+
+The original design ran `yt-dlp` only on a household server, for two
+reasons that the built-in path now answers differently: bundling it into
+a notarized app would mean re-releasing whenever YouTube changes (the
+built-in path downloads and self-updates the binary instead), and the
+host should not run third-party code that takes untrusted URLs (the
+built-in path runs it in the sandbox described above). A separate machine
+is still the strongest isolation, so the service stays supported.
+
+## What the service is
 
 `transcriptd.py` — one file, Python standard library only, no
 dependencies beyond `yt-dlp` itself.
@@ -57,6 +88,11 @@ There are therefore two locks, and both must hold:
    making the call, because the *model* chooses this tool's argument and a
    hostile page can influence what the model asks for.
 
+The built-in path has the same two locks: the tool's check above, then
+`src/transcripts.rs` extracts the video id against the same host list and
+hands yt-dlp a URL rebuilt from that id (after `--`), never the one the
+model passed.
+
 Without them, `video_transcript("http://192.168.1.210:8081/v1/models")`
 would read a model server through a component built to be helpful. Do not
 widen either list casually; if you add a host, add it in both places and
@@ -95,8 +131,9 @@ Then paste `http://192.168.1.210:8099` into Settings → Tools.
 - **Not every video has captions.** The tool reports that distinctly
   rather than guessing from the title.
 - **YouTube changes break `yt-dlp`.** Cached videos keep working; new
-  ones fail until `yt-dlp` is updated (`uv tool upgrade yt-dlp`). This is
-  the standing cost of the feature and was accepted knowingly.
+  ones fail until `yt-dlp` is updated. The built-in one updates itself
+  daily; on your own service run `uv tool upgrade yt-dlp`. This is the
+  standing cost of the feature and was accepted knowingly.
 - **YouTube only.** Other sites need a host added to both allowlists.
 - **Never ask for the translated `en` track alone.** A video with only
   auto-captions lists `en-orig` (what the speech recogniser heard) and

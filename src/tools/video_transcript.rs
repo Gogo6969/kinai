@@ -1,8 +1,11 @@
-//! Read what a video actually says, via the family's own transcript service.
+//! Read what a video actually says, from its captions.
 //!
-//! KinAI does not run `yt-dlp` itself. A small service on the household's
-//! own hardware wraps it and exposes one endpoint; this tool calls that.
-//! Nothing leaves the house and KinAI never executes third-party code.
+//! Two ways to get them, both on the family's own hardware. A household
+//! that runs its own transcript service (`services/transcriptd.py`, set in
+//! Settings → Tools) is used first. Otherwise the host's built-in one
+//! (`crate::transcripts`): the official yt-dlp, run inside a macOS sandbox
+//! that cannot see the family's data. Either way the host process never
+//! loads third-party code, and the failures read the same.
 //!
 //! **Why the host allowlist below is duplicated here.** `fetch_page`
 //! refuses LAN and loopback addresses precisely so a web page can never
@@ -18,8 +21,9 @@ use std::time::Duration;
 
 /// Video hosts the tool will pass on. Matched against the parsed host,
 /// so `youtube.com.evil.tld` does not slip through and neither does a
-/// bare IP address.
-const ALLOWED_HOSTS: &[&str] = &[
+/// bare IP address. The built-in path checks the same list again when it
+/// extracts the video id.
+pub(crate) const ALLOWED_HOSTS: &[&str] = &[
     "youtube.com",
     "www.youtube.com",
     "m.youtube.com",
@@ -60,13 +64,23 @@ fn host_allowed(url: &str) -> bool {
         .is_some_and(|h| ALLOWED_HOSTS.contains(&h.as_str()))
 }
 
-/// Fetch a video's transcript. `service` is the host-configured base URL.
-pub async fn fetch(service: &str, url: &str) -> Result<String> {
-    if service.trim().is_empty() {
-        return Err(anyhow!(
-            "no transcript service is configured — the host can set one under Settings → Tools"
-        ));
+/// The sentence for each failure kind, shared by the household service
+/// and the built-in path so the model sees one vocabulary.
+fn kind_error(kind: Option<&str>) -> anyhow::Error {
+    match kind {
+        Some("no_captions") => anyhow!("{NO_CAPTIONS}"),
+        Some("rate_limited") => anyhow!("{RATE_LIMITED}"),
+        Some("unsupported") => anyhow!(
+            "{}: {UNSUPPORTED}",
+            crate::tools::fetch_page::URL_REFUSED
+        ),
+        _ => anyhow!("{COULD_NOT_READ}"),
     }
+}
+
+/// Fetch a video's transcript. `service` is the host-configured base URL
+/// of a household transcript service; empty means the built-in one.
+pub async fn fetch(service: &str, url: &str) -> Result<String> {
     if !host_allowed(url) {
         // Permanent for this URL: the pipeline marks URL_REFUSED errors
         // as "don't retry", so the model stops offering to try again.
@@ -75,7 +89,27 @@ pub async fn fetch(service: &str, url: &str) -> Result<String> {
             crate::tools::fetch_page::URL_REFUSED
         ));
     }
+    if !service.trim().is_empty() {
+        return fetch_from_service(service, url).await;
+    }
+    if !crate::transcripts::available() {
+        return Err(anyhow!(
+            "no transcript service is set up — the host can turn on video transcripts under Settings → Tools"
+        ));
+    }
+    match crate::transcripts::fetch(url).await {
+        Ok(t) => Ok(present(&t.title, t.duration, &t.text)),
+        Err(e) => {
+            // The kind goes to the log and becomes the model's sentence;
+            // yt-dlp's own words stay at debug level.
+            tracing::warn!("built-in transcript failed: {}", e.kind);
+            tracing::debug!("built-in transcript detail: {e}");
+            Err(kind_error(Some(e.kind)))
+        }
+    }
+}
 
+async fn fetch_from_service(service: &str, url: &str) -> Result<String> {
     let endpoint = format!("{}/transcript", service.trim_end_matches('/'));
     let resp = reqwest::Client::builder()
         .timeout(TIMEOUT)
@@ -103,15 +137,7 @@ pub async fn fetch(service: &str, url: &str) -> Result<String> {
         // registered in `force_search::OUTAGE_CLAIMS` — otherwise the
         // sentence survives in the thread and KinAI keeps repeating
         // "I can't get transcripts" long after the service recovers.
-        return Err(match body.get("kind").and_then(|v| v.as_str()) {
-            Some("no_captions") => anyhow!("{NO_CAPTIONS}"),
-            Some("rate_limited") => anyhow!("{RATE_LIMITED}"),
-            Some("unsupported") => anyhow!(
-                "{}: {UNSUPPORTED}",
-                crate::tools::fetch_page::URL_REFUSED
-            ),
-            _ => anyhow!("{COULD_NOT_READ}"),
-        });
+        return Err(kind_error(body.get("kind").and_then(|v| v.as_str())));
     }
 
     let text = body.get("text").and_then(|v| v.as_str()).unwrap_or_default();
@@ -120,7 +146,11 @@ pub async fn fetch(service: &str, url: &str) -> Result<String> {
     }
     let title = body.get("title").and_then(|v| v.as_str()).unwrap_or_default();
     let secs = body.get("duration").and_then(|v| v.as_u64()).unwrap_or(0);
+    Ok(present(title, secs, text))
+}
 
+/// What the model gets: a short header, then the transcript, capped.
+fn present(title: &str, secs: u64, text: &str) -> String {
     let mut head = String::new();
     if !title.is_empty() {
         head.push_str(&format!("Video: {title}\n"));
@@ -135,11 +165,11 @@ pub async fn fetch(service: &str, url: &str) -> Result<String> {
     let total = text.chars().count();
     if total > MAX_CHARS {
         let cut: String = text.chars().take(MAX_CHARS).collect();
-        Ok(format!(
+        format!(
             "{head}{cut}\n\n[transcript truncated — {total} characters total. Say so if the answer depends on the rest.]"
-        ))
+        )
     } else {
-        Ok(format!("{head}{text}"))
+        format!("{head}{text}")
     }
 }
 
@@ -181,8 +211,14 @@ mod tests {
 
     #[tokio::test]
     async fn an_unconfigured_service_says_so_instead_of_failing_obscurely() {
+        // On a Mac with the built-in transcripts installed this call would
+        // really fetch the video; that path has its own tests.
+        if crate::transcripts::available() {
+            return;
+        }
         let e = fetch("", "https://youtu.be/dQw4w9WgXcQ").await.unwrap_err();
-        assert!(e.to_string().contains("no transcript service is configured"), "got: {e}");
+        assert!(e.to_string().contains("no transcript service is set up"), "got: {e}");
+        assert!(e.to_string().contains("Settings → Tools"), "must say where to turn it on: {e}");
     }
 
     #[tokio::test]

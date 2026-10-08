@@ -576,6 +576,26 @@ pub async fn set_stt_config(
     Ok(new_cfg)
 }
 
+/// Settings → Tools: can built-in video transcripts run on this Mac, are
+/// they installed, and which yt-dlp.
+#[tauri::command]
+pub async fn transcripts_status() -> Result<crate::transcripts::Status> {
+    Ok(crate::transcripts::status())
+}
+
+/// The "Set up video transcripts" button: download the official yt-dlp,
+/// verify its checksum and prove it starts inside the sandbox. Installed
+/// means on, so there is no config to save afterwards.
+#[tauri::command]
+pub async fn transcripts_install() -> Result<crate::transcripts::Status> {
+    crate::transcripts::install().await.map_err(err)
+}
+
+#[tauri::command]
+pub async fn transcripts_remove() -> Result<crate::transcripts::Status> {
+    crate::transcripts::remove().await.map_err(err)
+}
+
 /// Settings UI snapshot: which models exist locally, which is selected,
 /// whether voice input is usable right now.
 #[tauri::command]

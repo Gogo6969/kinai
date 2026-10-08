@@ -116,6 +116,8 @@ on-ramp:
 9. From the chat sidebar, click **Manage family → + Invite**. You'll
    get a **6-character code** and a QR code — share one with each
    family member.
+10. Optional: **Settings → Tools → Set up video transcripts**, so KinAI
+    can read what a YouTube video says when someone shares a link.
 
 ## 🖥️ Mac client
 
@@ -265,6 +267,7 @@ When a thread exceeds 30 unsummarized messages, the oldest are folded into a lon
 | **Regenerate & edit-and-resend** — re-roll the last answer, or fix your question and re-run from there | ✅ |
 | **Streaming Telegram replies** — the bot live-edits its message as the model writes | ✅ |
 | **Image generation via ComfyUI** — `/pic` & `/picHQ` on every surface, with a "creating a picture…" progress note on Telegram | ✅ |
+| **📺 Video transcripts** — share a YouTube link and ask what it says. One click in Settings → Tools sets up the official yt-dlp inside a macOS sandbox that can't see your family's chats (or use [your own transcript service](docs/TRANSCRIPT-SERVICE.md)) | ✅ |
 | **🔊 Voice replies** — `/voice` makes KinAI speak: Telegram voice notes per family member, auto-read-aloud replies on the host Mac. Fully local (macOS speech synthesis) | ✅ |
 | System tray icon with **live status** (model, peers connected) | ✅ |
 | Customizable hotkey, theme, font size | ✅ |

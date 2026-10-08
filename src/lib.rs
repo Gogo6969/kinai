@@ -19,6 +19,7 @@ pub mod reminders;
 pub mod slash;
 pub mod telegram;
 pub mod tools;
+pub mod transcripts;
 pub mod tray;
 pub mod stt;
 pub mod tts;
@@ -409,6 +410,9 @@ pub fn run() {
             commands::set_tts_config,
             commands::tts_supported,
             commands::set_stt_config,
+            commands::transcripts_status,
+            commands::transcripts_install,
+            commands::transcripts_remove,
             commands::stt_status,
             commands::download_stt_model,
             commands::list_tts_voices,
@@ -489,6 +493,9 @@ pub fn run() {
                 // Telegram loop, and gated on Mode::Host per tick, so a
                 // machine that becomes the host later needs no relaunch.
                 reminders::spawn(st.clone(), app.handle().clone());
+                // Built-in video transcripts: keep yt-dlp current while it is
+                // installed (it loses to YouTube within weeks otherwise).
+                transcripts::spawn_daily_update();
 
                 // Window-on-launch policy:
                 //   * Manual launch (user double-clicked, dock click, etc.) →
