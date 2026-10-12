@@ -17,6 +17,7 @@ pub mod logsafe;
 pub mod network;
 pub mod reminders;
 pub mod slash;
+pub mod panic_log;
 pub mod telegram;
 pub mod tools;
 pub mod tray;
@@ -286,6 +287,8 @@ pub fn run() {
                     .with_writer(file_writer),
             )
             .init();
+        // From here on a panic in any task or thread leaves a line in the log.
+        panic_log::install();
     }
 
     // Secrets hygiene: everything under ~/.kinai is per-user private state —
