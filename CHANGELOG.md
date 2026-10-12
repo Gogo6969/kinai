@@ -5,6 +5,22 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.145] — 2026-10-12
+
+### Fixed
+
+- **Messages with a curly apostrophe, an umlaut or an emoji are no longer
+  lost.** A question like "What’s the weather?" typed on a phone or a Mac, or
+  a German one like "Was für ein Tag", could get no answer at all and leave no
+  trace: KinAI crashed on that one message before it had read it. Plain
+  messages kept working, so it looked as if one particular question was
+  broken. Every chat now answers them: Telegram, the app and family devices.
+
+### Changed
+
+- If a message handler ever crashes, the app log now says where it happened
+  (never what was typed), so it can no longer go unnoticed.
+
 ## [0.2.144] — 2026-10-07
 
 ### Fixed
