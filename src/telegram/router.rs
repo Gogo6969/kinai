@@ -1400,20 +1400,31 @@ mod photo_tests {
 /// `/newchat`. Case-insensitive; requires a whitespace/end boundary so
 /// `/newchattery` isn't mistaken for the command.
 fn strip_newchat(content: &str) -> Option<&str> {
-    const CMD: &str = "/newchat";
+    command_rest(content, "/newchat").map(str::trim_start)
+}
+
+/// If `content` starts with the slash command `cmd` as a whole word
+/// (case-insensitive, leading whitespace ignored), return everything after
+/// it, untrimmed. `cmd` must be ASCII.
+///
+/// Shared by `/newchat` and `/voice`, which both cut `cmd.len()` bytes off the
+/// front of EVERY incoming message. That cut must never be `split_at`:
+/// it panics when the byte falls inside a multi-byte character, and a curly
+/// apostrophe ("What\u{2019}s"), an umlaut or an emoji is exactly that. The panic
+/// killed the handler task before the message was stored — no answer, no log,
+/// no typing dots (2026-10-12). `str::get` returns `None` for such a cut, and
+/// text whose first bytes are not a whole-character prefix of an ASCII command
+/// cannot be that command.
+pub(crate) fn command_rest<'a>(content: &'a str, cmd: &str) -> Option<&'a str> {
+    debug_assert!(cmd.is_ascii());
     let t = content.trim_start();
-    if t.len() < CMD.len() {
+    let head = t.get(..cmd.len())?;
+    if !head.eq_ignore_ascii_case(cmd) {
         return None;
     }
-    let (head, rest) = t.split_at(CMD.len());
-    if !head.eq_ignore_ascii_case(CMD) {
-        return None;
-    }
-    if rest.is_empty() || rest.starts_with(char::is_whitespace) {
-        Some(rest.trim_start())
-    } else {
-        None
-    }
+    // `get` succeeded, so `cmd.len()` is a character boundary.
+    let rest = &t[cmd.len()..];
+    (rest.is_empty() || rest.starts_with(char::is_whitespace)).then_some(rest)
 }
 
 /// Outcome of a `/voice` command: the reply text plus the resulting
@@ -1516,20 +1527,7 @@ async fn transcribe_voice_message(
 /// "on", "off", or "" for the bare toggle), trimmed. Same boundary
 /// rules as `strip_newchat` so `/voicemail` isn't mistaken for it.
 pub(crate) fn strip_voice(content: &str) -> Option<&str> {
-    const CMD: &str = "/voice";
-    let t = content.trim_start();
-    if t.len() < CMD.len() {
-        return None;
-    }
-    let (head, rest) = t.split_at(CMD.len());
-    if !head.eq_ignore_ascii_case(CMD) {
-        return None;
-    }
-    if rest.is_empty() || rest.starts_with(char::is_whitespace) {
-        Some(rest.trim())
-    } else {
-        None
-    }
+    command_rest(content, "/voice").map(str::trim)
 }
 
 #[cfg(test)]
@@ -1564,6 +1562,84 @@ mod newchat_tests {
         assert_eq!(strip_newchat("/newchattery"), None);
         assert_eq!(strip_newchat("tell me about /newchat"), None);
         assert_eq!(strip_newchat("/new"), None);
+    }
+}
+
+/// 2026-10-12: a Telegram question typed on a phone or Mac ("What\u{2019}s a
+/// ...") got no answer at all, while "Hi" and "Test" were answered. Both
+/// command checks cut the first 6 or 8 bytes off the message with `split_at`,
+/// which PANICS when the cut falls inside a multi-byte character — and a curly
+/// apostrophe is three bytes. The handler task died before the message was
+/// even stored: no reply, no log line, no typing dots.
+#[cfg(test)]
+mod multibyte_message_tests {
+    use super::{strip_newchat, strip_voice};
+
+    /// The shapes of the messages that went missing, plus other everyday ones that
+    /// hit the same cut (6 bytes for /voice, 8 for /newchat). None of them is a command, so
+    /// both checks must say `None` instead of crashing.
+    const NOT_COMMANDS: &[&str] = &[
+        "What\u{2019}s a comet?",
+        "What\u{2019}s a",
+        "So here\u{2019}s the quote: What\u{2019}s a comet?",
+        "Why aren\u{2019}t the lights on?",
+        "Where\u{2019}s the nearest pharmacy?",
+        "That\u{2019}s odd",
+        "Was f\u{00FC}r ein Tag",
+        "Wie sch\u{00F6}n ist das",
+        "Hello \u{1F44B} there",
+        "Caf\u{00E9} opening hours?",
+        "\u{2019}\u{2019}\u{2019}\u{2019}\u{2019}",
+        "\u{1F600}\u{1F600}\u{1F600}",
+        "\u{65E5}\u{672C}\u{8A9E}\u{306E}\u{30C6}\u{30B9}\u{30C8}",
+        "   What\u{2019}s up?",
+    ];
+
+    #[test]
+    fn a_multibyte_character_across_the_cut_is_not_a_crash() {
+        for m in NOT_COMMANDS {
+            assert_eq!(strip_voice(m), None, "strip_voice({m:?})");
+            assert_eq!(strip_newchat(m), None, "strip_newchat({m:?})");
+        }
+    }
+
+    /// The fix must not change what a real command does, including when the
+    /// text AFTER the command is full of multi-byte characters.
+    #[test]
+    fn real_commands_still_work_with_unicode_after_them() {
+        assert_eq!(strip_newchat("/newchat What\u{2019}s new?"), Some("What\u{2019}s new?"));
+        assert_eq!(strip_newchat("  /NEWCHAT   Was f\u{00FC}r ein Tag?"), Some("Was f\u{00FC}r ein Tag?"));
+        assert_eq!(strip_voice("/voice \u{1F44D}"), Some("\u{1F44D}"));
+        assert_eq!(strip_voice("/VOICE on"), Some("on"));
+        // A command-shaped prefix glued to a multi-byte character is not the command.
+        assert_eq!(strip_newchat("/newchat\u{00E9}"), None);
+        assert_eq!(strip_voice("/voice\u{00E9}"), None);
+    }
+
+    /// Every message the two checks can see, cut at every position: none may panic.
+    #[test]
+    fn no_text_makes_either_check_panic() {
+        let alphabet = ["a", "/", " ", "\u{00E9}", "\u{2019}", "\u{1F44B}", "\u{65E5}", "n", "v"];
+        let mut texts = vec![String::new()];
+        for _ in 0..5 {
+            let mut next = Vec::new();
+            for t in &texts {
+                next.push(t.clone());
+                for a in alphabet {
+                    if t.len() < 16 {
+                        next.push(format!("{t}{a}"));
+                    }
+                }
+            }
+            texts = next;
+            texts.sort();
+            texts.dedup();
+        }
+        assert!(texts.len() > 5_000, "enumeration too small: {}", texts.len());
+        for t in &texts {
+            let _ = strip_voice(t);
+            let _ = strip_newchat(t);
+        }
     }
 }
 
