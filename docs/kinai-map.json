@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-10-08T01:17:39+00:00",
-  "version": "0.2.144",
+  "generated_at": "2026-10-12T13:22:07+00:00",
+  "version": "0.2.145",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 401,
-    "head": "eaddf74"
+    "commits": 405,
+    "head": "c035cf5"
   },
   "totals": {
-    "rust_files": 70,
-    "rust_lines": 36514,
+    "rust_files": 71,
+    "rust_lines": 36695,
     "frontend_files": 38,
     "frontend_lines": 14685,
-    "unit_tests": 408,
+    "unit_tests": 413,
     "integration_test_files": 20,
-    "releases": 136,
-    "tags": 131
+    "releases": 137,
+    "tags": 132
   },
   "areas": [
     {
@@ -262,7 +262,7 @@
     {
       "path": "src/lib.rs",
       "area": "entry",
-      "lines": 602,
+      "lines": 605,
       "doc": "KinAI library entrypoint — wires Tauri shell, Axum HTTP/WS server, tray, global hotkey, LLM client, and the never-lose-context pipeline.",
       "tests": 0
     },
@@ -372,6 +372,13 @@
       "tests": 13
     },
     {
+      "path": "src/panic_log.rs",
+      "area": "other",
+      "lines": 102,
+      "doc": "Put every crash in the app log — where it happened, never what was being processed.",
+      "tests": 2
+    },
+    {
       "path": "src/reminders/spec.rs",
       "area": "other",
       "lines": 796,
@@ -437,9 +444,9 @@
     {
       "path": "src/telegram/router.rs",
       "area": "telegram",
-      "lines": 1709,
+      "lines": 1785,
       "doc": "Route incoming Telegram updates into KinAI's chat pipeline.",
-      "tests": 13
+      "tests": 16
     },
     {
       "path": "src/tools/calculator.rs",
@@ -1258,6 +1265,24 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.145",
+      "date": "2026-10-12",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "Messages with a curly apostrophe, an umlaut or an emoji are no longer lost.",
+            "detail": "A question like \"What’s the weather?\" typed on a phone or a Mac, or a German one like \"Was für ein Tag\", could get no answer at all and leave no trace: KinAI crashed on that one message before it had read it. Plain messages kept working, so it looked as if one particular question was broken. Every chat now answers them: Telegram, the app and family devices."
+          }
+        ],
+        "Changed": [
+          {
+            "title": "If a message handler ever crashes, the app log now says where it happened (never what was typed), so it can no longer go",
+            "detail": ""
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.144",
       "date": "2026-10-07",
@@ -4001,6 +4026,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.145",
+      "date": "2026-10-12"
+    },
     {
       "tag": "v0.2.144",
       "date": "2026-10-07"
