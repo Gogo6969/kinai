@@ -83,6 +83,15 @@ pub async fn start(state: SharedState, app: AppHandle) -> Result<()> {
             post(super::api::create).get(super::api::list),
         )
         .route("/v1/reminders/:id/action", post(super::api::action))
+        // Planned maintenance of a model server: a script says "this server
+        // is being worked on until T" and the family is served by the backup
+        // model, with a notice, instead of waiting on a server that is gone.
+        .route(
+            "/v1/maintenance",
+            post(super::maintenance_api::begin)
+                .get(super::maintenance_api::status)
+                .delete(super::maintenance_api::end),
+        )
         .route("/kin", any(ws_upgrade))
         .with_state(axum_state);
 
