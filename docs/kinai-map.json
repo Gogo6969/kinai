@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-10-12T13:22:07+00:00",
-  "version": "0.2.145",
+  "generated_at": "2026-10-14T16:15:38+00:00",
+  "version": "0.2.146",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 405,
-    "head": "c035cf5"
+    "commits": 409,
+    "head": "17090af"
   },
   "totals": {
-    "rust_files": 71,
-    "rust_lines": 36695,
+    "rust_files": 73,
+    "rust_lines": 38151,
     "frontend_files": 38,
-    "frontend_lines": 14685,
-    "unit_tests": 413,
+    "frontend_lines": 14687,
+    "unit_tests": 447,
     "integration_test_files": 20,
-    "releases": 137,
-    "tags": 132
+    "releases": 138,
+    "tags": 133
   },
   "areas": [
     {
@@ -99,6 +99,13 @@
       "tests": 3
     },
     {
+      "path": "src/availability.rs",
+      "area": "other",
+      "lines": 282,
+      "doc": "Which model servers the host should NOT try right now, and why.",
+      "tests": 8
+    },
+    {
       "path": "src/changelog.rs",
       "area": "desktop",
       "lines": 65,
@@ -129,14 +136,14 @@
     {
       "path": "src/context/builder.rs",
       "area": "context",
-      "lines": 910,
+      "lines": 962,
       "doc": "Build the per-request message list from system prompt + memory + history.",
-      "tests": 19
+      "tests": 21
     },
     {
       "path": "src/context/compaction.rs",
       "area": "context",
-      "lines": 574,
+      "lines": 581,
       "doc": "Conversation compaction: fold the messages that are about to scroll out of the model's view into a running per-thread summary, the *digest*.",
       "tests": 11
     },
@@ -262,7 +269,7 @@
     {
       "path": "src/lib.rs",
       "area": "entry",
-      "lines": 605,
+      "lines": 639,
       "doc": "KinAI library entrypoint — wires Tauri shell, Axum HTTP/WS server, tray, global hotkey, LLM client, and the never-lose-context pipeline.",
       "tests": 0
     },
@@ -323,9 +330,16 @@
       "tests": 11
     },
     {
+      "path": "src/network/maintenance_api.rs",
+      "area": "network",
+      "lines": 435,
+      "doc": "The maintenance API: how a script tells the host \"this model server is being worked on — don't wait for it\".",
+      "tests": 9
+    },
+    {
       "path": "src/network/mod.rs",
       "area": "network",
-      "lines": 145,
+      "lines": 146,
       "doc": "Host (Axum HTTP+WS server) and Client (WS dialer).",
       "tests": 0
     },
@@ -353,7 +367,7 @@
     {
       "path": "src/network/server.rs",
       "area": "network",
-      "lines": 1586,
+      "lines": 1595,
       "doc": "Host-side Axum HTTP+WebSocket server.",
       "tests": 0
     },
@@ -395,9 +409,9 @@
     {
       "path": "src/slash.rs",
       "area": "routing",
-      "lines": 1179,
+      "lines": 1815,
       "doc": "Slash commands — intercepted BEFORE the LLM pipeline so messages starting with /pic, /picHQ, /help, ? skip the chat model entirely and route to native handlers (ComfyUI for image gen, a static command list for help).",
-      "tests": 22
+      "tests": 37
     },
     {
       "path": "src/stt.rs",
@@ -771,7 +785,7 @@
     {
       "path": "frontend/src/routes/host/invite/+page.svelte",
       "kind": "route",
-      "lines": 490,
+      "lines": 492,
       "doc": "Mirrors `invite::MAX_LABEL_CHARS` on the host, so the three fields that write this column agree with each other and with the gate that would otherwise refuse them after a round trip."
     },
     {
@@ -1265,6 +1279,36 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.146",
+      "date": "2026-10-14",
+      "sections": {
+        "Added": [
+          {
+            "title": "KinAI keeps answering when the main model is down, and says so.",
+            "detail": "When the main model server is restarting or has crashed, KinAI answers from the next model at home and the answer opens with one line saying the backup model is answering. If no model at home answers, the message explains how to switch to the online model yourself with `/online`. KinAI never does that on its own, because your question would then leave the house."
+          },
+          {
+            "title": "Pictures during an outage.",
+            "detail": "A picture goes to the backup model if that model can read pictures. If it cannot, KinAI tells you so plainly instead of answering without seeing it."
+          },
+          {
+            "title": "Announce planned maintenance.",
+            "detail": "A script can now tell the host that a model server is being worked on (a new API call, see `docs/MAINTENANCE-API.md`). For the time you give, KinAI answers from the backup model at once instead of finding out the hard way, and it goes back to the server by itself when the time is up. It needs an API key from Manage family, and it never touches your settings."
+          }
+        ],
+        "Changed": [
+          {
+            "title": "A failed model server is now noticed for all of its models at once, and checked again within seconds, so a server that c",
+            "detail": ""
+          },
+          {
+            "title": "The one-line backup notice no longer stacks up when several models are skipped, and it is no longer repeated to the mode",
+            "detail": ""
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.145",
       "date": "2026-10-12",
@@ -4026,6 +4070,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.146",
+      "date": "2026-10-14"
+    },
     {
       "tag": "v0.2.145",
       "date": "2026-10-12"
