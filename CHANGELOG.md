@@ -5,6 +5,35 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.146] — 2026-10-14
+
+### Added
+
+- **KinAI keeps answering when the main model is down, and says so.** When
+  the main model server is restarting or has crashed, KinAI answers from the
+  next model at home and the answer opens with one line saying the backup
+  model is answering. If no model at home answers, the message explains how
+  to switch to the online model yourself with `/online`. KinAI never does
+  that on its own, because your question would then leave the house.
+- **Pictures during an outage.** A picture goes to the backup model if that
+  model can read pictures. If it cannot, KinAI tells you so plainly instead
+  of answering without seeing it.
+- **Announce planned maintenance.** A script can now tell the host that a
+  model server is being worked on (a new API call, see
+  `docs/MAINTENANCE-API.md`). For the time you give, KinAI answers from the
+  backup model at once instead of finding out the hard way, and it goes
+  back to the server by itself when the time is up. It needs an API key
+  from Manage family, and it never touches your settings.
+
+### Changed
+
+- A failed model server is now noticed for all of its models at once, and
+  checked again within seconds, so a server that comes back is used again
+  quickly.
+- The one-line backup notice no longer stacks up when several models are
+  skipped, and it is no longer repeated to the model in later questions, so
+  it cannot claim the main model is still down after it is back.
+
 ## [0.2.145] — 2026-10-12
 
 ### Fixed

@@ -37,24 +37,24 @@ use super::server::AxumState;
 
 /// An error a program reads: a stable token plus a sentence for a human
 /// reading a log.
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct ApiError {
-    code: &'static str,
-    message: String,
+    pub(super) code: &'static str,
+    pub(super) message: String,
 }
 
-fn err(status: StatusCode, code: &'static str, message: impl Into<String>) -> (StatusCode, Json<ApiError>) {
+pub(super) fn err(status: StatusCode, code: &'static str, message: impl Into<String>) -> (StatusCode, Json<ApiError>) {
     (status, Json(ApiError { code, message: message.into() }))
 }
 
-type ApiResult<T> = Result<(StatusCode, Json<T>), (StatusCode, Json<ApiError>)>;
+pub(super) type ApiResult<T> = Result<(StatusCode, Json<T>), (StatusCode, Json<ApiError>)>;
 
 /// Resolve `Authorization: Bearer <jwt>` to claims.
 ///
 /// The audience is derived exactly the way the WebSocket handshake does
 /// it — the cached `host_url` first, falling back to recomputing it — so a
 /// token minted for this host validates on both paths or neither.
-async fn bearer_claims(
+pub(super) async fn bearer_claims(
     s: &AxumState,
     headers: &HeaderMap,
 ) -> Result<Claims, (StatusCode, Json<ApiError>)> {

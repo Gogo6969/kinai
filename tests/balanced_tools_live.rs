@@ -144,6 +144,7 @@ async fn dead_fast_slot_fails_over_to_balanced() {
         telegram: Arc::new(kinai::telegram::TelegramSupervisor::default()),
         pending_turns: Arc::new(parking_lot::Mutex::new(std::collections::HashMap::new())),
         slot_health: parking_lot::Mutex::new(std::collections::HashMap::new()),
+        availability: parking_lot::Mutex::new(kinai::availability::Availability::default()),
         fact_checks_running: parking_lot::Mutex::new(std::collections::HashSet::new()),
         tts_child: parking_lot::Mutex::new(None),
     };

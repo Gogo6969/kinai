@@ -134,15 +134,150 @@ pub struct ServedTurn {
     pub result: crate::tools::loop_pipeline::PipelineResult,
 }
 
+/// Why a slot's server is not being tried.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unavailable {
+    /// Someone announced planned maintenance (see `availability`); the
+    /// server is expected back at `until`.
+    Maintenance { until: chrono::DateTime<chrono::Utc> },
+    /// The server does not answer.
+    Down,
+}
+
+/// Is `label`'s server unavailable right now, and why? Planned maintenance
+/// is checked first and costs no network at all.
+pub async fn slot_unavailable(state: &crate::AppState, label: &str) -> Option<Unavailable> {
+    let base_url = {
+        let cfg = state.config.read();
+        slot_settings(&cfg, label).base_url.clone()
+    };
+    let authority = crate::availability::authority(&base_url);
+    if let Some(m) = state.availability.lock().maintenance(&authority, chrono::Utc::now()) {
+        return Some(Unavailable::Maintenance { until: m.until });
+    }
+    if slot_alive_cached(state, label).await {
+        None
+    } else {
+        Some(Unavailable::Down)
+    }
+}
+
+/// "16:45" in the host's own time zone — the house's clock.
+fn local_hm(t: chrono::DateTime<chrono::Utc>) -> String {
+    t.with_timezone(&chrono::Local).format("%H:%M").to_string()
+}
+
+/// The one line that opens an answer given by a backup model. Written ONCE
+/// per answer, however many servers were skipped on the way.
+///
+/// `first_label` is the slot the user's message was aimed at, `why` is what
+/// was wrong with it, `serving` is the slot that actually answers. The
+/// opening and closing words are what `strip_failover_notice` recognises, so
+/// the notice never reaches a later prompt as a standing claim.
+pub(crate) fn failover_notice(
+    first_label: &str,
+    why: &Unavailable,
+    serving_label: &str,
+    serving: &LlmSettings,
+) -> String {
+    let wanted = if first_label == "fast" {
+        "main".to_string()
+    } else {
+        slot_display_name(first_label).to_string()
+    };
+    let backup = format!(
+        "**{}** (`{}`)",
+        slot_display_name(serving_label),
+        display_model_name(&serving.model)
+    );
+    match why {
+        Unavailable::Maintenance { until } => format!(
+            "⚠️ _The **{wanted}** model is being serviced right now (planned maintenance, \
+back around {}). Answering with the backup model — {backup} — instead._\n\n",
+            local_hm(*until)
+        ),
+        Unavailable::Down => format!(
+            "⚠️ _The **{wanted}** model isn't available right now. Answering with the \
+backup model — {backup} — instead._\n\n"
+        ),
+    }
+}
+
+/// Remove failover notices from the START of an answer that is being fed
+/// back to a model as history. They describe how one answer was produced,
+/// not a fact about the world: left in, a model reads "the main model isn't
+/// available" in the transcript long after it is back and says so.
+pub fn strip_failover_notice(text: &str) -> &str {
+    const OPEN: &str = "⚠️ _The **";
+    const CLOSE: &str = "instead._\n\n";
+    let mut rest = text;
+    while rest.starts_with(OPEN) {
+        match rest.find(CLOSE) {
+            // A notice is one short paragraph; refuse to swallow a long one.
+            Some(i) if i < 600 => rest = &rest[i + CLOSE.len()..],
+            _ => break,
+        }
+    }
+    rest
+}
+
+/// The single error for "no server can answer". Always begins with the
+/// phrase every surface passes through unchanged ("No model server is
+/// answering"). `maintenance_until` adds the planned end when the cause is
+/// announced maintenance; `online_hint` adds how to switch to the online
+/// model by hand — never done automatically (see `FAILOVER_SLOTS`).
+pub(crate) fn all_down_message(
+    tried: &[String],
+    maintenance_until: Option<chrono::DateTime<chrono::Utc>>,
+    online_hint: bool,
+    needs_sight: bool,
+) -> String {
+    let mut msg = if needs_sight {
+        format!(
+            "🔌 No model server is answering right now, and the backup model can't read \
+pictures (tried: {}). Please send the picture again once the main model is back.",
+            tried.join(", ")
+        )
+    } else {
+        format!("🔌 No model server is answering right now (tried: {}).", tried.join(", "))
+    };
+    if let Some(until) = maintenance_until {
+        msg.push_str(&format!(
+            " The main model is being serviced (planned maintenance, back around {}).",
+            local_hm(until)
+        ));
+    }
+    if online_hint && !needs_sight {
+        msg.push_str(
+            " To use the online model instead, type /online before your question. \
+It answers from the internet, so what you type then leaves your home network.",
+        );
+    }
+    msg.push_str(
+        " Otherwise check that your model server(s) are running — Settings → Models \
+shows each slot's address — then try again.",
+    );
+    msg
+}
+
 /// Run a chat turn on the routed slot; when that slot's SERVER is down
 /// (connection refused, DNS/timeout, 503-loading, stall watchdog —
-/// `llm::is_server_down_error`), automatically retry on the next active
-/// slot in SLOTS order with a user-visible notice, instead of dying
-/// silently. Tries each active slot at most once; when every slot is
-/// down, returns one honest, actionable error for all surfaces.
+/// `llm::is_server_down_error`) or announced as under maintenance, retry on
+/// the next active slot in FAILOVER_SLOTS order and say so ONCE at the top
+/// of the answer, instead of dying silently. Tries each slot at most once;
+/// when no home server can answer, returns one honest, actionable error for
+/// all surfaces (including how to pick the online model by hand — it is
+/// never used automatically).
 ///
-/// Vision routes pass through untouched — they have their own
-/// endpoint-level failover inside `vision::run_with_route`.
+/// Servers are judged by ADDRESS (`availability::authority`): `fast` and
+/// `balanced` are two names on one machine, so one failed request or
+/// refused probe rules out both, and the user sees one notice, not two hops.
+///
+/// Pictures: a turn that carries an image only fails over to a slot whose
+/// server reports it can read images (`vision::chat_handles_images`); a turn
+/// already routed to a dedicated vision endpoint tries that first and, when
+/// its server is down, falls through to the same search. If no backup can
+/// see, the error says so plainly instead of answering blind.
 ///
 /// Deliberately does NOT rewrite the per-thread sticky slot: the sticky
 /// records the user's wish; when their model comes back, the thread
@@ -164,28 +299,84 @@ where
 {
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    if matches!(route, crate::vision::Route::Vision { .. }) {
-        let settings = slot_settings(cfg, routed_slot).clone();
-        let llm = crate::llm::LlmClient::new(settings.clone());
-        let max_tokens = max_tokens_for(&settings, &messages);
-        let result = crate::vision::run_with_route(
-            route,
-            cfg,
-            llm,
-            &settings,
-            messages,
-            tools,
-            tool_runtime,
-            max_tokens,
-            handlers,
-            cancel,
-        )
-        .await?;
-        return Ok(ServedTurn {
-            slot_label: routed_slot.to_string(),
-            settings,
-            result,
-        });
+    // Does the turn carry a picture the answering model must be able to see?
+    let needs_sight = crate::vision::history_has_image(&messages);
+
+    // Wraps the handlers so "a tool ran during this attempt" is recorded:
+    // tool side effects are not idempotent (memory writes, metered search),
+    // so a turn whose tools already ran is never silently re-run elsewhere.
+    let track_tools = |flag: &std::sync::Arc<AtomicBool>| {
+        let inner = handlers.on_tool.clone();
+        let flag = flag.clone();
+        crate::tools::loop_pipeline::PipelineHandlers {
+            on_token: handlers.on_token.clone(),
+            on_reasoning: handlers.on_reasoning.clone(),
+            on_tool: std::sync::Arc::new(move |e| {
+                if matches!(e, crate::tools::loop_pipeline::ToolEvent::Started { .. }) {
+                    flag.store(true, Ordering::SeqCst);
+                }
+                inner(e);
+            }),
+        }
+    };
+
+    // A picture routed to a dedicated vision endpoint: that endpoint has its
+    // own primary/failover pair. Try it — unless its server is already known
+    // to be gone — and fall through to the slot search below only when the
+    // SERVER is down. Any other failure is the caller's to see.
+    if let crate::vision::Route::Vision { primary, .. } = &route {
+        let vision_authority = crate::availability::authority(&primary.base_url);
+        let known_down = {
+            let a = state.availability.lock();
+            a.maintenance(&vision_authority, chrono::Utc::now()).is_some()
+                || a.failed_within(&vision_authority, crate::availability::FAILURE_MEMORY, std::time::Instant::now())
+        };
+        if !known_down {
+            let settings = slot_settings(cfg, routed_slot).clone();
+            let llm = crate::llm::LlmClient::new(settings.clone());
+            let max_tokens = max_tokens_for(&settings, &messages);
+            let tools_ran = std::sync::Arc::new(AtomicBool::new(false));
+            let attempt = crate::vision::run_with_route(
+                route.clone(),
+                cfg,
+                llm,
+                &settings,
+                messages.clone(),
+                tools.clone(),
+                tool_runtime.clone(),
+                max_tokens,
+                track_tools(&tools_ran),
+                cancel.clone(),
+            )
+            .await;
+            match attempt {
+                Ok(result) => {
+                    return Ok(ServedTurn {
+                        slot_label: routed_slot.to_string(),
+                        settings,
+                        result,
+                    })
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    if cancel.is_cancelled()
+                        || !crate::llm::is_server_down_error(&msg)
+                        || tools_ran.load(Ordering::SeqCst)
+                    {
+                        return Err(e);
+                    }
+                    state
+                        .availability
+                        .lock()
+                        .note_failed(&vision_authority, std::time::Instant::now());
+                    tracing::warn!(
+                        "vision endpoint down ({}); looking for a backup model that can read the picture",
+                        crate::logsafe::error(&msg)
+                    );
+                }
+            }
+        }
+        // Fall through: the slot search below, with `needs_sight` set.
     }
 
     let next_untried = |tried: &[String]| {
@@ -194,40 +385,56 @@ where
             .find(|s| !tried.iter().any(|t| t == **s) && slot_settings(cfg, s).is_active())
             .copied()
     };
+    // Called when the search runs out of slots.
     let all_down_error = |tried: &[String]| {
-        anyhow::anyhow!(
-            "🔌 No model server is answering right now (tried: {}). \
-Check that your model server(s) are running — Settings → Models shows each \
-slot's address — then try again.",
-            tried.join(", ")
-        )
+        let routed_authority = crate::availability::authority(&slot_settings(cfg, routed_slot).base_url);
+        let maintenance_until = state
+            .availability
+            .lock()
+            .maintenance(&routed_authority, chrono::Utc::now())
+            .map(|m| m.until);
+        let online_hint = slot_settings(cfg, "online").is_active()
+            && !tried.iter().any(|t| t == "online");
+        anyhow::anyhow!(all_down_message(tried, maintenance_until, online_hint, needs_sight))
     };
 
     let mut label = routed_slot.to_string();
+    // What was wrong with the first slot that could not serve — the reason
+    // the one notice gives. `None` until something fails.
+    let mut first_issue: Option<(String, Unavailable)> = None;
     let mut notice = String::new();
     let mut tried: Vec<String> = Vec::new();
     loop {
         tried.push(label.clone());
         let settings = slot_settings(cfg, &label).clone();
+        let authority = crate::availability::authority(&settings.base_url);
 
-        // Known-dead skip: the cached probe is bounded (1.5s LAN / 4s
-        // for https cloud endpoints, see probe_alive), versus a
-        // full connect-timeout of silent thinking-dots per dead attempt
-        // (SYN-dropping servers: host asleep, firewall drop). A stale
-        // "alive" cache entry just falls through to the real attempt,
-        // whose own error handling remains the safety net.
-        if !slot_alive_cached(state, &label).await {
+        // Known unavailable (planned maintenance, or a refused probe, or a
+        // failure moments ago on this very server): skip without a request.
+        // A slot other than the routed one must also be able to read a
+        // picture when the turn carries one — the routed slot was already
+        // judged by `vision::decide`.
+        let mut issue = slot_unavailable(state, &label).await;
+        let mut cannot_see = false;
+        if issue.is_none()
+            && needs_sight
+            && label != routed_slot
+            && !crate::vision::chat_handles_images(&settings).await
+        {
+            cannot_see = true;
+        }
+        if issue.is_some() || cannot_see {
             let Some(next) = next_untried(&tried) else {
                 return Err(all_down_error(&tried));
             };
-            let next_model = slot_settings(cfg, next).model.clone();
-            tracing::warn!("slot '{label}' failed liveness probe; skipping to '{next}'");
-            let line = format!(
-                "⚠️ _The **{label}** model isn't responding (server unreachable) — \
-answering with **{next}** (`{next_model}`) instead._\n\n"
-            );
-            (handlers.on_token)(line.clone());
-            notice.push_str(&line);
+            if let Some(i) = issue.take() {
+                tracing::warn!("slot '{label}' unavailable ({i:?}); skipping to '{next}'");
+                if first_issue.is_none() {
+                    first_issue = Some((label.clone(), i));
+                }
+            } else {
+                tracing::info!("slot '{label}' cannot read pictures; skipping to '{next}'");
+            }
             label = next.to_string();
             continue;
         }
@@ -247,26 +454,17 @@ answering with **{next}** (`{next_model}`) instead._\n\n"
         );
         let max_tokens = max_tokens_for(&settings, &attempt_msgs);
 
-        // Tool side effects aren't idempotent (memory writes, metered
-        // web search). Track whether THIS attempt ran any tool; if the
-        // server dies after tools already executed, we surface an honest
-        // retry request instead of silently re-running the whole turn.
-        let tools_ran = std::sync::Arc::new(AtomicBool::new(false));
-        let attempt_handlers = {
-            let inner = handlers.on_tool.clone();
-            let flag = tools_ran.clone();
-            crate::tools::loop_pipeline::PipelineHandlers {
-                on_token: handlers.on_token.clone(),
-                on_reasoning: handlers.on_reasoning.clone(),
-                on_tool: std::sync::Arc::new(move |e| {
-                    if matches!(e, crate::tools::loop_pipeline::ToolEvent::Started { .. }) {
-                        flag.store(true, Ordering::SeqCst);
-                    }
-                    inner(e);
-                }),
+        // One notice, written when a backup slot is about to answer. If that
+        // attempt dies too, the text is REPLACED for the next backup, so the
+        // stored answer carries a single line.
+        if label != routed_slot {
+            if let Some((first, why)) = &first_issue {
+                notice = failover_notice(first, why, &label, &settings);
+                (handlers.on_token)(notice.clone());
             }
-        };
+        }
 
+        let tools_ran = std::sync::Arc::new(AtomicBool::new(false));
         let llm = crate::llm::LlmClient::new(settings.clone());
         let attempt = crate::vision::run_with_route(
             crate::vision::Route::Chat,
@@ -277,7 +475,7 @@ answering with **{next}** (`{next_model}`) instead._\n\n"
             tools.clone(),
             tool_runtime.clone(),
             max_tokens,
-            attempt_handlers,
+            track_tools(&tools_ran),
             cancel.clone(),
         )
         .await;
@@ -298,6 +496,7 @@ answering with **{next}** (`{next_model}`) instead._\n\n"
                     // into Telegram — prepend so the notice survives.
                     result.final_content = format!("{notice}{}", result.final_content);
                 }
+                state.availability.lock().note_ok(&authority);
                 return Ok(ServedTurn {
                     slot_label: label,
                     settings,
@@ -317,21 +516,23 @@ running those twice, KinAI didn't retry automatically — please send your \
 message again."
                     ));
                 }
+                // Believe the failure for a few seconds, for every slot on
+                // this server — the next message must not wait for it again.
+                {
+                    let now = std::time::Instant::now();
+                    state.availability.lock().note_failed(&authority, now);
+                    state.slot_health.lock().insert(label.clone(), (now, false));
+                }
                 let Some(next) = next_untried(&tried) else {
                     return Err(all_down_error(&tried));
                 };
-                let reason = crate::llm::short_server_down_reason(&msg);
-                let next_model = slot_settings(cfg, next).model.clone();
                 tracing::warn!(
                     "slot '{label}' down ({}); failing over to '{next}'",
                     crate::logsafe::error(&msg)
                 );
-                let line = format!(
-                    "⚠️ _The **{label}** model isn't responding ({reason}) — \
-answering with **{next}** (`{next_model}`) instead._\n\n"
-                );
-                (handlers.on_token)(line.clone());
-                notice.push_str(&line);
+                if first_issue.is_none() {
+                    first_issue = Some((label.clone(), Unavailable::Down));
+                }
                 label = next.to_string();
             }
         }
@@ -355,13 +556,21 @@ pub fn active_slot_wires(cfg: &AppConfig) -> Vec<crate::network::protocol::HostS
         .collect()
 }
 
-/// Cached liveness for a slot's model server (15s TTL). Cheap enough
-/// for menus and switch confirmations without hammering the servers;
-/// stale by at most the TTL, and the turn-level failover is the safety
-/// net when a server dies inside that window. Inactive slots are always
-/// `false`. Never holds the config lock across the probe await.
+/// Cached liveness for a slot's model server. Cheap enough for menus and
+/// switch confirmations without hammering the servers; the turn-level
+/// failover is the safety net for a server that dies inside the window.
+/// Inactive slots are always `false`. Never holds the config lock across the
+/// probe await.
+///
+/// * A server under announced MAINTENANCE is down at once, with no probe.
+/// * "Alive" is believed for 15 s, "down" only for 5 s, so a server that
+///   comes back is noticed within seconds.
+/// * A request that just failed against the server counts for every slot on
+///   that server (`availability`), so `fast` and `balanced` — one machine —
+///   are not probed, or tried, twice.
 pub async fn slot_alive_cached(state: &crate::AppState, label: &str) -> bool {
-    const TTL: std::time::Duration = std::time::Duration::from_secs(15);
+    const ALIVE_TTL: std::time::Duration = std::time::Duration::from_secs(15);
+    const DEAD_TTL: std::time::Duration = std::time::Duration::from_secs(5);
     let settings = {
         let cfg = state.config.read();
         let s = slot_settings(&cfg, label);
@@ -370,16 +579,39 @@ pub async fn slot_alive_cached(state: &crate::AppState, label: &str) -> bool {
         }
         s.clone()
     };
+    let authority = crate::availability::authority(&settings.base_url);
+    if state
+        .availability
+        .lock()
+        .maintenance(&authority, chrono::Utc::now())
+        .is_some()
+    {
+        return false;
+    }
     if let Some((probed_at, alive)) = state.slot_health.lock().get(label).copied() {
-        if probed_at.elapsed() < TTL {
+        let ttl = if alive { ALIVE_TTL } else { DEAD_TTL };
+        if probed_at.elapsed() < ttl {
             return alive;
         }
     }
+    if state.availability.lock().failed_within(
+        &authority,
+        crate::availability::FAILURE_MEMORY,
+        std::time::Instant::now(),
+    ) {
+        return false;
+    }
     let alive = crate::llm::detect::probe_alive(&settings).await;
-    state
-        .slot_health
-        .lock()
-        .insert(label.to_string(), (std::time::Instant::now(), alive));
+    let now = std::time::Instant::now();
+    state.slot_health.lock().insert(label.to_string(), (now, alive));
+    {
+        let mut a = state.availability.lock();
+        if alive {
+            a.note_ok(&authority);
+        } else {
+            a.note_failed(&authority, now);
+        }
+    }
     alive
 }
 
@@ -799,6 +1031,7 @@ mod routing_tests {
                 std::collections::HashMap::new(),
             )),
             slot_health: parking_lot::Mutex::new(std::collections::HashMap::new()),
+            availability: parking_lot::Mutex::new(crate::availability::Availability::default()),
             fact_checks_running: parking_lot::Mutex::new(std::collections::HashSet::new()),
             tts_child: parking_lot::Mutex::new(None),
         }
@@ -1174,5 +1407,408 @@ mod display_name_tests {
         assert_eq!(display_model_name("/models/"), "");
         assert_eq!(display_model_name("модель-очень-длинное-имя-которое-точно-превышает-лимит"),
                    "модель-очень-длинное-имя-которое-точно-…");
+    }
+}
+
+/// End-to-end scenarios for the slot failover: real `run_turn_with_slot_failover`
+/// against FAKE model servers that count what they are asked. Cfg-gated off
+/// Windows for the reason `tests::fresh_state` is (constructing AppState in the
+/// lib test binary links tauri's window code there).
+#[cfg(all(test, not(target_os = "windows")))]
+mod failover_scenario_tests {
+    use super::*;
+    use axum::routing::{get, post};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    /// A stand-in llama.cpp server: `/health`, `/props` and a streaming
+    /// `/v1/chat/completions` that answers with its own name.
+    struct FakeLlm {
+        base_url: String,
+        chat_hits: Arc<AtomicUsize>,
+        health_hits: Arc<AtomicUsize>,
+        last_body: Arc<Mutex<String>>,
+    }
+
+    async fn fake_llm(name: &'static str, can_see: bool, healthy: bool) -> FakeLlm {
+        let chat_hits = Arc::new(AtomicUsize::new(0));
+        let health_hits = Arc::new(AtomicUsize::new(0));
+        let last_body = Arc::new(Mutex::new(String::new()));
+        let (c, h, b) = (chat_hits.clone(), health_hits.clone(), last_body.clone());
+        let app = axum::Router::new()
+            .route(
+                "/health",
+                get(move || {
+                    let h = h.clone();
+                    async move {
+                        h.fetch_add(1, Ordering::SeqCst);
+                        if healthy {
+                            (axum::http::StatusCode::OK, "{\"status\":\"ok\"}")
+                        } else {
+                            (axum::http::StatusCode::BAD_GATEWAY, "{\"error\":\"engine unreachable\"}")
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/props",
+                get(move || async move {
+                    axum::Json(serde_json::json!({ "modalities": { "vision": can_see, "audio": false } }))
+                }),
+            )
+            .route(
+                "/v1/chat/completions",
+                post(move |body: String| {
+                    let c = c.clone();
+                    let b = b.clone();
+                    async move {
+                        c.fetch_add(1, Ordering::SeqCst);
+                        *b.lock().unwrap() = body;
+                        let chunk = serde_json::json!({
+                            "choices": [{ "index": 0, "delta": { "role": "assistant", "content": format!("answer from {name}") }, "finish_reason": null }]
+                        });
+                        let stop = serde_json::json!({ "choices": [{ "index": 0, "delta": {}, "finish_reason": "stop" }] });
+                        (
+                            [(axum::http::header::CONTENT_TYPE, "text/event-stream")],
+                            format!("data: {chunk}\n\ndata: {stop}\n\ndata: [DONE]\n\n"),
+                        )
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        FakeLlm { base_url: format!("http://127.0.0.1:{port}"), chat_hits, health_hits, last_body }
+    }
+
+    /// Nothing listens here: connection refused, in milliseconds.
+    const DEAD: &str = "http://127.0.0.1:1";
+
+    fn slot(cfg_slot: &mut LlmSettings, base_url: &str, model: &str) {
+        cfg_slot.provider = "llamacpp".into();
+        cfg_slot.base_url = base_url.into();
+        cfg_slot.model = model.into();
+        cfg_slot.enabled = true;
+        cfg_slot.image_recognition = "auto".into();
+    }
+
+    /// fast + balanced share one server (`main_url`), deep is the backup.
+    fn cfg(main_url: &str, backup_url: &str) -> AppConfig {
+        let mut cfg = AppConfig::default();
+        slot(&mut cfg.llm, main_url, "glm-fast");
+        slot(&mut cfg.llm_balanced, main_url, "glm-balanced");
+        slot(&mut cfg.llm_deep, backup_url, "qwen-backup");
+        cfg.llm_online.enabled = false;
+        cfg
+    }
+
+    async fn state(cfg: &AppConfig) -> crate::AppState {
+        crate::test_state(cfg).await
+    }
+
+    fn user(text: &str, images: Vec<String>) -> Vec<crate::context::ChatMessage> {
+        vec![crate::context::ChatMessage::User {
+            content: text.into(),
+            name: None,
+            image_data_urls: images,
+        }]
+    }
+
+    /// Run a turn; returns the result plus every chunk streamed to the user.
+    async fn run(
+        state: &crate::AppState,
+        cfg: &AppConfig,
+        route: crate::vision::Route,
+        routed: &str,
+        messages: Vec<crate::context::ChatMessage>,
+    ) -> (anyhow::Result<ServedTurn>, Vec<String>) {
+        let streamed = Arc::new(Mutex::new(Vec::<String>::new()));
+        let s2 = streamed.clone();
+        let noop = Arc::new(|_: String| {});
+        let handlers = crate::tools::loop_pipeline::PipelineHandlers {
+            on_token: Arc::new(move |t: String| s2.lock().unwrap().push(t)),
+            on_reasoning: noop,
+            on_tool: Arc::new(|_| {}),
+        };
+        let result = run_turn_with_slot_failover(
+            route,
+            state,
+            cfg,
+            routed,
+            messages,
+            vec![],
+            crate::tools::registry::ToolRuntime::default(),
+            handlers,
+            tokio_util::sync::CancellationToken::new(),
+            |_, _| None,
+        )
+        .await;
+        let chunks = streamed.lock().unwrap().clone();
+        (result, chunks)
+    }
+
+    #[tokio::test]
+    async fn a_dead_main_server_falls_over_to_the_backup_with_one_notice() {
+        let backup = fake_llm("backup", false, true).await;
+        let cfg = cfg(DEAD, &backup.base_url); // fast AND balanced are dead: one machine
+        let st = state(&cfg).await;
+        let (res, streamed) = run(&st, &cfg, crate::vision::Route::Chat, "fast", user("hi", vec![])).await;
+        let served = res.expect("the backup must answer");
+        assert_eq!(served.slot_label, "deep");
+        let text = &served.result.final_content;
+        assert!(text.contains("answer from backup"), "{text}");
+        assert!(
+            text.starts_with("⚠️ _The **main** model isn't available right now. Answering with the backup model"),
+            "{text}"
+        );
+        assert_eq!(text.matches("⚠️").count(), 1, "ONE notice, not one per skipped slot: {text}");
+        assert_eq!(
+            streamed.iter().filter(|c| c.contains("⚠️")).count(),
+            1,
+            "and it is shown live exactly once: {streamed:?}"
+        );
+        assert_eq!(backup.chat_hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn announced_maintenance_switches_over_before_the_server_is_asked_anything() {
+        let main = fake_llm("main", false, true).await; // perfectly healthy…
+        let backup = fake_llm("backup", false, true).await;
+        let cfg = cfg(&main.base_url, &backup.base_url);
+        let st = state(&cfg).await;
+        let auth = crate::availability::authority(&main.base_url);
+        st.availability.lock().begin(&auth, chrono::Utc::now(), 30, "engine test");
+
+        let (res, _) = run(&st, &cfg, crate::vision::Route::Chat, "fast", user("hi", vec![])).await;
+        let served = res.expect("the backup must answer");
+        assert_eq!(served.slot_label, "deep");
+        let text = &served.result.final_content;
+        assert!(text.contains("being serviced right now (planned maintenance"), "{text}");
+        assert!(text.contains("back around"), "the end time is given: {text}");
+        assert!(!text.contains("engine test"), "the caller's reason is not shown to the family: {text}");
+        assert_eq!(main.chat_hits.load(Ordering::SeqCst), 0, "no request went to the server under maintenance");
+        assert_eq!(main.health_hits.load(Ordering::SeqCst), 0, "not even a probe");
+    }
+
+    #[tokio::test]
+    async fn the_slot_is_back_the_moment_maintenance_ends() {
+        let main = fake_llm("main", false, true).await;
+        let backup = fake_llm("backup", false, true).await;
+        let cfg = cfg(&main.base_url, &backup.base_url);
+        let st = state(&cfg).await;
+        let auth = crate::availability::authority(&main.base_url);
+        st.availability.lock().begin(&auth, chrono::Utc::now(), 30, "");
+        assert!(matches!(slot_unavailable(&st, "fast").await, Some(Unavailable::Maintenance { .. })));
+        assert!(matches!(slot_unavailable(&st, "balanced").await, Some(Unavailable::Maintenance { .. })));
+        assert!(slot_unavailable(&st, "deep").await.is_none(), "another server is unaffected");
+
+        assert_eq!(st.availability.lock().end(Some(&auth), chrono::Utc::now()), 1);
+        assert_eq!(slot_unavailable(&st, "fast").await, None);
+        let (res, _) = run(&st, &cfg, crate::vision::Route::Chat, "fast", user("hi", vec![])).await;
+        let served = res.unwrap();
+        assert_eq!(served.slot_label, "fast");
+        assert!(!served.result.final_content.contains("⚠️"), "no notice when the main model answers");
+    }
+
+    #[tokio::test]
+    async fn one_refused_probe_is_believed_for_both_slots_on_that_server() {
+        let main = fake_llm("main", false, false).await; // /health says 502: engine down behind the gateway
+        let backup = fake_llm("backup", false, true).await;
+        let cfg = cfg(&main.base_url, &backup.base_url);
+        let st = state(&cfg).await;
+        assert!(!slot_alive_cached(&st, "fast").await);
+        assert!(!slot_alive_cached(&st, "balanced").await, "same machine, same verdict");
+        assert_eq!(
+            main.health_hits.load(Ordering::SeqCst),
+            1,
+            "balanced was not probed again — fast's answer covers the whole server"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_request_that_fails_marks_the_server_so_the_next_message_skips_it() {
+        // Healthy on /health but the chat route is gone: the probe says alive, the request dies.
+        let backup = fake_llm("backup", false, true).await;
+        let cfg = cfg(DEAD, &backup.base_url);
+        let st = state(&cfg).await;
+        // Pretend an earlier probe said "alive" (the 15 s window), then the server died.
+        st.slot_health.lock().insert("fast".into(), (std::time::Instant::now(), true));
+        st.slot_health.lock().insert("balanced".into(), (std::time::Instant::now(), true));
+        let (res, _) = run(&st, &cfg, crate::vision::Route::Chat, "fast", user("one", vec![])).await;
+        assert_eq!(res.unwrap().slot_label, "deep");
+        // The failed request is now remembered for the whole server…
+        assert!(!slot_alive_cached(&st, "fast").await);
+        assert!(!slot_alive_cached(&st, "balanced").await);
+        // …so the next message goes straight to the backup.
+        let (res, _) = run(&st, &cfg, crate::vision::Route::Chat, "balanced", user("two", vec![])).await;
+        assert_eq!(res.unwrap().slot_label, "deep");
+    }
+
+    #[tokio::test]
+    async fn when_no_home_server_answers_the_online_model_is_offered_never_used() {
+        let online = fake_llm("online", false, true).await;
+        let mut cfg = cfg(DEAD, "http://127.0.0.1:2");
+        slot(&mut cfg.llm_online, &online.base_url, "online-model");
+        let st = state(&cfg).await;
+        let (res, streamed) = run(&st, &cfg, crate::vision::Route::Chat, "fast", user("hi", vec![])).await;
+        let msg = res.err().expect("nothing at home answers").to_string();
+        assert!(msg.contains("No model server is answering"), "{msg}");
+        assert!(msg.contains("/online"), "how to pick the online model by hand: {msg}");
+        assert!(msg.contains("leaves your home network"), "and what that means: {msg}");
+        assert_eq!(online.chat_hits.load(Ordering::SeqCst), 0, "the online model was NOT used automatically");
+        assert_eq!(online.health_hits.load(Ordering::SeqCst), 0);
+        assert!(streamed.iter().all(|c| !c.contains("answer from")), "{streamed:?}");
+    }
+
+    #[tokio::test]
+    async fn without_an_online_model_the_error_does_not_offer_one() {
+        let cfg = cfg(DEAD, "http://127.0.0.1:2"); // online disabled
+        let st = state(&cfg).await;
+        let (res, _) = run(&st, &cfg, crate::vision::Route::Chat, "fast", user("hi", vec![])).await;
+        let msg = res.err().unwrap().to_string();
+        assert!(msg.contains("No model server is answering"), "{msg}");
+        assert!(!msg.contains("/online"), "nothing to offer: {msg}");
+    }
+
+    #[tokio::test]
+    async fn the_all_down_error_names_planned_maintenance_when_that_is_the_cause() {
+        let backup = fake_llm("backup", false, true).await;
+        let cfg = cfg(DEAD, &backup.base_url);
+        let st = state(&cfg).await;
+        // Both servers under maintenance.
+        st.availability.lock().begin(&crate::availability::authority(DEAD), chrono::Utc::now(), 20, "");
+        st.availability.lock().begin(&crate::availability::authority(&backup.base_url), chrono::Utc::now(), 20, "");
+        let (res, _) = run(&st, &cfg, crate::vision::Route::Chat, "fast", user("hi", vec![])).await;
+        let msg = res.err().unwrap().to_string();
+        assert!(msg.contains("planned maintenance, back around"), "{msg}");
+        assert_eq!(backup.chat_hits.load(Ordering::SeqCst), 0);
+    }
+
+    fn picture() -> Vec<String> {
+        vec!["data:image/png;base64,iVBORw0KGgo=".to_string()]
+    }
+
+    #[tokio::test]
+    async fn a_picture_goes_to_a_backup_that_can_read_it() {
+        let backup = fake_llm("backup", true, true).await; // reports vision: true
+        let cfg = cfg(DEAD, &backup.base_url);
+        let st = state(&cfg).await;
+        let (res, _) = run(&st, &cfg, crate::vision::Route::Chat, "fast", user("what is this?", picture())).await;
+        let served = res.expect("the backup can see, so it answers");
+        assert_eq!(served.slot_label, "deep");
+        assert!(served.result.final_content.contains("answer from backup"));
+        assert!(
+            backup.last_body.lock().unwrap().contains("image_url"),
+            "the picture itself reached the backup model"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_picture_is_never_sent_to_a_backup_that_cannot_read_it() {
+        let backup = fake_llm("backup", false, true).await; // vision: false
+        let cfg = cfg(DEAD, &backup.base_url);
+        let st = state(&cfg).await;
+        let (res, _) = run(&st, &cfg, crate::vision::Route::Chat, "fast", user("what is this?", picture())).await;
+        let msg = res.err().expect("must say so, not answer blind").to_string();
+        assert!(msg.contains("No model server is answering"), "{msg}");
+        assert!(msg.contains("can't read pictures"), "{msg}");
+        assert!(msg.contains("send the picture again"), "{msg}");
+        assert_eq!(backup.chat_hits.load(Ordering::SeqCst), 0, "no blind answer was attempted");
+    }
+
+    #[tokio::test]
+    async fn a_picture_routed_to_a_dead_vision_endpoint_finds_a_backup_that_can_see() {
+        let backup = fake_llm("backup", true, true).await;
+        let mut cfg = cfg(DEAD, &backup.base_url);
+        cfg.vision.enabled = true;
+        cfg.vision.primary.base_url = DEAD.into();
+        cfg.vision.primary.model = "glm-fast".into();
+        cfg.vision.failover.base_url = DEAD.into();
+        cfg.vision.failover.model = "glm-fast".into();
+        let st = state(&cfg).await;
+        let route = crate::vision::Route::Vision {
+            primary: cfg.vision.primary.clone(),
+            failover: Some(cfg.vision.failover.clone()),
+        };
+        let (res, _) = run(&st, &cfg, route, "fast", user("what is this?", picture())).await;
+        let served = res.expect("the dead vision endpoint must not end the turn");
+        assert_eq!(served.slot_label, "deep");
+        assert!(served.result.final_content.contains("answer from backup"));
+    }
+
+    #[tokio::test]
+    async fn maintenance_on_the_vision_endpoint_skips_it_without_a_request() {
+        let main = fake_llm("main", true, true).await; // healthy and able to see…
+        let backup = fake_llm("backup", true, true).await;
+        let mut cfg = cfg(&main.base_url, &backup.base_url);
+        cfg.vision.enabled = true;
+        cfg.vision.primary.base_url = main.base_url.clone();
+        cfg.vision.primary.model = "glm-fast".into();
+        cfg.vision.failover.base_url = main.base_url.clone();
+        cfg.vision.failover.model = "glm-fast".into();
+        let st = state(&cfg).await;
+        st.availability.lock().begin(&crate::availability::authority(&main.base_url), chrono::Utc::now(), 30, "");
+        let route = crate::vision::Route::Vision {
+            primary: cfg.vision.primary.clone(),
+            failover: Some(cfg.vision.failover.clone()),
+        };
+        let (res, _) = run(&st, &cfg, route, "fast", user("what is this?", picture())).await;
+        assert_eq!(res.unwrap().slot_label, "deep");
+        assert_eq!(main.chat_hits.load(Ordering::SeqCst), 0, "the image reader under maintenance was not asked");
+    }
+
+    // ---- notice text and history hygiene (pure) ----
+
+    #[test]
+    fn the_notice_wording_names_who_was_aimed_at_and_who_answers() {
+        let mut s = LlmSettings::default();
+        s.model = "qwen3.8-27b-uncensored".into();
+        let down = failover_notice("fast", &Unavailable::Down, "deep", &s);
+        assert!(down.starts_with("⚠️ _The **main** model isn't available right now."), "{down}");
+        assert!(down.contains("**uncensored** (`qwen3.8-27b-uncensored`)"), "{down}");
+        assert!(down.ends_with("instead._\n\n"), "{down}");
+        let balanced = failover_notice("balanced", &Unavailable::Down, "deep", &s);
+        assert!(balanced.contains("The **balanced** model"), "{balanced}");
+        let planned = failover_notice(
+            "fast",
+            &Unavailable::Maintenance { until: chrono::Utc::now() + chrono::Duration::minutes(20) },
+            "deep",
+            &s,
+        );
+        assert!(planned.contains("planned maintenance, back around"), "{planned}");
+    }
+
+    #[test]
+    fn a_notice_is_stripped_from_history_but_nothing_else_is() {
+        let mut s = LlmSettings::default();
+        s.model = "m".into();
+        let notice = failover_notice("fast", &Unavailable::Down, "deep", &s);
+        let answered = format!("{notice}The capital is Paris.");
+        assert_eq!(strip_failover_notice(&answered), "The capital is Paris.");
+        // Stacked notices (older builds wrote one per hop) all go.
+        let stacked = format!("{notice}{notice}Done.");
+        assert_eq!(strip_failover_notice(&stacked), "Done.");
+        // The pre-0.2.146 wording is recognised too.
+        let old = "⚠️ _The **fast** model isn't responding (server unreachable) — answering with **balanced** (`glm-balanced`) instead._\n\nHello";
+        assert_eq!(strip_failover_notice(old), "Hello");
+        // Text that merely mentions the words is untouched.
+        for plain in ["The main model isn't available, I said.", "⚠️ careful", "", "⚠️ _The **x** note"] {
+            assert_eq!(strip_failover_notice(plain), plain);
+        }
+    }
+
+    #[test]
+    fn the_all_down_message_always_starts_with_the_passthrough_phrase() {
+        let tried = vec!["fast".to_string(), "balanced".to_string(), "deep".to_string()];
+        for (until, online, sight) in [(None, false, false), (None, true, false), (Some(chrono::Utc::now()), true, false), (None, true, true)] {
+            let m = all_down_message(&tried, until, online, sight);
+            assert!(m.contains("No model server is answering"), "{m}");
+            assert!(m.contains("tried: fast, balanced, deep"), "{m}");
+        }
+        assert!(all_down_message(&tried, None, true, false).contains("/online"));
+        assert!(!all_down_message(&tried, None, false, false).contains("/online"));
+        assert!(!all_down_message(&tried, None, true, true).contains("/online"), "a picture can't be offered to a model that can't see");
     }
 }
