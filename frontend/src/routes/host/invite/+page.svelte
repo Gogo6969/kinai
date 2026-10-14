@@ -299,7 +299,9 @@
           For a script, a cron job or a Shortcut that should add reminders to
           <em>your</em> calendar without going through a conversation. It cannot
           open a chat, read anyone's messages, or write to another family
-          member's calendar. Revoke it from the list below like any invite.
+          member's calendar. The same kind of key also lets a script announce
+          that a model server is being serviced, so KinAI answers from the
+          backup model meanwhile. Revoke it from the list below like any invite.
         </p>
       </div>
       <div class="flex flex-wrap items-end gap-3">

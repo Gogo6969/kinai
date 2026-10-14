@@ -694,7 +694,11 @@ fn message_to_chat(m: &Message) -> ChatMessage {
             image_data_urls: crate::vision::image_data_urls(&m.attachments),
         },
         "assistant" => ChatMessage::Assistant {
-            content: m.content.clone(),
+            // A backup-model notice ("The main model isn't available…")
+            // describes how ONE answer was made, not the world. Fed back, it
+            // becomes a standing claim the model repeats long after the main
+            // model is up again (the history-poison class).
+            content: crate::slash::strip_failover_notice(&m.content).to_string(),
             tool_calls: Vec::new(),
         },
         "summary" => ChatMessage::System {
@@ -905,5 +909,53 @@ mod cache_stability_tests {
         assert_eq!(ctx.len(), 2, "system + newest turn only");
         let tail = ctx[1].content();
         assert!(tail.contains("prefers metric units") && tail.contains("next"), "{tail}");
+    }
+}
+
+#[cfg(test)]
+mod failover_notice_history_tests {
+    use super::*;
+
+    fn row(role: &str, content: &str) -> Message {
+        Message {
+            id: "m".into(),
+            thread_id: "t".into(),
+            role: role.into(),
+            sender: if role == "user" { "Alex".into() } else { "KinAI".into() },
+            content: content.into(),
+            attachments: vec![],
+            created_at: "2031-03-05T20:00:00Z".into(),
+            summarized_into: None,
+            metrics: None,
+        }
+    }
+
+    /// An answer given by the backup model carries a one-line notice. Fed
+    /// back as history it would read as "the main model is unavailable" long
+    /// after it is up again, and the model would say so.
+    #[test]
+    fn the_backup_notice_does_not_reach_the_next_prompt() {
+        let stored = "⚠️ _The **main** model isn't available right now. Answering with the backup \
+model — **uncensored** (`qwen`) — instead._\n\nThe capital of France is Paris.";
+        match message_to_chat(&row("assistant", stored)) {
+            ChatMessage::Assistant { content, .. } => {
+                assert_eq!(content, "The capital of France is Paris.");
+            }
+            other => panic!("expected an assistant message, got {other:?}"),
+        }
+        // A user's own words are never touched, even if they quote a notice.
+        match message_to_chat(&row("user", stored)) {
+            ChatMessage::User { content, .. } => assert!(content.contains("⚠️")),
+            other => panic!("expected a user message, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_summary_input_does_not_record_the_outage_as_a_fact() {
+        let stored = "⚠️ _The **main** model isn't available right now. Answering with the backup \
+model — **uncensored** (`qwen`) — instead._\n\nParis.";
+        let t = crate::context::compaction::transcript(&[row("user", "capital of France?"), row("assistant", stored)]);
+        assert!(t.contains("Paris."), "{t}");
+        assert!(!t.contains("isn't available"), "{t}");
     }
 }

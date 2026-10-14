@@ -17,6 +17,7 @@ pub mod logsafe;
 pub mod network;
 pub mod reminders;
 pub mod slash;
+pub mod availability;
 pub mod panic_log;
 pub mod telegram;
 pub mod tools;
@@ -63,9 +64,41 @@ pub struct AppState {
     /// short TTL — feeds the slash menu's offline markers and the
     /// switch-confirmation heads-up without hammering the model servers.
     pub slot_health: parking_lot::Mutex<HashMap<String, (std::time::Instant, bool)>>,
+    /// Planned maintenance windows and recent request failures, keyed by
+    /// server address (see `availability`). Runtime only, never persisted.
+    pub availability: parking_lot::Mutex<availability::Availability>,
     /// Currently-playing desktop TTS process (the speak button / voice
     /// previews). One at a time: starting a new playback kills the old.
     pub tts_child: parking_lot::Mutex<Option<tokio::process::Child>>,
+}
+
+/// An AppState over an in-memory database, for tests that need the real
+/// shared state (slot failover, the maintenance API). Not compiled on
+/// Windows: constructing AppState in the lib test binary links tauri's
+/// dialog/window code there, whose comctl32-v6-only import kills an
+/// unmanifested cargo-test executable at load.
+#[cfg(all(test, not(target_os = "windows")))]
+pub(crate) async fn test_state(cfg: &AppConfig) -> AppState {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .expect("open in-memory sqlite");
+    crate::db::migrate::run(&pool).await.expect("migrations");
+    AppState {
+        handle: RwLock::new(None),
+        config: RwLock::new(cfg.clone()),
+        db: Db { pool },
+        llm: Mutex::new(llm::LlmClient::new(cfg.llm.clone())),
+        net: Arc::new(Mutex::new(network::NetState::default())),
+        stats: RwLock::new(RuntimeStats::default()),
+        telegram: Arc::new(telegram::TelegramSupervisor::default()),
+        pending_turns: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+        slot_health: parking_lot::Mutex::new(HashMap::new()),
+        availability: parking_lot::Mutex::new(availability::Availability::default()),
+        fact_checks_running: parking_lot::Mutex::new(std::collections::HashSet::new()),
+        tts_child: parking_lot::Mutex::new(None),
+    }
 }
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
@@ -331,6 +364,7 @@ pub fn run() {
         telegram: Arc::new(telegram::TelegramSupervisor::default()),
         pending_turns: Arc::new(parking_lot::Mutex::new(HashMap::new())),
         slot_health: parking_lot::Mutex::new(HashMap::new()),
+        availability: parking_lot::Mutex::new(availability::Availability::default()),
         fact_checks_running: parking_lot::Mutex::new(std::collections::HashSet::new()),
         tts_child: parking_lot::Mutex::new(None),
     });

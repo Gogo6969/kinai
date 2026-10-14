@@ -250,7 +250,14 @@ pub(crate) fn transcript(msgs: &[Message]) -> String {
             _ => continue,
         };
         let day = m.created_at.get(..10).unwrap_or("");
-        let mut text = quote(m.content.trim());
+        // The summary must not record "the main model was down" as if it
+        // were a fact of the conversation (see `strip_failover_notice`).
+        let body = if m.role == "assistant" {
+            crate::slash::strip_failover_notice(m.content.trim())
+        } else {
+            m.content.trim()
+        };
+        let mut text = quote(body);
         for a in &m.attachments {
             let name = a.name.as_deref().unwrap_or("unnamed");
             text.push_str(&format!(" [attached {}: {name}]", a.kind));
