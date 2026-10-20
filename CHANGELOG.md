@@ -5,6 +5,38 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.147] — 2026-10-20
+
+### Added
+
+- **Video transcripts on any host Mac, with one click.** "What does this
+  video say?" used to need a household Linux server running a small
+  transcript service, so a family that simply downloads KinAI never had it.
+  Settings → Tools → "Set up video transcripts" now does the job on the host
+  Mac itself: it downloads the official yt-dlp, checks it against the
+  checksum published with that release, and proves it starts before calling
+  it installed. Every run happens inside a macOS sandbox that cannot read
+  KinAI's own data (conversations, keys, settings), your SSH keys or the
+  keychains, and cannot change login items or the app. If the sandbox is
+  missing, nothing runs. Finished transcripts are kept, so asking again never
+  goes back to YouTube, and yt-dlp updates itself once a day. A household
+  transcript service, if you have one, still takes priority.
+- **Round video messages and audio files on Telegram are understood too.**
+  Until now only a recorded voice message was transcribed. A round video
+  message (Telegram's microphone button turns into a camera button when you
+  tap it, so this happens by accident) and an audio file, such as a Voice
+  Memo, were answered with "I can't listen to voice messages yet", even
+  though voice input was on and working. They are now transcribed the same
+  way, and the reply says what it heard.
+
+### Changed
+
+- A recording longer than 10 minutes, or bigger than the 20 MB Telegram lets
+  a bot download, now gets a reply that says so, instead of a silent wait.
+- The log now records which kind of recording arrived on Telegram (never what
+  was said), and the thread shows "(round video message)" or "(audio file)"
+  instead of always "(voice message)".
+
 ## [0.2.146] — 2026-10-14
 
 ### Added
