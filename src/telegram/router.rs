@@ -64,47 +64,64 @@ pub async fn handle_update<R: Runtime>(
         return Ok(());
     };
 
-    // Voice message + voice input enabled → transcribe locally and run
-    // it as a normal chat turn. The transcript (🎙-prefixed) flows
-    // through the standard pipeline, so it lands in the KinAI thread,
-    // slash commands spoken aloud work, and the reply comes back as
-    // text (+ voice note if /voice is on).
+    // A recording (voice note, audio file or round video message) and voice
+    // input enabled → transcribe locally and run it as a normal chat turn.
+    // The transcript flows through the standard pipeline, so it lands in the
+    // KinAI thread, slash commands spoken aloud work, and the reply comes
+    // back as text (+ voice note if /voice is on).
     let mut text_or_caption = text_or_caption;
-    if text_or_caption.trim().is_empty() && msg.voice.is_some() {
-        let stt_cfg = state.config.read().stt.clone();
-        if crate::stt::is_ready(&stt_cfg) {
-            // Show activity immediately — transcription takes a moment.
-            let _ = api.send_chat_action(chat_id, "typing").await;
-            match transcribe_voice_message(api, &stt_cfg, msg).await {
-                Ok(t) if !t.trim().is_empty() => {
-                    let transcript = t.trim().to_string();
-                    // Echo what was understood — builds trust in the
-                    // transcription and explains an off answer.
-                    let _ = api.send_message(chat_id, &format!("🎙 «{transcript}»")).await;
-                    // Feed the model the PLAIN transcript — NOT prefixed with
-                    // the 🎙 emoji. A small chat model (e.g. gpt-oss-20b) reads
-                    // the mic glyph as "this is audio I can't process" and
-                    // refuses ("I can't interpret voice messages") even though
-                    // it has the text. The Telegram echo above already shows
-                    // the message came from voice.
-                    text_or_caption = transcript;
-                }
-                Ok(_) => {
-                    api.send_message(
-                        chat_id,
-                        "🎙 I couldn't hear any words in that voice message — please try again.",
-                    )
-                    .await?;
+    let spoken = spoken_media(msg);
+    if text_or_caption.trim().is_empty() {
+        if let Some((kind, media)) = spoken {
+            let stt_cfg = state.config.read().stt.clone();
+            let ready = crate::stt::is_ready(&stt_cfg);
+            // What arrived, never what was said. A refused recording leaves
+            // no other trace (the stored marker is all the thread keeps), and
+            // "which kind was it" is exactly what the 2026-10-19 report
+            // needed and could not be told.
+            tracing::info!(
+                "telegram: {} received (duration {}s), voice input ready={ready}",
+                kind.label(),
+                media.get("duration").and_then(|d| d.as_u64()).unwrap_or(0),
+            );
+            if ready {
+                if let Some(reply) = spoken_limit_reply(kind, media) {
+                    api.send_message(chat_id, &reply).await?;
                     return Ok(());
                 }
-                Err(e) => {
-                    tracing::warn!("telegram stt failed: {e:?}");
-                    api.send_message(
-                        chat_id,
-                        "🎙 I couldn't transcribe that voice message — please try again or type it.",
-                    )
-                    .await?;
-                    return Ok(());
+                // Show activity immediately — transcription takes a moment.
+                let _ = api.send_chat_action(chat_id, "typing").await;
+                match transcribe_spoken(api, &stt_cfg, kind, media).await {
+                    Ok(t) if !t.trim().is_empty() => {
+                        let transcript = t.trim().to_string();
+                        // Echo what was understood — builds trust in the
+                        // transcription and explains an off answer.
+                        let _ = api.send_message(chat_id, &format!("🎙 «{transcript}»")).await;
+                        // Feed the model the PLAIN transcript — NOT prefixed with
+                        // the 🎙 emoji. A small chat model (e.g. gpt-oss-20b) reads
+                        // the mic glyph as "this is audio I can't process" and
+                        // refuses ("I can't interpret voice messages") even though
+                        // it has the text. The Telegram echo above already shows
+                        // the message came from voice.
+                        text_or_caption = transcript;
+                    }
+                    Ok(_) => {
+                        api.send_message(
+                            chat_id,
+                            &format!("🎙 I couldn't hear any words in that {} — please try again.", kind.label()),
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        tracing::warn!("telegram stt failed: {e:?}");
+                        api.send_message(
+                            chat_id,
+                            &format!("🎙 I couldn't transcribe that {} — please try again or type it.", kind.label()),
+                        )
+                        .await?;
+                        return Ok(());
+                    }
                 }
             }
         }
@@ -116,18 +133,21 @@ pub async fn handle_update<R: Runtime>(
     // is mirrored into the peer's KinAI thread like any other turn, so
     // the app shows the same conversation Telegram does.
     if text_or_caption.trim().is_empty() && msg.photo.is_empty() {
-        let (marker, reply) = if msg.voice.is_some() || msg.audio.is_some() || msg.video_note.is_some() {
+        let (marker, reply) = if let Some((kind, _)) = spoken {
+            // Only reached when voice input is off or its model is missing:
+            // every kind of recording is transcribed once it is on.
             (
-                "🎙 (voice message)",
-                "🎙 I can't listen to voice messages yet — please type your question. \
-                 (The host can enable voice input in KinAI → Settings → Voice input, \
-                 then download a voice model. I can already talk back: send /voice and \
-                 my answers arrive as voice notes.)",
+                format!("🎙 ({})", kind.label()),
+                "🎙 I can't listen to voice messages, audio files or round videos yet — \
+                 please type your question. (The host can enable voice input in \
+                 KinAI → Settings → Voice input, then download a voice model. I can \
+                 already talk back: send /voice and my answers arrive as voice notes.)"
+                    .to_string(),
             )
         } else {
             (
-                "(unsupported content)",
-                "I can only read text and photos for now.",
+                "(unsupported content)".to_string(),
+                "I can only read text and photos for now.".to_string(),
             )
         };
         let thread_id = tg_db::active_thread(&state.db.pool, &peer_id)
@@ -138,19 +158,19 @@ pub async fn handle_update<R: Runtime>(
         state.db.upsert_thread(&peer_id, &thread_id, "Telegram").await.ok();
         if let Ok(m) = state
             .db
-            .append_message(&thread_id, "user", "Telegram", marker, &[])
+            .append_message(&thread_id, "user", "Telegram", &marker, &[])
             .await
         {
             fan_out_message(state, app, &peer_id, &m).await;
         }
         if let Ok(m) = state
             .db
-            .append_message(&thread_id, "assistant", "KinAI", reply, &[])
+            .append_message(&thread_id, "assistant", "KinAI", &reply, &[])
             .await
         {
             fan_out_message(state, app, &peer_id, &m).await;
         }
-        api.send_message(chat_id, &truncate_for_tg(reply)).await?;
+        api.send_message(chat_id, &truncate_for_tg(&reply)).await?;
         return Ok(());
     }
 
@@ -1501,26 +1521,101 @@ pub(crate) async fn voice_command_outcome(
     }
 }
 
-/// Download a Telegram voice note (OGG/Opus) and transcribe it with the
-/// local Whisper model. Mirrors the photo download flow: getFile →
-/// download by file_path.
-async fn transcribe_voice_message(
+/// The kinds of recording a person can send instead of typing. Telegram
+/// has three, and its microphone button silently becomes a camera button
+/// (a round video) when tapped, so people send the wrong one without
+/// knowing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Spoken {
+    Voice,
+    Audio,
+    VideoNote,
+}
+
+impl Spoken {
+    /// How the sender would name it; used in replies, the log and the
+    /// thread marker.
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Spoken::Voice => "voice message",
+            Spoken::Audio => "audio file",
+            Spoken::VideoNote => "round video message",
+        }
+    }
+
+    /// The extension to assume if Telegram's file path has none.
+    fn fallback_ext(self) -> &'static str {
+        match self {
+            Spoken::Voice => "oga",
+            Spoken::Audio => "m4a",
+            Spoken::VideoNote => "mp4",
+        }
+    }
+}
+
+/// The recording a message carries, if any.
+pub(crate) fn spoken_media(msg: &TelegramMessage) -> Option<(Spoken, &serde_json::Value)> {
+    if let Some(v) = &msg.voice {
+        return Some((Spoken::Voice, v));
+    }
+    if let Some(v) = &msg.audio {
+        return Some((Spoken::Audio, v));
+    }
+    msg.video_note.as_ref().map(|v| (Spoken::VideoNote, v))
+}
+
+/// The longest recording that is transcribed. Whisper on this Mac runs far
+/// faster than real time, but an hour-long file would still hold the host
+/// busy for minutes on one person's say-so.
+const MAX_SPOKEN_SECS: u64 = 600;
+/// What Telegram lets a bot download.
+const MAX_DOWNLOAD_BYTES: u64 = 20 * 1024 * 1024;
+
+/// Why a recording will not be transcribed, in words for the sender, or None
+/// if it is fine to try.
+pub(crate) fn spoken_limit_reply(kind: Spoken, media: &serde_json::Value) -> Option<String> {
+    let secs = media.get("duration").and_then(|d| d.as_u64()).unwrap_or(0);
+    if secs > MAX_SPOKEN_SECS {
+        return Some(format!(
+            "🎙 That {} is {} min long — I transcribe up to {} minutes. Please send a shorter one or type it.",
+            kind.label(),
+            secs.div_ceil(60),
+            MAX_SPOKEN_SECS / 60
+        ));
+    }
+    let bytes = media.get("file_size").and_then(|d| d.as_u64()).unwrap_or(0);
+    if bytes > MAX_DOWNLOAD_BYTES {
+        return Some(format!(
+            "🎙 That {} is {} MB — Telegram only lets me download up to {} MB. Please send a shorter one or type it.",
+            kind.label(),
+            bytes.div_ceil(1024 * 1024),
+            MAX_DOWNLOAD_BYTES / (1024 * 1024)
+        ));
+    }
+    None
+}
+
+/// Download a Telegram recording and transcribe it with the local Whisper
+/// model. Mirrors the photo download flow: getFile → download by
+/// file_path. The file keeps Telegram's extension because the audio decoder
+/// reads the format from it.
+async fn transcribe_spoken(
     api: &BotApi,
     stt_cfg: &crate::config::SttConfig,
-    msg: &TelegramMessage,
+    kind: Spoken,
+    media: &serde_json::Value,
 ) -> Result<String> {
-    let file_id = msg
-        .voice
-        .as_ref()
-        .and_then(|v| v.get("file_id"))
+    let file_id = media
+        .get("file_id")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow::anyhow!("voice message without file_id"))?;
+        .ok_or_else(|| anyhow::anyhow!("{} without file_id", kind.label()))?;
     let file = api.get_file(file_id).await?;
     let file_path = file
         .file_path
         .ok_or_else(|| anyhow::anyhow!("telegram getFile returned no file_path"))?;
     let bytes = api.download_file(&file_path).await?;
-    crate::stt::transcribe_ogg(stt_cfg, &bytes).await
+    let ext = crate::stt::audio_extension(&file_path, kind.fallback_ext());
+    crate::stt::transcribe_audio(stt_cfg, &bytes, &ext).await
 }
 
 /// If `content` is the `/voice` command, return the remainder (e.g.
@@ -1780,5 +1875,81 @@ mod turn_ordering_tests {
     fn the_same_chat_always_gets_the_same_lock() {
         assert!(Arc::ptr_eq(&chat_turn_lock(7), &chat_turn_lock(7)));
         assert!(!Arc::ptr_eq(&chat_turn_lock(7), &chat_turn_lock(8)));
+    }
+}
+
+/// Telegram has three kinds of recording and only the voice note used to be
+/// transcribed. A round video message (the microphone button turns into a
+/// camera button when tapped) and an audio file were answered with "I can't
+/// listen to voice messages yet", although voice input was on and working.
+#[cfg(test)]
+mod spoken_media_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn message(extra: serde_json::Value) -> TelegramMessage {
+        let mut m = json!({ "message_id": 1, "chat": { "id": 7, "type": "private" } });
+        m.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        serde_json::from_value(m).expect("a Telegram message")
+    }
+
+    #[test]
+    fn each_kind_of_recording_is_found() {
+        let voice = message(json!({ "voice": { "file_id": "v", "duration": 4 } }));
+        let audio = message(json!({ "audio": { "file_id": "a", "duration": 30 } }));
+        let round = message(json!({ "video_note": { "file_id": "n", "duration": 9, "length": 240 } }));
+        assert_eq!(spoken_media(&voice).map(|(k, _)| k), Some(Spoken::Voice));
+        assert_eq!(spoken_media(&audio).map(|(k, _)| k), Some(Spoken::Audio));
+        assert_eq!(spoken_media(&round).map(|(k, _)| k), Some(Spoken::VideoNote));
+        assert_eq!(spoken_media(&round).unwrap().1["file_id"], "n");
+    }
+
+    #[test]
+    fn text_and_pictures_are_not_recordings() {
+        assert!(spoken_media(&message(json!({ "text": "hello" }))).is_none());
+        assert!(spoken_media(&message(json!({
+            "photo": [{ "file_id": "p", "width": 10, "height": 10 }]
+        })))
+        .is_none());
+        assert!(spoken_media(&message(json!({ "sticker": { "file_id": "s" } }))).is_none());
+    }
+
+    #[test]
+    fn each_kind_has_its_own_name_and_extension() {
+        let all = [Spoken::Voice, Spoken::Audio, Spoken::VideoNote];
+        let labels: std::collections::HashSet<_> = all.iter().map(|k| k.label()).collect();
+        assert_eq!(labels.len(), 3);
+        // The fallback is only used when Telegram's path has no extension,
+        // and it must be one the decoder can read for that kind.
+        assert_eq!(Spoken::Voice.fallback_ext(), "oga");
+        assert_eq!(Spoken::VideoNote.fallback_ext(), "mp4");
+    }
+
+    #[test]
+    fn an_ordinary_recording_is_tried() {
+        for (kind, media) in [
+            (Spoken::Voice, json!({ "file_id": "v", "duration": 12, "file_size": 20_000 })),
+            (Spoken::VideoNote, json!({ "file_id": "n", "duration": 60, "file_size": 3_000_000 })),
+            (Spoken::Audio, json!({ "file_id": "a", "duration": 600, "file_size": 20 * 1024 * 1024 })),
+            // Telegram may leave size and duration out.
+            (Spoken::Voice, json!({ "file_id": "v" })),
+        ] {
+            assert_eq!(spoken_limit_reply(kind, &media), None, "{kind:?} {media}");
+        }
+    }
+
+    #[test]
+    fn a_very_long_or_huge_recording_is_declined_in_words() {
+        let long = spoken_limit_reply(Spoken::Audio, &json!({ "file_id": "a", "duration": 3_725 }))
+            .expect("an hour is too long");
+        assert!(long.contains("audio file") && long.contains("63 min") && long.contains("10 minutes"), "{long}");
+        let big = spoken_limit_reply(
+            Spoken::Audio,
+            &json!({ "file_id": "a", "duration": 300, "file_size": 45 * 1024 * 1024 }),
+        )
+        .expect("45 MB is over what a bot may download");
+        assert!(big.contains("45 MB") && big.contains("20 MB"), "{big}");
+        // Just over the line.
+        assert!(spoken_limit_reply(Spoken::Voice, &json!({ "duration": 601 })).is_some());
     }
 }

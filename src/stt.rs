@@ -127,11 +127,13 @@ mod engine {
     }
 }
 
-/// Decode an OGG/Opus (or any CoreAudio-readable) audio file to 16 kHz
-/// mono i16 WAV via the system `afconvert`, then load the samples.
+/// Decode an OGG/Opus, MP3, M4A or MP4 (any CoreAudio-readable) recording
+/// to 16 kHz mono i16 WAV via the system `afconvert`, then load the samples.
 #[cfg(target_os = "macos")]
 async fn decode_to_pcm(audio_path: &std::path::Path) -> Result<Vec<f32>> {
-    let wav_path = audio_path.with_extension("wav");
+    // Never the input's own name: a recording that already is a .wav would
+    // otherwise be converted onto itself.
+    let wav_path = audio_path.with_extension("16k.wav");
     let out = tokio::process::Command::new("afconvert")
         .args(["-f", "WAVE", "-d", "LEI16@16000", "-c", "1"])
         .arg(audio_path)
@@ -163,25 +165,50 @@ async fn decode_to_pcm(audio_path: &std::path::Path) -> Result<Vec<f32>> {
     Ok(pcm)
 }
 
-/// Transcribe raw OGG/Opus bytes (a downloaded Telegram voice note).
+/// The extension a downloaded recording is saved under. `afconvert` picks
+/// its reader from the extension: an MP4 saved as `.oga` is refused
+/// ("Couldn't open input file"), so the file must keep the name Telegram
+/// gave it. Anything that is not a short plain extension falls back to
+/// `fallback`.
+pub fn audio_extension(file_path: &str, fallback: &str) -> String {
+    let ext = file_path
+        .rsplit('/')
+        .next()
+        .and_then(|name| name.rsplit_once('.'))
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .filter(|e| (1..=5).contains(&e.len()) && e.chars().all(|c| c.is_ascii_alphanumeric()));
+    ext.unwrap_or_else(|| fallback.to_string())
+}
+
+/// Transcribe a downloaded Telegram recording: a voice note (OGG/Opus), an
+/// audio file (MP3, M4A, …) or a round video message (MP4, whose sound track
+/// is read). `ext` is the file's real extension, see `audio_extension`.
 /// Returns the trimmed transcript ("" possible for silence).
 #[cfg(target_os = "macos")]
-pub async fn transcribe_ogg(cfg: &crate::config::SttConfig, ogg_bytes: &[u8]) -> Result<String> {
+pub async fn transcribe_audio(
+    cfg: &crate::config::SttConfig,
+    bytes: &[u8],
+    ext: &str,
+) -> Result<String> {
     let model = model_path(&cfg.model).ok_or_else(|| anyhow!("unknown model {:?}", cfg.model))?;
     if !model_downloaded(&cfg.model) {
         return Err(anyhow!("speech model not downloaded"));
     }
     let id = uuid::Uuid::new_v4();
-    let ogg_path = std::env::temp_dir().join(format!("kinai-stt-{id}.oga"));
-    tokio::fs::write(&ogg_path, ogg_bytes).await.context("write voice file")?;
-    let decoded = decode_to_pcm(&ogg_path).await;
-    let _ = tokio::fs::remove_file(&ogg_path).await;
+    let audio_path = std::env::temp_dir().join(format!("kinai-stt-{id}.{}", audio_extension(&format!("x.{ext}"), "oga")));
+    tokio::fs::write(&audio_path, bytes).await.context("write voice file")?;
+    let decoded = decode_to_pcm(&audio_path).await;
+    let _ = tokio::fs::remove_file(&audio_path).await;
     let pcm = decoded?;
     tokio::task::spawn_blocking(move || engine::transcribe_pcm(&model, &pcm)).await?
 }
 
 #[cfg(not(target_os = "macos"))]
-pub async fn transcribe_ogg(_cfg: &crate::config::SttConfig, _ogg_bytes: &[u8]) -> Result<String> {
+pub async fn transcribe_audio(
+    _cfg: &crate::config::SttConfig,
+    _bytes: &[u8],
+    _ext: &str,
+) -> Result<String> {
     Err(anyhow!("voice input requires a macOS host"))
 }
 
@@ -255,8 +282,71 @@ mod tests {
             model: "small-q5_1".into(),
         };
         let bytes = std::fs::read("/tmp/tts-test.ogg").expect("fixture /tmp/tts-test.ogg");
-        let text = transcribe_ogg(&cfg, &bytes).await.expect("transcribe");
+        let text = transcribe_audio(&cfg, &bytes, "oga").await.expect("transcribe");
         println!("TRANSCRIPT: {text:?}");
         assert!(!text.is_empty());
+    }
+
+    #[test]
+    fn a_recording_keeps_the_extension_telegram_gave_it() {
+        // afconvert chooses its reader from the extension, so a round video
+        // saved as .oga is refused; each kind must keep its own.
+        assert_eq!(audio_extension("voice/file_12.oga", "oga"), "oga");
+        assert_eq!(audio_extension("video_notes/file_3.mp4", "oga"), "mp4");
+        assert_eq!(audio_extension("music/file_9.MP3", "oga"), "mp3");
+        assert_eq!(audio_extension("music/file_9.m4a", "oga"), "m4a");
+    }
+
+    #[test]
+    fn an_odd_file_path_falls_back_instead_of_reaching_the_disk() {
+        for odd in [
+            "",
+            "voice/file_12",
+            "voice/.",
+            "voice/file_1.toolongext",
+            "voice/file_1.a b",
+            "../../etc/passwd",
+            "voice/file_1.mp4/../x",
+            "voice/file_1.o/ga",
+        ] {
+            let ext = audio_extension(odd, "oga");
+            assert!(
+                (1..=5).contains(&ext.len()) && ext.chars().all(|c| c.is_ascii_alphanumeric()),
+                "{odd:?} gave {ext:?}"
+            );
+        }
+        assert_eq!(audio_extension("voice/file_12", "oga"), "oga");
+        assert_eq!(audio_extension("voice/file_1.toolongext", "mp4"), "mp4");
+    }
+
+    /// The decoder the host really uses must read what a round video and an
+    /// audio file contain, not only a voice note. macOS-only: it shells out
+    /// to `afconvert` (shipped with the OS) on a clip made here from `say`.
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn the_decoder_reads_an_mp4s_sound_track() {
+        let dir = tempfile::tempdir().unwrap();
+        let aiff = dir.path().join("clip.aiff");
+        let said = std::process::Command::new("say")
+            .args(["-o"])
+            .arg(&aiff)
+            .arg("Testing one two three")
+            .status();
+        if !said.map(|s| s.success()).unwrap_or(false) {
+            return; // no speech synthesizer on this machine: nothing to build a clip from
+        }
+        // AAC in an MP4 container is what a round video carries.
+        let mp4 = dir.path().join("note.mp4");
+        let made = std::process::Command::new("afconvert")
+            .args(["-f", "mp4f", "-d", "aac"])
+            .arg(&aiff)
+            .arg(&mp4)
+            .status();
+        if !made.map(|s| s.success()).unwrap_or(false) {
+            return;
+        }
+        let pcm = decode_to_pcm(&mp4).await.expect("decode an mp4's sound track");
+        assert!(pcm.len() > 16_000, "expected over a second of audio, got {} samples", pcm.len());
+        assert!(pcm.iter().any(|s| s.abs() > 0.01), "decoded to silence");
     }
 }
