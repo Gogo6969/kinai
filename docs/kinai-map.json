@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-10-14T16:15:38+00:00",
-  "version": "0.2.146",
+  "generated_at": "2026-10-20T18:56:49+00:00",
+  "version": "0.2.147",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 409,
-    "head": "17090af"
+    "commits": 415,
+    "head": "035fd2e"
   },
   "totals": {
-    "rust_files": 73,
-    "rust_lines": 38151,
+    "rust_files": 74,
+    "rust_lines": 39230,
     "frontend_files": 38,
-    "frontend_lines": 14687,
-    "unit_tests": 447,
+    "frontend_lines": 14816,
+    "unit_tests": 465,
     "integration_test_files": 20,
-    "releases": 138,
-    "tags": 133
+    "releases": 139,
+    "tags": 134
   },
   "areas": [
     {
@@ -122,7 +122,7 @@
     {
       "path": "src/commands.rs",
       "area": "entry",
-      "lines": 3538,
+      "lines": 3558,
       "doc": "Tauri command surface — every IPC entrypoint the frontend can call.",
       "tests": 0
     },
@@ -269,7 +269,7 @@
     {
       "path": "src/lib.rs",
       "area": "entry",
-      "lines": 639,
+      "lines": 646,
       "doc": "KinAI library entrypoint — wires Tauri shell, Axum HTTP/WS server, tray, global hotkey, LLM client, and the never-lose-context pipeline.",
       "tests": 0
     },
@@ -416,9 +416,9 @@
     {
       "path": "src/stt.rs",
       "area": "media",
-      "lines": 263,
+      "lines": 353,
       "doc": "Local speech-to-text for inbound Telegram voice messages.",
-      "tests": 2
+      "tests": 5
     },
     {
       "path": "src/telegram/api.rs",
@@ -458,9 +458,9 @@
     {
       "path": "src/telegram/router.rs",
       "area": "telegram",
-      "lines": 1785,
+      "lines": 1956,
       "doc": "Route incoming Telegram updates into KinAI's chat pipeline.",
-      "tests": 16
+      "tests": 21
     },
     {
       "path": "src/tools/calculator.rs",
@@ -521,7 +521,7 @@
     {
       "path": "src/tools/registry.rs",
       "area": "tools",
-      "lines": 1062,
+      "lines": 1064,
       "doc": "Tool catalogue — generated dynamically from `ToolSettings` so users can disable tools their model shouldn't be allowed to call.",
       "tests": 12
     },
@@ -535,8 +535,8 @@
     {
       "path": "src/tools/video_transcript.rs",
       "area": "tools",
-      "lines": 200,
-      "doc": "Read what a video actually says, via the family's own transcript service.",
+      "lines": 236,
+      "doc": "Read what a video actually says, from its captions.",
       "tests": 4
     },
     {
@@ -552,6 +552,13 @@
       "lines": 387,
       "doc": "Social / discussion search.",
       "tests": 0
+    },
+    {
+      "path": "src/transcripts.rs",
+      "area": "other",
+      "lines": 753,
+      "doc": "Built-in video transcripts: KinAI's own yt-dlp, run inside a macOS sandbox on the host Mac.",
+      "tests": 10
     },
     {
       "path": "src/tray.rs",
@@ -599,7 +606,7 @@
     {
       "path": "frontend/src/lib/api.ts",
       "kind": "lib",
-      "lines": 774,
+      "lines": 787,
       "doc": "Pause toggle. When `false` this slot is hidden from slash menus and skipped during message routing. Defaults to `true` for the fast slot, `false` for the deep slot (until the user fills it)."
     },
     {
@@ -683,7 +690,7 @@
     {
       "path": "frontend/src/lib/dev-tauri-mock.ts",
       "kind": "lib",
-      "lines": 580,
+      "lines": 604,
       "doc": "DEV-ONLY Tauri IPC mock. When the frontend runs in a plain browser (`pnpm dev` + localhost:1420, no Tauri shell), `window.__TAURI_INTERNALS__` doesn't exist and every invoke() rejects — the UI is untestable outside the app. This module installs a minimal in-memory backend so the whole UI (most importantly the /setup wizard) can be driven end-to-end in a browser: config mutations persist for the se"
     },
     {
@@ -803,7 +810,7 @@
     {
       "path": "frontend/src/routes/settings/+page.svelte",
       "kind": "route",
-      "lines": 2375,
+      "lines": 2467,
       "doc": "Fast model — the existing single slot. Reachable as `/fast` once the deep slot is also configured; the default routing target for plain (non-slash) messages."
     },
     {
@@ -1273,12 +1280,41 @@
       "test_tool",
       "test_vision_endpoint",
       "toggle_overlay",
+      "transcripts_install",
+      "transcripts_remove",
+      "transcripts_status",
       "tts_supported",
       "unpair_telegram",
       "write_prompt_snapshot"
     ]
   },
   "history": [
+    {
+      "version": "0.2.147",
+      "date": "2026-10-20",
+      "sections": {
+        "Added": [
+          {
+            "title": "Video transcripts on any host Mac, with one click.",
+            "detail": "\"What does this video say?\" used to need a household Linux server running a small transcript service, so a family that simply downloads KinAI never had it. Settings → Tools → \"Set up video transcripts\" now does the job on the host Mac itself: it downloads the official yt-dlp, checks it against the checksum published with that release, and proves it starts before calling it installed. Every run happens inside a macOS sandbox that cannot read KinAI's own data (conversations, keys, settings), your SSH keys or the keychains, and cannot change login items or the app. If the sandbox is missing, nothing runs. Finished transcripts are kept, so asking again never goes back to YouTube, and yt-dlp updates itself once a day. A household transcript service, if you have one, still takes priority."
+          },
+          {
+            "title": "Round video messages and audio files on Telegram are understood too.",
+            "detail": "Until now only a recorded voice message was transcribed. A round video message (Telegram's microphone button turns into a camera button when you tap it, so this happens by accident) and an audio file, such as a Voice Memo, were answered with \"I can't listen to voice messages yet\", even though voice input was on and working. They are now transcribed the same way, and the reply says what it heard."
+          }
+        ],
+        "Changed": [
+          {
+            "title": "A recording longer than 10 minutes, or bigger than the 20 MB Telegram lets a bot download, now gets a reply that says so",
+            "detail": ""
+          },
+          {
+            "title": "The log now records which kind of recording arrived on Telegram (never what was said), and the thread shows \"(round vide",
+            "detail": ""
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.146",
       "date": "2026-10-14",
@@ -4070,6 +4106,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.147",
+      "date": "2026-10-20"
+    },
     {
       "tag": "v0.2.146",
       "date": "2026-10-14"
