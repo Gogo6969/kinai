@@ -46,8 +46,12 @@ const FOLD_INPUT_MAX_TOKENS: usize = 24_000;
 /// Longest single message quoted into the summary request, in characters.
 const QUOTE_MAX_CHARS: usize = 6_000;
 /// Output ceiling for the summary call. Thinking is switched off, so this
-/// is the summary alone (~350 words asked for).
-const SUMMARY_MAX_TOKENS: usize = 2_000;
+/// is the summary alone (~350 words asked for). 2,000 until 0.2.148: GLM-5.3
+/// does not count words, and for a long thread whose digest was already near
+/// [`DIGEST_MAX_CHARS`] it wrote 470–930 words, so on 2026-11-07 that thread
+/// ran into the ceiling 17 times in a row and never folded. A summary too
+/// long to store whole is now condensed instead (see [`fitted_summary`]).
+const SUMMARY_MAX_TOKENS: usize = 4_000;
 /// Stored digest ceiling, in characters.
 const DIGEST_MAX_CHARS: usize = 5_000;
 /// After a failed fold, leave the thread alone this long — a broken model
@@ -64,11 +68,26 @@ Update the summary with the new messages. Keep what KinAI may need later: facts,
 dates and places the person shared; their preferences and plans; decisions and results; questions \
 still open; what KinAI recommended or promised; links, files and images that came up. Drop \
 greetings and small talk. When something changed, keep only the latest state. Keep the previous \
-summary's points unless the new messages replace them.
+summary's points unless the new messages replace them, but the whole summary must stay within the \
+word limit: when it would be longer, merge related points and drop the least important old ones \
+first.
 
 Write in the language the conversation mostly uses. Plain text, one point per line, each starting \
 with \"- \". At most 350 words. Never add anything that is not in the conversation. Output only the \
 summary.";
+
+/// The second, small call that shortens a summary which came back too long
+/// to store whole (see [`fitted_summary`]).
+const CONDENSE_INSTRUCTIONS: &str = "This running summary of a conversation between a family member \
+and KinAI, their AI assistant, is too long. Shorten it to at most 250 words.
+
+Keep the points KinAI is most likely to need later: facts, names, numbers, dates and places; \
+preferences and plans; decisions and results; questions still open; what KinAI recommended or \
+promised. Merge related points, drop minor or outdated ones, and keep the newest points. Never add \
+anything that is not in the summary.
+
+Same language as the summary. Plain text, one point per line, each starting with \"- \". Output only \
+the summary.";
 
 /// What one fold did — logged, never the content.
 #[derive(Debug, PartialEq, Eq)]
@@ -98,13 +117,17 @@ pub async fn maybe_compact(db: &Db, llm: &LlmSettings, peer_id: &str, thread_id:
     let started = Instant::now();
     let client = LlmClient::new(llm.clone());
     let outcome = compact_with(db, llm, peer_id, thread_id, |request| async move {
-        let r = client
-            .complete_without_thinking(&request, &[], Some(SUMMARY_MAX_TOKENS))
-            .await?;
-        if r.truncated {
-            bail!("the summary hit the {SUMMARY_MAX_TOKENS}-token output ceiling");
-        }
-        Ok(r.content)
+        let client = &client;
+        fitted_summary(request, move |messages| async move {
+            let r = client
+                .complete_without_thinking(&messages, &[], Some(SUMMARY_MAX_TOKENS))
+                .await?;
+            Ok(SummaryReply {
+                content: r.content,
+                truncated: r.truncated,
+            })
+        })
+        .await
     })
     .await;
     match outcome {
@@ -276,15 +299,73 @@ fn quote(s: &str) -> String {
     t
 }
 
+/// One summary call's reply: the text, and whether it hit the output ceiling.
+pub(crate) struct SummaryReply {
+    pub content: String,
+    pub truncated: bool,
+}
+
+/// The summary to store, from one call — or two when the first reply hit
+/// the output ceiling or is too long to store whole (0.2.148). Asked for at
+/// most 350 words, GLM-5.3 wrote 470–930 for a long thread; the old code
+/// then failed the fold (ceiling hit) or [`clean_summary`] cut the text at
+/// [`DIGEST_MAX_CHARS`], which loses its last — usually newest — points.
+/// Now the same model condenses its own summary once, a small call (the
+/// summary alone, ~2k tokens in).
+pub(crate) async fn fitted_summary<F, Fut>(request: Vec<ChatMessage>, mut call: F) -> Result<String>
+where
+    F: FnMut(Vec<ChatMessage>) -> Fut,
+    Fut: Future<Output = Result<SummaryReply>>,
+{
+    let first = call(request).await?;
+    if !first.truncated && summary_body(&first.content).chars().count() <= DIGEST_MAX_CHARS {
+        return Ok(first.content);
+    }
+    let second = call(condense_request(summary_body(&first.content))).await?;
+    if second.truncated {
+        bail!("the summary hit the {SUMMARY_MAX_TOKENS}-token output ceiling even when condensed");
+    }
+    Ok(second.content)
+}
+
+/// Characters a condensed summary should stay under: well inside
+/// [`DIGEST_MAX_CHARS`], because "at most 250 words" alone still came back
+/// at 5,428 characters (live fold, 2026-11-08); the measured length and a
+/// character target in the request work better.
+const CONDENSE_TARGET_CHARS: usize = DIGEST_MAX_CHARS * 3 / 5;
+
+fn condense_request(summary: &str) -> Vec<ChatMessage> {
+    let chars = summary.chars().count();
+    vec![
+        ChatMessage::System {
+            content: CONDENSE_INSTRUCTIONS.to_string(),
+        },
+        ChatMessage::User {
+            content: format!(
+                "This summary is {chars} characters long. Rewrite it in under \
+                 {CONDENSE_TARGET_CHARS} characters (at most 12 lines).\n\nSummary to shorten:\n{summary}"
+            ),
+            name: None,
+            image_data_urls: vec![],
+        },
+    ]
+}
+
+/// A reply without the inline `<think>` block some servers leave in the
+/// content, trimmed.
+fn summary_body(raw: &str) -> &str {
+    match raw.rfind("</think>") {
+        Some(i) => &raw[i + "</think>".len()..],
+        None => raw,
+    }
+    .trim()
+}
+
 /// The model's reply as a storable digest: an inline `<think>` block some
 /// servers leave in the content is dropped, whitespace trimmed, length
 /// capped at a line break. `None` when nothing usable is left.
 pub(crate) fn clean_summary(raw: &str) -> Option<String> {
-    let body = match raw.rfind("</think>") {
-        Some(i) => &raw[i + "</think>".len()..],
-        None => raw,
-    };
-    let body = body.trim();
+    let body = summary_body(raw);
     if body.is_empty() {
         return None;
     }
@@ -411,6 +492,144 @@ mod tests {
         let c = clean_summary(&long).unwrap();
         assert!(c.chars().count() <= DIGEST_MAX_CHARS);
         assert!(c.ends_with("- point"), "cut at a line break");
+    }
+
+    /// A fake summary model: hands out `replies` in order and records every
+    /// request it was sent.
+    fn fake_model(
+        replies: Vec<(String, bool)>,
+        seen: &std::sync::Mutex<Vec<Vec<ChatMessage>>>,
+    ) -> impl FnMut(Vec<ChatMessage>) -> std::future::Ready<Result<SummaryReply>> + '_ {
+        let mut replies = replies.into_iter();
+        move |request| {
+            seen.lock().unwrap().push(request);
+            let (content, truncated) = replies.next().expect("one call too many");
+            std::future::ready(Ok(SummaryReply { content, truncated }))
+        }
+    }
+
+    fn system_text(request: &[ChatMessage]) -> &str {
+        match &request[0] {
+            ChatMessage::System { content } => content,
+            other => panic!("expected the system message first, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_summary_that_fits_is_stored_as_it_came() {
+        let seen = std::sync::Mutex::new(vec![]);
+        let short = "- one point\n- another".to_string();
+        let out = fitted_summary(vec![], fake_model(vec![(short.clone(), false)], &seen))
+            .await
+            .unwrap();
+        assert_eq!(out, short);
+        assert_eq!(seen.lock().unwrap().len(), 1, "no second call");
+        // a <think> block in the content does not count toward the size
+        let thinky = format!("<think>{}</think>- short", "x".repeat(9_000));
+        let out = fitted_summary(vec![], fake_model(vec![(thinky.clone(), false)], &seen))
+            .await
+            .unwrap();
+        assert_eq!(out, thinky);
+    }
+
+    #[tokio::test]
+    async fn a_summary_too_long_to_store_is_condensed_once() {
+        // 2026-11-07: 928 words / 6,608 chars for a "350 words" request
+        let seen = std::sync::Mutex::new(vec![]);
+        let long = "- a point the model kept from an older summary\n".repeat(150);
+        assert!(long.chars().count() > DIGEST_MAX_CHARS);
+        let out = fitted_summary(
+            vec![],
+            fake_model(vec![(long.clone(), false), ("- condensed".into(), false)], &seen),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out, "- condensed");
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(system_text(&seen[1]), CONDENSE_INSTRUCTIONS);
+        match &seen[1][1] {
+            ChatMessage::User { content, .. } => assert!(content.ends_with(long.trim()), "the whole summary is condensed"),
+            other => panic!("expected the summary as the user message, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_summary_that_hit_the_ceiling_is_condensed_not_dropped() {
+        let seen = std::sync::Mutex::new(vec![]);
+        let out = fitted_summary(
+            vec![],
+            fake_model(vec![("- a\n- b\n- cut off mid".into(), true), ("- a\n- b".into(), false)], &seen),
+        )
+        .await
+        .unwrap();
+        assert_eq!(out, "- a\n- b");
+        assert_eq!(seen.lock().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_condensed_summary_that_still_hits_the_ceiling_fails_the_fold() {
+        let seen = std::sync::Mutex::new(vec![]);
+        let err = fitted_summary(
+            vec![],
+            fake_model(vec![("- long".into(), true), ("- still long".into(), true)], &seen),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.to_string().contains("even when condensed"), "{err}");
+    }
+
+    /// Live check of one real fold on a COPY of a KinAI database: the fast
+    /// slot's real model, the real thread, the copy's digest. Prints sizes
+    /// only, never the summary. Ignored by default.
+    ///   sqlite3 ~/.kinai/kinai.db ".backup /tmp/x/copy.db"
+    ///   KINAI_FOLD_PROBE_DB=/tmp/x/copy.db KINAI_FOLD_PROBE_PEER=<peer> KINAI_FOLD_PROBE_THREAD=<id> \
+    ///     cargo test --lib fold_probe_live -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore]
+    async fn fold_probe_live() {
+        let path = std::env::var("KINAI_FOLD_PROBE_DB").expect("KINAI_FOLD_PROBE_DB = a copy of kinai.db");
+        assert!(!path.ends_with(".kinai/kinai.db"), "never on the live database: copy it first");
+        let peer = std::env::var("KINAI_FOLD_PROBE_PEER").expect("KINAI_FOLD_PROBE_PEER");
+        let thread = std::env::var("KINAI_FOLD_PROBE_THREAD").expect("KINAI_FOLD_PROBE_THREAD");
+        let db = Db::open(&path).await.unwrap();
+        let llm = crate::config::AppConfig::load_or_default().llm;
+        let client = LlmClient::new(llm.clone());
+        let calls = std::sync::Mutex::new(Vec::<(usize, bool)>::new());
+        let started = Instant::now();
+        let outcome = compact_with(&db, &llm, &peer, &thread, |request| {
+            let (client, calls) = (&client, &calls);
+            async move {
+                fitted_summary(request, move |messages| async move {
+                    let r = client
+                        .complete_without_thinking(&messages, &[], Some(SUMMARY_MAX_TOKENS))
+                        .await?;
+                    calls.lock().unwrap().push((r.content.chars().count(), r.truncated));
+                    Ok(SummaryReply {
+                        content: r.content,
+                        truncated: r.truncated,
+                    })
+                })
+                .await
+            }
+        })
+        .await;
+        let calls = calls.lock().unwrap().clone();
+        match outcome {
+            Ok(Some(f)) => println!(
+                "FOLDED on {}: {} messages ({} tokens) into a {}-token digest; calls (chars, truncated): {calls:?}; {:.1} s",
+                llm.model, f.messages, f.tokens, f.digest_tokens, started.elapsed().as_secs_f64()
+            ),
+            Ok(None) => println!("nothing to fold; calls {calls:?}"),
+            Err(e) => panic!("fold failed: {e:#}; calls {calls:?}"),
+        }
+    }
+
+    #[test]
+    fn the_summary_instructions_put_the_word_limit_first() {
+        assert!(INSTRUCTIONS.contains("must stay within the word limit"));
+        assert!(CONDENSE_INSTRUCTIONS.contains("at most 250 words"));
+        assert!(SUMMARY_MAX_TOKENS >= 4_000);
     }
 
     #[test]
