@@ -156,6 +156,19 @@
   let keyError = $state('');
   let newKey = $state<Invite | null>(null);
   let copiedKey = $state(false);
+  /** The name an active key already has, after one click on Create: the
+   *  page asks before making a second key with it (the next click with the
+   *  same name goes ahead). Keys are easy to create twice when nothing on
+   *  screen says the first one worked. */
+  let keyDuplicate = $state<string | null>(null);
+  let keyPanel = $state<HTMLElement | null>(null);
+
+  function activeKeyNamed(name: string): Invite | undefined {
+    const want = name.toLowerCase();
+    return invites.find(
+      (inv) => isKey(inv) && !inv.revoked && !isExpired(inv) && inv.label.trim().toLowerCase() === want,
+    );
+  }
 
   async function createKey() {
     if (keyBusy) return;
@@ -164,17 +177,39 @@
       keyError = 'Give the key a name so you can tell them apart later.';
       return;
     }
+    if (keyDuplicate !== label && activeKeyNamed(label)) {
+      keyDuplicate = label;
+      keyError = '';
+      return;
+    }
     keyBusy = true;
     keyError = '';
     try {
       // 0 = never expires, matching the invite form's sentinel.
       newKey = await api.createApiKey({ label, ttl_days: 0 });
-      await refresh();
+      keyDuplicate = null;
+      copiedKey = false;
     } catch (e) {
       keyError = `Could not create the key: ${e}`;
+      return;
     } finally {
       keyBusy = false;
     }
+    // The key exists from here on. A failed list refresh must not be
+    // reported as a failed creation, or the host makes another one.
+    try {
+      await refresh();
+    } catch (e) {
+      console.warn('refresh after creating a key', e);
+    }
+    await tick();
+    keyPanel?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+
+  /** Close the one-time view. The key keeps working; only its text is gone. */
+  function doneWithKey() {
+    newKey = null;
+    copiedKey = false;
   }
 
   function copyKey() {
@@ -195,6 +230,9 @@
     await tick();
     const next: Record<string, string> = {};
     for (const inv of invites) {
+      // An API key's QR would carry the key itself; it is shown once, at
+      // creation, and never again.
+      if (isKey(inv)) continue;
       next[inv.id] = await QRCode.toString(inv.qr_payload, {
         type: 'svg',
         color: { dark: '#ffffff', light: '#00000000' },
@@ -304,36 +342,24 @@
           backup model meanwhile. Revoke it from the list below like any invite.
         </p>
       </div>
-      <div class="flex flex-wrap items-end gap-3">
-        <label class="text-sm">
-          <div class="text-white/60 mb-1">What is it for?</div>
-          <input class="kin-field mt-1" bind:value={keyLabel} maxlength={MAX_LABEL} placeholder="Automation" />
-        </label>
-        <button
-          class="kin-btn-primary disabled:opacity-60"
-          onclick={createKey}
-          disabled={keyBusy}
-        >
-          {keyBusy ? 'Creating…' : 'Create API key'}
-        </button>
-      </div>
-
-      {#if keyError}
-        <div class="rounded-lg border border-red-400/30 bg-red-400/10 text-red-200 px-3 py-2 text-sm">
-          {keyError}
-        </div>
-      {/if}
-
       {#if newKey}
-        <div class="space-y-2">
-          <div class="text-sm text-white/60">
-            Copy this now and keep it somewhere private — it is the key itself,
-            not a code someone types.
+        <div
+          bind:this={keyPanel}
+          class="rounded-lg border border-emerald-400/40 bg-emerald-400/10 p-4 space-y-3"
+          role="status"
+        >
+          <div class="flex items-center gap-2 font-semibold text-emerald-200">
+            <Check size={16} /> API key “{newKey.label}” created
           </div>
+          <p class="text-sm text-white/70">
+            This is the only time KinAI shows it. Copy it now and keep it somewhere
+            private — it is the key itself, not a code someone types. If you lose it,
+            create a new one and revoke this one.
+          </p>
           <div class="flex gap-2">
-            <input class="kin-field font-mono text-xs flex-1" readonly value={newKey.jwt} />
+            <input class="kin-field font-mono text-xs flex-1" readonly value={newKey.jwt} aria-label="The new API key" />
             <button class="kin-btn" onclick={copyKey}>
-              <Copy size={14} /> {copiedKey ? 'Copied' : 'Copy'}
+              {#if copiedKey}<Check size={14} /> Copied{:else}<Copy size={14} /> Copy{/if}
             </button>
           </div>
           <details class="text-xs text-white/50">
@@ -343,7 +369,40 @@
   -H "Content-Type: application/json" \
   -d '{'{'}"text":"Bins out","in_minutes":540{'}'}'</pre>
           </details>
+          <div class="flex justify-end">
+            <button class="kin-btn-primary" onclick={doneWithKey}>Done</button>
+          </div>
         </div>
+      {:else}
+        <div class="flex flex-wrap items-end gap-3">
+          <label class="text-sm">
+            <div class="text-white/60 mb-1">What is it for?</div>
+            <input class="kin-field mt-1" bind:value={keyLabel} maxlength={MAX_LABEL} placeholder="Automation" />
+          </label>
+          <button
+            class="kin-btn-primary disabled:opacity-60"
+            onclick={createKey}
+            disabled={keyBusy}
+          >
+            {keyBusy ? 'Creating…' : keyDuplicate === keyLabel.trim() ? 'Create another anyway' : 'Create API key'}
+          </button>
+        </div>
+
+        {#if keyDuplicate !== null && keyDuplicate === keyLabel.trim()}
+          <div class="rounded-lg border border-amber-300/30 bg-amber-300/10 text-amber-100 px-3 py-2 text-sm flex flex-wrap items-center gap-3">
+            <span class="flex-1 min-w-0">
+              You already have an active API key called “{keyDuplicate}” (in the list below).
+              Use that one, or create a second one anyway.
+            </span>
+            <button class="kin-btn" onclick={() => (keyDuplicate = null)}>Cancel</button>
+          </div>
+        {/if}
+
+        {#if keyError}
+          <div class="rounded-lg border border-red-400/30 bg-red-400/10 text-red-200 px-3 py-2 text-sm">
+            {keyError}
+          </div>
+        {/if}
       {/if}
     </div>
 
@@ -362,12 +421,14 @@
 
       {#each shown as inv (inv.id)}
         <div
-          class="kin-card grid grid-cols-[180px_1fr] gap-5
+          class="kin-card grid {isKey(inv) ? 'grid-cols-1' : 'grid-cols-[180px_1fr]'} gap-5
                  {inv.revoked || isExpired(inv) ? 'opacity-40' : ''}"
         >
-          <div class="bg-black/40 rounded-lg p-3 grid place-items-center">
-            {@html qrSvgs[inv.id] ?? ''}
-          </div>
+          {#if !isKey(inv)}
+            <div class="bg-black/40 rounded-lg p-3 grid place-items-center">
+              {@html qrSvgs[inv.id] ?? ''}
+            </div>
+          {/if}
           <div class="space-y-3 text-sm min-w-0">
             <div class="flex items-center justify-between gap-3">
               <div class="min-w-0">
@@ -444,24 +505,31 @@
                 </button>
               {/if}
             </div>
-            <div>
-              <div class="text-[10px] uppercase text-white/40 tracking-wider mb-1">6-char code</div>
-              <div class="flex items-center gap-2">
-                <span class="font-mono text-base tracking-widest bg-black/40 px-2 py-1 rounded">{inv.short_code}</span>
-                <button class="kin-btn-ghost !px-2" onclick={() => copy(inv.short_code)} aria-label="Copy code">
-                  <Copy size={14} />
-                </button>
+            {#if isKey(inv)}
+              <p class="text-xs text-white/50">
+                The key itself was shown once, when it was created, and is not shown
+                again. Lost it? Create a new one above and revoke this one.
+              </p>
+            {:else}
+              <div>
+                <div class="text-[10px] uppercase text-white/40 tracking-wider mb-1">6-char code</div>
+                <div class="flex items-center gap-2">
+                  <span class="font-mono text-base tracking-widest bg-black/40 px-2 py-1 rounded">{inv.short_code}</span>
+                  <button class="kin-btn-ghost !px-2" onclick={() => copy(inv.short_code)} aria-label="Copy code">
+                    <Copy size={14} />
+                  </button>
+                </div>
               </div>
-            </div>
-            <div>
-              <div class="text-[10px] uppercase text-white/40 tracking-wider mb-1">Join link</div>
-              <div class="flex items-center gap-2">
-                <span class="font-mono text-xs text-white/70 truncate min-w-0">{inv.join_url}</span>
-                <button class="kin-btn-ghost !px-2" onclick={() => copy(inv.join_url)} aria-label="Copy link">
-                  <Copy size={14} />
-                </button>
+              <div>
+                <div class="text-[10px] uppercase text-white/40 tracking-wider mb-1">Join link</div>
+                <div class="flex items-center gap-2">
+                  <span class="font-mono text-xs text-white/70 truncate min-w-0">{inv.join_url}</span>
+                  <button class="kin-btn-ghost !px-2" onclick={() => copy(inv.join_url)} aria-label="Copy link">
+                    <Copy size={14} />
+                  </button>
+                </div>
               </div>
-            </div>
+            {/if}
           </div>
         </div>
       {/each}

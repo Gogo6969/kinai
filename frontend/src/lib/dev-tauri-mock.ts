@@ -442,19 +442,30 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
       writeMockInvites(rows);
       return null;
     },
-    create_api_key: (a: any) => ({
-      id: 'key-1',
-      short_code: 'qqq999',
-      // Invented, and obviously not a real JWT — three dots, no payload.
-      jwt: 'eyJ.MOCK-API-KEY-NOT-A-REAL-TOKEN.eyJ',
-      host_url: 'ws://192.0.2.10:4847/kin',
-      label: a?.args?.label ?? 'Automation',
-      join_url: '',
-      qr_payload: '',
-      created_at: new Date().toISOString(),
-      expires_at: new Date(Date.now() + 36500 * 86_400_000).toISOString(),
-      revoked: false,
-    }),
+    // Like the host: the key is stored in the same table as invites (so
+    // it shows up in the list) with scope "automation", and its join link
+    // and QR payload carry the token itself. Every value is invented.
+    create_api_key: (a: any) => {
+      const rows = readMockInvites();
+      const n = rows.length + 1;
+      const jwt = `eyJ.MOCK-API-KEY-${n}-NOT-A-REAL-TOKEN.eyJ`;
+      const row = {
+        id: `key-${n}-${Date.now()}`,
+        short_code: `qqq${String(n).padStart(3, '0')}`,
+        jwt,
+        host_url: 'ws://192.0.2.10:4847/kin',
+        label: a?.args?.label ?? 'Automation',
+        join_url: `kinai://join?host=192.0.2.10:4847&code=qqq${n}&token=${jwt}`,
+        qr_payload: `kinai://join?host=192.0.2.10:4847&code=qqq${n}&token=${jwt}`,
+        created_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 36500 * 86_400_000).toISOString(),
+        revoked: false,
+        scope: 'automation',
+      };
+      rows.unshift(row);
+      writeMockInvites(rows);
+      return row;
+    },
     list_peers: () =>
       (globalThis as any).__mockPeers ?? [
         {
