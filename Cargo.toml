@@ -148,3 +148,11 @@ tempfile = "3"
 opt-level = 3
 codegen-units = 1
 strip = "debuginfo"
+
+# Proc macros and build scripts only run on the build machine, so stripping
+# them gains nothing, and Xcode's `strip` (as of Oct 2026) leaves a proc-macro
+# dylib that macOS refuses to load ("mis-aligned LINKEDIT string pool"): a
+# rebuilt sqlx_macros broke the 0.2.149 release build. The app itself is
+# still stripped.
+[profile.release.build-override]
+strip = false
