@@ -5,6 +5,23 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.148] — 2026-11-08
+
+### Fixed
+
+- **Long chats are summarized again.** When a conversation grows past what
+  KinAI keeps word for word, its oldest messages are folded into a running
+  summary. For one long chat that had stopped working: the summary model
+  (GLM-5.3) does not count words well and wrote two to three times the 350
+  words it was asked for, the reply ran into the 2,000-token limit, and the
+  fold failed every time (17 times on 7 November), so older parts of that
+  chat dropped out of KinAI's view without a summary. The summary now has
+  more room, its instructions put the word limit first, and a summary that
+  still comes back too long to store whole is condensed once by the same
+  model, instead of failing or losing its newest points to the length cut.
+  Checked on a copy of that chat: it folds again (154 messages into a
+  summary of 700–1,350 tokens, in about 23 s).
+
 ## [0.2.147] — 2026-10-20
 
 ### Added
