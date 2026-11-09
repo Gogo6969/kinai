@@ -28,6 +28,56 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::LlmSettings;
 
+/// Whether certificate checks may be skipped for `base_url`: only when the
+/// address itself shows the server is on this network — a private, loopback
+/// or link-local IP, `localhost`, or a Bonjour `.local` name (answered on the
+/// local link only, never by outside DNS).
+///
+/// The side requests below send the slot's API key, and the memory
+/// extractor sends the conversation too. With checks off for every address,
+/// a network that intercepts HTTPS (a café Wi-Fi a family laptop sits on)
+/// could read a cloud provider's key and the family's words. A server at
+/// 192.168.x.x cannot get a public certificate, so it keeps the old
+/// leniency; anything with a public name is checked exactly like the chat
+/// client (`LlmClient`) already checks it.
+pub fn is_private_network_url(base_url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(base_url.trim()) else {
+        return false;
+    };
+    match url.host() {
+        Some(url::Host::Ipv4(ip)) => {
+            let [a, b, ..] = ip.octets();
+            ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                // 100.64.0.0/10, the shared range Tailscale hands out.
+                || (a == 100 && (b & 0xC0) == 64)
+        }
+        Some(url::Host::Ipv6(ip)) => {
+            let first = ip.segments()[0];
+            ip.is_loopback()
+                || (first & 0xfe00) == 0xfc00 // unique local fc00::/7
+                || (first & 0xffc0) == 0xfe80 // link-local fe80::/10
+        }
+        Some(url::Host::Domain(d)) => {
+            let d = d.trim_end_matches('.').to_ascii_lowercase();
+            d == "localhost" || d.ends_with(".local")
+        }
+        None => false,
+    }
+}
+
+/// HTTP client for the side requests to a model server — liveness probes,
+/// model lists, capability checks, the memory extractor. Certificate checks
+/// stay on unless `is_private_network_url` says the server is local.
+pub fn side_client(base_url: &str, timeout: Duration) -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(timeout)
+        .danger_accept_invalid_certs(is_private_network_url(base_url))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct DetectedBackend {
     pub provider: String,
@@ -299,6 +349,8 @@ async fn scan_targets(hosts: Vec<String>) -> Vec<DetectedBackend> {
 
     // Phase 3: HTTP+HTTPS probe. Accept self-signed certs (local-network
     // trust; JWT on the WebSocket layer is what actually authenticates).
+    // Safe here and nowhere else: every candidate is an address of this
+    // network's own /24, and the scan sends no API key.
     let client = reqwest::Client::builder()
         .timeout(Duration::from_millis(2500))
         .danger_accept_invalid_certs(true)
@@ -367,11 +419,7 @@ async fn scan_targets(hosts: Vec<String>) -> Vec<DetectedBackend> {
 }
 
 pub async fn list_models(settings: &LlmSettings) -> Result<Vec<String>> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(2500))
-        .danger_accept_invalid_certs(true)
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
+    let client = side_client(&settings.base_url, Duration::from_millis(2500));
     match settings.provider.as_str() {
         "ollama" => list_via_ollama(&client, &settings.base_url).await,
         _ => list_via_openai(&client, &settings.base_url, settings.api_key.as_deref()).await,
@@ -384,11 +432,7 @@ pub async fn query_model_caps(
     api_key: Option<&str>,
     model: &str,
 ) -> Result<ModelCaps> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .danger_accept_invalid_certs(true)
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
+    let client = side_client(base_url, Duration::from_secs(5));
     match provider {
         "ollama" => caps_via_ollama(&client, base_url, model).await,
         "llamacpp" => caps_via_llamacpp(&client, base_url, api_key, model).await,
@@ -623,14 +667,7 @@ pub async fn probe_alive(settings: &LlmSettings) -> bool {
     } else {
         Duration::from_millis(1500)
     };
-    let client = match reqwest::Client::builder()
-        .timeout(budget)
-        .danger_accept_invalid_certs(true)
-        .build()
-    {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
+    let client = side_client(&settings.base_url, budget);
     let base = settings.base_url.trim_end_matches('/');
     match settings.provider.as_str() {
         "llamacpp" => {
@@ -662,5 +699,59 @@ pub async fn probe_alive(settings: &LlmSettings) -> bool {
         _ => list_via_openai(&client, &settings.base_url, settings.api_key.as_deref())
             .await
             .is_ok(),
+    }
+}
+
+#[cfg(test)]
+mod certificate_trust_tests {
+    use super::{is_private_network_url, side_client};
+    use std::time::Duration;
+
+    #[test]
+    fn a_server_on_this_network_may_use_a_self_signed_certificate() {
+        for url in [
+            "https://192.168.1.20:8443",
+            "https://10.0.0.5/v1",
+            "https://172.16.4.2",
+            "https://172.31.255.1:443",
+            "http://127.0.0.1:8080",
+            "https://169.254.10.20",
+            "https://100.101.102.103", // Tailscale
+            "https://[::1]:8080",
+            "https://[fd12:3456::1]",
+            "https://[fe80::1]",
+            "https://localhost:8443",
+            "https://olares.local:8080/v1",
+            "https://Studio.Local./v1",
+        ] {
+            assert!(is_private_network_url(url), "{url} should count as this network");
+        }
+    }
+
+    #[test]
+    fn anything_with_a_public_name_or_address_is_checked() {
+        for url in [
+            "https://api.deepseek.com",
+            "https://api.openai.com/v1",
+            "https://8.8.8.8",
+            "https://172.32.0.1",      // just outside 172.16.0.0/12
+            "https://100.128.0.1",     // just outside 100.64.0.0/10
+            "https://[2001:db8::1]",
+            "https://local.example.com",
+            "https://example.local.com",
+            "https://minisforum",      // single-label: resolved by normal DNS, not proof of anything
+            "not a url",
+            "",
+        ] {
+            assert!(!is_private_network_url(url), "{url} must keep certificate checks");
+        }
+    }
+
+    #[test]
+    fn the_side_client_builds_for_either_kind() {
+        // A builder failure would silently fall back to a default client;
+        // make sure both paths really construct.
+        let _ = side_client("https://api.deepseek.com", Duration::from_secs(1));
+        let _ = side_client("https://192.168.1.20", Duration::from_secs(1));
     }
 }

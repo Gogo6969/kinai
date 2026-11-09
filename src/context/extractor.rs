@@ -222,11 +222,9 @@ async fn simple_completion(settings: &LlmSettings, prompt: &str) -> Result<Strin
         "stream": false,
     });
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .danger_accept_invalid_certs(true)
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
+    // Certificate checks stay on unless the slot is on this network: this
+    // request carries the slot's API key and the conversation itself.
+    let client = crate::llm::detect::side_client(&settings.base_url, std::time::Duration::from_secs(15));
 
     let mut req = client.post(&url).json(&body);
     if let Some(key) = &settings.api_key {
