@@ -335,6 +335,17 @@ mod tests {
         if !said.map(|s| s.success()).unwrap_or(false) {
             return; // no speech synthesizer on this machine: nothing to build a clip from
         }
+        // GitHub's macOS runners have `say` but no usable voice: it exits 0
+        // and writes an empty clip, which then fails below as "too short" —
+        // a fact about the runner, not about the decoder. Only test the MP4
+        // path when the source itself holds over a second of real sound.
+        let source_ok = decode_to_pcm(&aiff)
+            .await
+            .map(|pcm| pcm.len() > 16_000 && pcm.iter().any(|s| s.abs() > 0.01))
+            .unwrap_or(false);
+        if !source_ok {
+            return;
+        }
         // AAC in an MP4 container is what a round video carries.
         let mp4 = dir.path().join("note.mp4");
         let made = std::process::Command::new("afconvert")

@@ -7,7 +7,7 @@ license = "MIT"
 repository = "https://github.com/Gogo6969/kinai"
 homepage = "https://kin-ai.replit.app"
 edition = "2021"
-rust-version = "1.77"
+rust-version = "1.90"
 
 [lib]
 name = "kinai"
