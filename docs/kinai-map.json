@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-10-20T18:56:49+00:00",
-  "version": "0.2.147",
+  "generated_at": "2026-11-09T01:45:27+00:00",
+  "version": "0.2.148",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 415,
-    "head": "035fd2e"
+    "commits": 418,
+    "head": "9659db1"
   },
   "totals": {
     "rust_files": 74,
-    "rust_lines": 39230,
+    "rust_lines": 39449,
     "frontend_files": 38,
     "frontend_lines": 14816,
-    "unit_tests": 465,
+    "unit_tests": 471,
     "integration_test_files": 20,
-    "releases": 139,
-    "tags": 134
+    "releases": 140,
+    "tags": 135
   },
   "areas": [
     {
@@ -143,9 +143,9 @@
     {
       "path": "src/context/compaction.rs",
       "area": "context",
-      "lines": 581,
+      "lines": 800,
       "doc": "Conversation compaction: fold the messages that are about to scroll out of the model's view into a running per-thread summary, the *digest*.",
-      "tests": 11
+      "tests": 17
     },
     {
       "path": "src/context/extractor.rs",
@@ -1289,6 +1289,18 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.148",
+      "date": "2026-11-08",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "Long chats are summarized again.",
+            "detail": "When a conversation grows past what KinAI keeps word for word, its oldest messages are folded into a running summary. For one long chat that had stopped working: the summary model (GLM-5.3) does not count words well and wrote two to three times the 350 words it was asked for, the reply ran into the 2,000-token limit, and the fold failed every time (17 times on 7 November), so older parts of that chat dropped out of KinAI's view without a summary. The summary now has more room, its instructions put the word limit first, and a summary that still comes back too long to store whole is condensed once by the same model, instead of failing or losing its newest points to the length cut. Checked on a copy of that chat: it folds again (154 messages into a summary of 700–1,350 tokens, in about 23 s)."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.147",
       "date": "2026-10-20",
@@ -4106,6 +4118,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.148",
+      "date": "2026-11-08"
+    },
     {
       "tag": "v0.2.147",
       "date": "2026-10-20"
