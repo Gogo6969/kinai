@@ -5,6 +5,43 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.149] — 2026-11-09
+
+### Fixed
+
+- **Creating an API key now says clearly that it worked.** Under Manage
+  family → Reminder API key, a new key used to appear only as a grey line
+  under the button and a new card further down the page, so it was easy to
+  create several before noticing. A green panel now says the key was
+  created, shows it once with a Copy button, and the button only comes back
+  after you press Done. Creating a second key with the same name as an
+  active one asks first.
+
+### Security
+
+- **An API key is no longer readable later on the Invites page.** The key's
+  card in the list showed a QR code and a join link, and both contained the
+  key itself, so anyone opening the page could take it at any time. Key cards
+  now only say that the key was shown once, when it was created. Lost one?
+  Create a new key and revoke the old one. Family invites are unchanged.
+- **Certificate checks for model servers that are not on your network.**
+  Some background requests to a model server (the memory helper, the model
+  list, the capability and liveness checks) accepted any certificate, and
+  they carry the server's API key; the memory helper also sends the
+  conversation. On a network that intercepts encrypted traffic, a cloud
+  provider's key and the family's words could have been read. These checks
+  are now skipped only for servers whose address is clearly local (a home
+  network address or a `.local` name), exactly as the chat itself already
+  did. Model servers at home that use plain `http` are not affected.
+- **Security updates to the parts KinAI is built on.** The secure-connection
+  library now rejects certificates from a certificate authority whose keys
+  became public, which could otherwise have let someone on the same network
+  impersonate a server KinAI talks to. Also updated: the part that cleans up
+  answers before they are shown (DOMPurify), the developer server (Vite), and
+  the app framework and its updater (Tauri 2.12, updater 2.14), which fixes
+  how update packages are unpacked on Windows and a Tauri issue where other
+  web views could read the app's internal messages.
+
 ## [0.2.148] — 2026-11-08
 
 ### Fixed
