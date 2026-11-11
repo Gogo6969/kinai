@@ -72,15 +72,23 @@ pub fn install<R: Runtime>(app: &AppHandle<R>, state: SharedState) -> tauri::Res
         });
     }
 
-    spawn_status_ticker(app.clone(), state);
+    spawn_status_ticker(app.clone(), state, status_item);
     Ok(())
 }
 
-fn spawn_status_ticker<R: Runtime>(app: AppHandle<R>, state: SharedState) {
+fn spawn_status_ticker<R: Runtime>(app: AppHandle<R>, state: SharedState, status_item: MenuItem<R>) {
     tauri::async_runtime::spawn(async move {
+        // The menu's first line shows the same status as the tooltip. From
+        // the first release until 0.2.150 it was set once, to "starting…",
+        // and never again, so the menu said KinAI was still starting for as
+        // long as it ran. Only rewritten when the text changes.
+        let mut shown = String::new();
         loop {
             tokio::time::sleep(Duration::from_secs(3)).await;
             let label = compose_label(&state);
+            if label != shown && status_item.set_text(&label).is_ok() {
+                shown = label.clone();
+            }
             if let Some(tray) = app.tray_by_id("main-tray") {
                 let _ = tray.set_tooltip(Some(&label));
             }
