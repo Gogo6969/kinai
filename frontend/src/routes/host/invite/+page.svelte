@@ -26,6 +26,16 @@
    *  empty label, backend IPC errors (DB locked, signing key
    *  unreadable, etc.). */
   let createError = $state<string>('');
+  /** The invite just created, shown in a one-time panel where the button
+   *  was, so it is obvious it worked. The list card sits further down the
+   *  page, out of sight, which invited a second click. */
+  let newInvite = $state<Invite | null>(null);
+  let newInviteQr = $state('');
+  let invitePanel = $state<HTMLElement | null>(null);
+  let copiedInvite = $state<'' | 'code' | 'link'>('');
+  /** The name an active invite already has, after one click on Create:
+   *  the next click with the same name goes ahead. */
+  let inviteDuplicate = $state<string | null>(null);
 
   /** The expiry as a number, or null when the stored value is not a
    *  date at all. Parsed in one place so the readers below cannot
@@ -243,6 +253,13 @@
     qrSvgs = next;
   }
 
+  function activeInviteNamed(name: string): Invite | undefined {
+    const want = name.toLowerCase();
+    return invites.find(
+      (inv) => !isKey(inv) && !inv.revoked && !isExpired(inv) && inv.label.trim().toLowerCase() === want,
+    );
+  }
+
   async function create() {
     createError = '';
     const trimmed = label.trim();
@@ -254,20 +271,59 @@
       return;
     }
     if (busy) return;
+    if (inviteDuplicate !== trimmed && activeInviteNamed(trimmed)) {
+      inviteDuplicate = trimmed;
+      return;
+    }
     busy = true;
+    let created: Invite;
     try {
-      await api.generateInvite({ label: trimmed, ttl_days: ttl });
+      created = await api.generateInvite({ label: trimmed, ttl_days: ttl });
+      newInvite = created;
+      inviteDuplicate = null;
+      copiedInvite = '';
       label = 'Family device';
-      await refresh();
     } catch (e) {
       // Previously these IPC failures (DB locked, signing key
       // unreadable, etc.) were unhandled promise rejections — they
       // silently bubbled into the void and the user saw "nothing
       // happened". Surface the message so the failure is debuggable.
       createError = `Couldn't create invite: ${String(e).replace(/^Error:\s*/, '')}`;
+      return;
     } finally {
       busy = false;
     }
+    try {
+      newInviteQr = await QRCode.toString(created.qr_payload, {
+        type: 'svg',
+        margin: 1,
+        width: 180,
+      });
+    } catch {
+      newInviteQr = ''; // the code and the link below still work
+    }
+    // The invite exists from here on. A failed list refresh must not read
+    // as a failed creation, or the host makes another one.
+    try {
+      await refresh();
+    } catch (e) {
+      console.warn('refresh after creating an invite', e);
+    }
+    await tick();
+    invitePanel?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+
+  function copyFromInvite(what: 'code' | 'link') {
+    if (!newInvite) return;
+    copy(what === 'code' ? newInvite.short_code : newInvite.join_url);
+    copiedInvite = what;
+    setTimeout(() => (copiedInvite = ''), 1500);
+  }
+
+  function doneWithInvite() {
+    newInvite = null;
+    newInviteQr = '';
+    copiedInvite = '';
   }
 
   async function revoke(id: string) {
@@ -293,40 +349,96 @@
 
     <div class="kin-card space-y-4">
       <h2 class="font-semibold">New invite</h2>
-      <div class="grid grid-cols-[1fr_180px_auto] gap-3">
-        <label class="block">
-          <span class="text-sm text-white/70">Label</span>
-          <input class="kin-field mt-1" bind:value={label} maxlength={MAX_LABEL} placeholder="e.g. Mom's iPad" />
-        </label>
-        <label class="block">
-          <span class="text-sm text-white/70">Expires</span>
-          <select class="kin-field mt-1" bind:value={ttl}>
-            <option value={7}>7 days</option>
-            <option value={30}>30 days</option>
-            <option value={90}>90 days</option>
-            <option value={365}>1 year</option>
-            <option value={0}>Never</option>
-          </select>
-          <p class="text-xs text-white/40 mt-1">
-            {#if ttl === 0}
-              The invite never expires. You can always revoke it from this page.
-            {:else}
-              You can revoke it any time before then.
-            {/if}
-          </p>
-        </label>
-        <button
-          class="kin-btn-primary self-start mt-6 disabled:opacity-60"
-          onclick={create}
-          disabled={busy}
+      {#if newInvite}
+        <div
+          bind:this={invitePanel}
+          class="rounded-lg border border-emerald-400/40 bg-emerald-400/10 p-4 space-y-3"
+          role="status"
         >
-          {busy ? 'Creating…' : 'Create invite'}
-        </button>
-      </div>
-      {#if createError}
-        <div class="rounded-lg border border-red-400/30 bg-red-400/10 text-red-200 px-3 py-2 text-sm">
-          {createError}
+          <div class="flex items-center gap-2 font-semibold text-emerald-200">
+            <Check size={16} /> Invite “{newInvite.label}” created
+          </div>
+          <p class="text-sm text-white/70">
+            On the new device, open KinAI and scan this code, or type the 6-character
+            code, or open the link. It is also in the list below, where you can revoke it.
+          </p>
+          <div class="grid grid-cols-[180px_1fr] gap-4 items-start">
+            <div class="bg-black/40 rounded-lg p-3 grid place-items-center">
+              {@html newInviteQr}
+            </div>
+            <div class="space-y-3 text-sm min-w-0">
+              <div>
+                <div class="text-[10px] uppercase text-white/40 tracking-wider mb-1">6-char code</div>
+                <div class="flex items-center gap-2">
+                  <span class="font-mono text-base tracking-widest bg-black/40 px-2 py-1 rounded">{newInvite.short_code}</span>
+                  <button class="kin-btn-ghost !px-2" onclick={() => copyFromInvite('code')} aria-label="Copy code">
+                    {#if copiedInvite === 'code'}<Check size={14} />{:else}<Copy size={14} />{/if}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <div class="text-[10px] uppercase text-white/40 tracking-wider mb-1">Join link</div>
+                <div class="flex items-center gap-2">
+                  <span class="font-mono text-xs text-white/70 truncate min-w-0">{newInvite.join_url}</span>
+                  <button class="kin-btn-ghost !px-2" onclick={() => copyFromInvite('link')} aria-label="Copy link">
+                    {#if copiedInvite === 'link'}<Check size={14} />{:else}<Copy size={14} />{/if}
+                  </button>
+                </div>
+              </div>
+              <div class="text-xs text-white/50">
+                {#if isNeverExpiring(newInvite.expires_at)}Never expires{:else}Expires {new Date(newInvite.expires_at).toLocaleDateString()}{/if}
+              </div>
+            </div>
+          </div>
+          <div class="flex justify-end">
+            <button class="kin-btn-primary" onclick={doneWithInvite}>Done</button>
+          </div>
         </div>
+      {:else}
+        <div class="grid grid-cols-[1fr_180px_auto] gap-3">
+          <label class="block">
+            <span class="text-sm text-white/70">Label</span>
+            <input class="kin-field mt-1" bind:value={label} maxlength={MAX_LABEL} placeholder="e.g. Mom's iPad" />
+          </label>
+          <label class="block">
+            <span class="text-sm text-white/70">Expires</span>
+            <select class="kin-field mt-1" bind:value={ttl}>
+              <option value={7}>7 days</option>
+              <option value={30}>30 days</option>
+              <option value={90}>90 days</option>
+              <option value={365}>1 year</option>
+              <option value={0}>Never</option>
+            </select>
+            <p class="text-xs text-white/40 mt-1">
+              {#if ttl === 0}
+                The invite never expires. You can always revoke it from this page.
+              {:else}
+                You can revoke it any time before then.
+              {/if}
+            </p>
+          </label>
+          <button
+            class="kin-btn-primary self-start mt-6 disabled:opacity-60"
+            onclick={create}
+            disabled={busy}
+          >
+            {busy ? 'Creating…' : inviteDuplicate === label.trim() ? 'Create another anyway' : 'Create invite'}
+          </button>
+        </div>
+        {#if createError}
+          <div class="rounded-lg border border-red-400/30 bg-red-400/10 text-red-200 px-3 py-2 text-sm">
+            {createError}
+          </div>
+        {/if}
+        {#if inviteDuplicate !== null && inviteDuplicate === label.trim()}
+          <div class="rounded-lg border border-amber-300/30 bg-amber-300/10 text-amber-100 px-3 py-2 text-sm flex flex-wrap items-center gap-3">
+            <span class="flex-1 min-w-0">
+              You already have an active invite called “{inviteDuplicate}” (in the list below).
+              Use that one, or create a second one anyway.
+            </span>
+            <button class="kin-btn" onclick={() => (inviteDuplicate = null)}>Cancel</button>
+          </div>
+        {/if}
       {/if}
     </div>
 

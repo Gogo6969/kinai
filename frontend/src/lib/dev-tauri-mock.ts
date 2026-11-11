@@ -382,12 +382,31 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
     },
     start_host: () => null,
     mark_setup_completed: () => { cfg.setup_completed = true; return cfg; },
-    generate_invite: (a) => ({
-      id: 'mock-invite', short_code: 'k7m3px', jwt: 'mock', host_url: 'ws://192.168.1.50:4847/kin',
-      label: a.args.label, join_url: 'kinai://join?host=mock&code=k7m3px&token=mock',
-      qr_payload: 'kinai://join?host=mock&code=k7m3px&token=mock',
-      created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 30 * 864e5).toISOString(), revoked: false,
-    }),
+    // Like the host: the invite is stored (so it shows up in the list) and
+    // its join link carries a token. Every value is invented.
+    generate_invite: (a: any) => {
+      const rows = readMockInvites();
+      const n = rows.length + 1;
+      const code = `k7m${String(n).padStart(3, '0')}`;
+      const jwt = `eyJ.MOCK-INVITE-${n}-NOT-A-REAL-TOKEN.eyJ`;
+      const days = a?.args?.ttl_days ?? 30;
+      const row = {
+        id: `inv-${n}-${Date.now()}`,
+        short_code: code,
+        jwt,
+        host_url: 'ws://192.0.2.10:4847/kin',
+        label: a?.args?.label ?? 'Family device',
+        join_url: `kinai://join?host=192.0.2.10:4847&code=${code}&token=${jwt}`,
+        qr_payload: `kinai://join?host=192.0.2.10:4847&code=${code}&token=${jwt}`,
+        created_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + (days === 0 ? 36500 : days) * 864e5).toISOString(),
+        revoked: false,
+        scope: 'family',
+      };
+      rows.unshift(row);
+      writeMockInvites(rows);
+      return row;
+    },
     list_threads: () =>
       scenario
         ? [{ id: 'mock-thread-1', title: 'Eiffel Tower', created_at: new Date().toISOString(), updated_at: new Date().toISOString(), peer_id: 'host' }]
