@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-11-09T01:45:27+00:00",
-  "version": "0.2.148",
+  "generated_at": "2026-11-11T12:49:08+00:00",
+  "version": "0.2.149",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 418,
-    "head": "9659db1"
+    "commits": 426,
+    "head": "f7f3544"
   },
   "totals": {
     "rust_files": 74,
-    "rust_lines": 39449,
+    "rust_lines": 39549,
     "frontend_files": 38,
-    "frontend_lines": 14816,
-    "unit_tests": 471,
+    "frontend_lines": 14895,
+    "unit_tests": 474,
     "integration_test_files": 20,
-    "releases": 140,
-    "tags": 135
+    "releases": 141,
+    "tags": 136
   },
   "areas": [
     {
@@ -150,7 +150,7 @@
     {
       "path": "src/context/extractor.rs",
       "area": "context",
-      "lines": 300,
+      "lines": 298,
       "doc": "Passive fact extraction.",
       "tests": 6
     },
@@ -276,9 +276,9 @@
     {
       "path": "src/llm/detect.rs",
       "area": "llm",
-      "lines": 667,
+      "lines": 758,
       "doc": "Backend auto-detection.",
-      "tests": 4
+      "tests": 7
     },
     {
       "path": "src/llm/mod.rs",
@@ -416,7 +416,7 @@
     {
       "path": "src/stt.rs",
       "area": "media",
-      "lines": 353,
+      "lines": 364,
       "doc": "Local speech-to-text for inbound Telegram voice messages.",
       "tests": 5
     },
@@ -690,7 +690,7 @@
     {
       "path": "frontend/src/lib/dev-tauri-mock.ts",
       "kind": "lib",
-      "lines": 604,
+      "lines": 615,
       "doc": "DEV-ONLY Tauri IPC mock. When the frontend runs in a plain browser (`pnpm dev` + localhost:1420, no Tauri shell), `window.__TAURI_INTERNALS__` doesn't exist and every invoke() rejects — the UI is untestable outside the app. This module installs a minimal in-memory backend so the whole UI (most importantly the /setup wizard) can be driven end-to-end in a browser: config mutations persist for the se"
     },
     {
@@ -792,7 +792,7 @@
     {
       "path": "frontend/src/routes/host/invite/+page.svelte",
       "kind": "route",
-      "lines": 492,
+      "lines": 560,
       "doc": "Mirrors `invite::MAX_LABEL_CHARS` on the host, so the three fields that write this column agree with each other and with the gate that would otherwise refuse them after a round trip."
     },
     {
@@ -1289,6 +1289,32 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.149",
+      "date": "2026-11-09",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "Creating an API key now says clearly that it worked.",
+            "detail": "Under Manage family → Reminder API key, a new key used to appear only as a grey line under the button and a new card further down the page, so it was easy to create several before noticing. A green panel now says the key was created, shows it once with a Copy button, and the button only comes back after you press Done. Creating a second key with the same name as an active one asks first."
+          }
+        ],
+        "Security": [
+          {
+            "title": "An API key is no longer readable later on the Invites page.",
+            "detail": "The key's card in the list showed a QR code and a join link, and both contained the key itself, so anyone opening the page could take it at any time. Key cards now only say that the key was shown once, when it was created. Lost one? Create a new key and revoke the old one. Family invites are unchanged."
+          },
+          {
+            "title": "Certificate checks for model servers that are not on your network.",
+            "detail": "Some background requests to a model server (the memory helper, the model list, the capability and liveness checks) accepted any certificate, and they carry the server's API key; the memory helper also sends the conversation. On a network that intercepts encrypted traffic, a cloud provider's key and the family's words could have been read. These checks are now skipped only for servers whose address is clearly local (a home network address or a `.local` name), exactly as the chat itself already did. Model servers at home that use plain `http` are not affected."
+          },
+          {
+            "title": "Security updates to the parts KinAI is built on.",
+            "detail": "The secure-connection library now rejects certificates from a certificate authority whose keys became public, which could otherwise have let someone on the same network impersonate a server KinAI talks to. Also updated: the part that cleans up answers before they are shown (DOMPurify), the developer server (Vite), and the app framework and its updater (Tauri 2.12, updater 2.14), which fixes how update packages are unpacked on Windows and a Tauri issue where other web views could read the app's internal messages."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.148",
       "date": "2026-11-08",
@@ -4118,6 +4144,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.149",
+      "date": "2026-11-09"
+    },
     {
       "tag": "v0.2.148",
       "date": "2026-11-08"
