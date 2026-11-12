@@ -210,6 +210,12 @@ pub async fn connect(
         net.client_tx = Some(tx.clone());
     }
 
+    // When this device's invite runs out, for the message if the host
+    // refuses it. Read from our own token; the host does the verifying.
+    let invite_expires = crate::auth::peek_token(&token)
+        .ok()
+        .and_then(|c| chrono::DateTime::from_timestamp(c.exp, 0));
+
     // Hello first — every other frame waits behind this.
     let hello = Envelope::Hello {
         token,
@@ -237,29 +243,11 @@ pub async fn connect(
         return Err(anyhow::anyhow!(msg));
     }
 
-    {
-        let mut stats = state.stats.write();
-        stats.client_connected = true;
-        stats.client_error = None;
-    }
-    let _ = app.emit(
-        "kinai://client-status",
-        serde_json::json!({"connected": true, "url": url}),
-    );
-
-    // Re-check for updates on every successful (re)connect. The periodic
-    // 4-hour poll is the steady-state fallback; this immediate check
-    // closes the "host shipped a new version, client just (re)connected"
-    // window so updates feel instantaneous instead of taking up to 4h
-    // to be discovered. Spawned so the WS read loop isn't blocked.
-    let app_for_update = app.clone();
-    tauri::async_runtime::spawn(async move {
-        // Small delay so the WS Hello + Welcome round-trip can finish
-        // first — keeps the user-visible "Connected" indicator from
-        // racing with an update banner appearing on the same tick.
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        crate::updater::check_once(&app_for_update).await;
-    });
+    // Not "connected" yet. The host has only accepted the socket; it still
+    // has to accept this device's invite, and says so with a Welcome. Until
+    // 0.2.150 the status flipped to connected right here, so a device whose
+    // invite had expired showed "Connected" for a moment every two seconds
+    // and "Disconnected" with no reason in between (2026-11-12).
 
     let writer = tokio::spawn(async move {
         while let Some(env) = rx.recv().await {
@@ -275,6 +263,7 @@ pub async fn connect(
     let welcome_by = tokio::time::Instant::now() + WELCOME_TIMEOUT;
     let mut welcomed = false;
     let mut no_welcome = false;
+    let mut refused: Option<String> = None;
     loop {
         let next = if welcomed {
             source.next().await
@@ -360,6 +349,26 @@ pub async fn connect(
                 host_message_delete,
             } => {
                 welcomed = true;
+                {
+                    let mut stats = state.stats.write();
+                    stats.client_connected = true;
+                    stats.client_error = None;
+                }
+                let _ = app.emit(
+                    "kinai://client-status",
+                    serde_json::json!({"connected": true, "url": url}),
+                );
+                // Re-check for updates on every successful (re)connect. The
+                // periodic 4-hour poll is the steady-state fallback; this
+                // immediate check closes the "host shipped a new version,
+                // client just (re)connected" window. Spawned so the WS read
+                // loop isn't blocked, and a second late so the "Connected"
+                // indicator doesn't race an update banner.
+                let app_for_update = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    crate::updater::check_once(&app_for_update).await;
+                });
                 {
                     let mut stats = state.stats.write();
                     stats.host_info = Some(crate::HostInfo {
@@ -470,6 +479,13 @@ pub async fn connect(
                 let _ = app.emit(crate::reminders::EVENT, &reminder);
             }
             Envelope::Error { message } => {
+                // Before the Welcome, an Error is the host refusing this
+                // device at the door (invite expired, revoked, paused, …).
+                // Remember it: the socket closes right after, and the reason
+                // must outlive that.
+                if !welcomed {
+                    refused = Some(message.clone());
+                }
                 // Surface authoritative host-side errors (e.g. "invite revoked",
                 // "rate limit exceeded") on the sidebar status pill in addition
                 // to the global error toast.
@@ -610,8 +626,62 @@ pub async fn connect(
         );
         return Err(anyhow::anyhow!(msg));
     }
+    if let Some(reason) = refused {
+        // Not a clean close: the supervisor must back off instead of
+        // knocking again every two seconds, and the status keeps the reason
+        // (a bare "disconnected" used to wipe it).
+        let msg = explain_refusal(&reason, invite_expires);
+        tracing::warn!("the host refused this device: {reason}");
+        state.stats.write().client_error = Some(msg.clone());
+        let _ = app.emit(
+            "kinai://client-status",
+            serde_json::json!({"connected": false, "error": msg.clone()}),
+        );
+        return Err(anyhow::anyhow!("host refused this device: {reason}"));
+    }
     let _ = app.emit("kinai://client-status", serde_json::json!({"connected": false}));
     Ok(())
+}
+
+/// What to tell the person at a device the host turned away, from the
+/// host's own (technical) reason. Every sentence says what to do next,
+/// because nothing on this device can fix it: only the host can issue a new
+/// invite. `invite_expires` is this device's own token's expiry.
+///
+/// Matches on substrings of what hosts have always sent ("invite rejected:
+/// jwt: ExpiredSignature", "invite rejected: invite revoked", …), so it
+/// works against every host version.
+pub(crate) fn explain_refusal(
+    reason: &str,
+    invite_expires: Option<chrono::DateTime<chrono::Utc>>,
+) -> String {
+    const NEW_INVITE: &str = "Ask whoever runs your KinAI host for a new invite, \
+                              then choose “Change host” here and enter the new code.";
+    let r = reason.to_ascii_lowercase();
+    if r.contains("expiredsignature") {
+        let when = invite_expires
+            .map(|d| format!(" on {}", d.format("%-d %B %Y")))
+            .unwrap_or_default();
+        format!("This device's invite expired{when}. {NEW_INVITE}")
+    } else if r.contains("revoked") {
+        format!("This device's invite was revoked on the host. {NEW_INVITE}")
+    } else if r.contains("not on this host") {
+        format!(
+            "The host no longer has this device's invite (it was removed, or this is a different host). {NEW_INVITE}"
+        )
+    } else if r.contains("invalidsignature") {
+        format!(
+            "The host does not recognise this device's invite — its keys have changed, for example after a reinstall. {NEW_INVITE}"
+        )
+    } else if r.contains("invalidaudience") {
+        format!("This device's invite was made for a different host address. {NEW_INVITE}")
+    } else if r.contains("paused") {
+        "This device is paused on the host. Ask whoever runs your KinAI host to resume it; it reconnects by itself.".to_string()
+    } else if r.contains("reminders api") {
+        "This is a reminder API key, not a device invite, so it cannot open a chat. Ask for a device invite instead.".to_string()
+    } else {
+        format!("The host refused this device ({reason}). {NEW_INVITE}")
+    }
 }
 
 /// Tear down what a session (or an abandoned attempt) left behind: the
@@ -731,5 +801,59 @@ mod reconnect_tests {
     async fn a_finished_attempt_is_returned() {
         let wake = Notify::new();
         assert_eq!(attempt_or_wake(async { 7 }, &wake).await, Some(7));
+    }
+}
+
+/// A device whose invite had run out showed "Disconnected" with no reason
+/// and knocked on the host every two seconds (2026-11-12). The host had
+/// always said why; the client threw it away.
+#[cfg(test)]
+mod refusal_tests {
+    use super::explain_refusal;
+    use chrono::TimeZone;
+
+    #[test]
+    fn an_expired_invite_says_so_with_the_date_and_what_to_do() {
+        let when = chrono::Utc.with_ymd_and_hms(2031, 6, 15, 16, 44, 45).unwrap();
+        let msg = explain_refusal("invite rejected: jwt: ExpiredSignature", Some(when));
+        assert!(msg.starts_with("This device's invite expired on 15 June 2031."), "{msg}");
+        assert!(msg.contains("new invite") && msg.contains("Change host"), "{msg}");
+        // Without a readable token the sentence still stands.
+        let bare = explain_refusal("invite rejected: jwt: ExpiredSignature", None);
+        assert!(bare.starts_with("This device's invite expired. "), "{bare}");
+    }
+
+    #[test]
+    fn every_reason_a_host_sends_gets_its_own_plain_sentence() {
+        let cases = [
+            ("invite rejected: invite revoked", "was revoked"),
+            ("invite rejected: invite not on this host", "no longer has this device's invite"),
+            ("invite rejected: jwt: InvalidSignature", "keys have changed"),
+            ("invite rejected: jwt: InvalidAudience", "different host address"),
+            ("this device is paused — ask the host to resume it", "paused"),
+            ("this key is for the reminders API, not for chat", "reminder API key"),
+        ];
+        let mut seen = std::collections::HashSet::new();
+        for (reason, must) in cases {
+            let msg = explain_refusal(reason, None);
+            assert!(msg.contains(must), "{reason:?} -> {msg}");
+            assert!(!msg.contains("jwt"), "technical text leaked: {msg}");
+            assert!(seen.insert(msg), "two reasons share one sentence");
+        }
+    }
+
+    #[test]
+    fn a_paused_device_is_not_told_to_get_a_new_invite() {
+        // Resuming is the fix, and the device reconnects by itself.
+        let msg = explain_refusal("this device is paused — ask the host to resume it", None);
+        assert!(!msg.contains("new invite"), "{msg}");
+        assert!(msg.contains("resume"), "{msg}");
+    }
+
+    #[test]
+    fn an_unknown_reason_is_shown_rather_than_swallowed() {
+        let msg = explain_refusal("something a future host says", None);
+        assert!(msg.contains("something a future host says"), "{msg}");
+        assert!(msg.contains("Change host"), "{msg}");
     }
 }

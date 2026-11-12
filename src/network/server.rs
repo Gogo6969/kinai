@@ -246,6 +246,136 @@ async fn ws_upgrade(
         .on_upgrade(move |socket| handle_socket(s, socket))
 }
 
+/// Devices turned away at the handshake: who they were, and a limit on how
+/// often the log says so. A refused client keeps knocking (every two
+/// seconds before 0.2.150, every 30 s since), and one line per knock buried
+/// everything else in the log.
+mod refusals {
+    use std::collections::HashMap;
+    use std::time::{Duration, Instant};
+
+    const EVERY: Duration = Duration::from_secs(60);
+    /// The key comes from an unverified token, so anyone on the network
+    /// could mint endless different ones. Never let that grow the map.
+    const MAX_TRACKED: usize = 256;
+
+    static SEEN: once_cell::sync::Lazy<parking_lot::Mutex<HashMap<String, (Instant, u32)>>> =
+        once_cell::sync::Lazy::new(|| parking_lot::Mutex::new(HashMap::new()));
+
+    /// `Some(attempts since the last line, this one included)` when a line
+    /// is due for `who` now; `None` while it is only being counted.
+    pub(super) fn due(who: &str, now: Instant) -> Option<u32> {
+        due_in(&mut SEEN.lock(), who, now)
+    }
+
+    pub(super) fn due_in(
+        seen: &mut HashMap<String, (Instant, u32)>,
+        who: &str,
+        now: Instant,
+    ) -> Option<u32> {
+        if seen.len() >= MAX_TRACKED && !seen.contains_key(who) {
+            seen.clear();
+        }
+        match seen.get_mut(who) {
+            Some((last, pending)) => {
+                *pending += 1;
+                if now.duration_since(*last) >= EVERY {
+                    let n = *pending;
+                    *last = now;
+                    *pending = 0;
+                    Some(n)
+                } else {
+                    None
+                }
+            }
+            None => {
+                seen.insert(who.to_string(), (now, 0));
+                Some(1)
+            }
+        }
+    }
+
+    /// ("invite ab12cd", "expired on 2026-06-15"): the invite code is the
+    /// same id every other log line uses for a device; its name is left
+    /// out. Read from the token WITHOUT trusting it — this is for the log
+    /// only, the refusal has already happened.
+    pub(super) fn describe(token: &str, error: &str) -> (String, String) {
+        let claims = crate::auth::peek_token(token).ok();
+        let who = match &claims {
+            // A code is six characters from a small alphabet; anything else
+            // in an unverified token is not worth repeating into a log.
+            Some(c) if c.sub.len() <= 12 && c.sub.chars().all(|ch| ch.is_ascii_alphanumeric()) => {
+                format!("invite {}", c.sub)
+            }
+            _ => "an unreadable invite".to_string(),
+        };
+        let why = if error.contains("ExpiredSignature") {
+            match claims.and_then(|c| chrono::DateTime::from_timestamp(c.exp, 0)) {
+                Some(d) => format!("expired on {}", d.format("%Y-%m-%d")),
+                None => "has expired".to_string(),
+            }
+        } else if error.contains("revoked") {
+            "was revoked".to_string()
+        } else if error.contains("not on this host") {
+            "is not on this host (removed, or issued by another host)".to_string()
+        } else {
+            format!("was rejected: {}", crate::logsafe::clip(error, 80))
+        };
+        (who, why)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn the_first_refusal_is_logged_then_at_most_one_line_a_minute_with_a_count() {
+            let mut seen = HashMap::new();
+            let t0 = Instant::now();
+            assert_eq!(due_in(&mut seen, "invite ab12cd", t0), Some(1));
+            // A client knocking every two seconds for the next minute…
+            for i in 1..30 {
+                assert_eq!(due_in(&mut seen, "invite ab12cd", t0 + Duration::from_secs(2 * i)), None);
+            }
+            // …gets one line that says how many times it knocked.
+            assert_eq!(due_in(&mut seen, "invite ab12cd", t0 + Duration::from_secs(60)), Some(30));
+            // Another device is counted on its own.
+            assert_eq!(due_in(&mut seen, "invite zz99zz", t0 + Duration::from_secs(61)), Some(1));
+        }
+
+        #[test]
+        fn made_up_tokens_cannot_grow_the_table_without_limit() {
+            let mut seen = HashMap::new();
+            let t0 = Instant::now();
+            for i in 0..(MAX_TRACKED * 3) {
+                due_in(&mut seen, &format!("invite {i}"), t0);
+            }
+            assert!(seen.len() <= MAX_TRACKED, "{}", seen.len());
+        }
+
+        #[test]
+        fn an_expired_invite_is_named_by_its_code_and_date_never_by_its_label() {
+            // Signed by the tests' sandbox key (never the real host's): the
+            // log line is built from a token without trusting it.
+            crate::auth::sandbox_home();
+            let token = crate::auth::issue_token("ab12cd", "ws://192.0.2.10:4847/kin", "Kitchen iPad", 30).unwrap();
+            let (who, why) = describe(&token, "jwt: ExpiredSignature");
+            assert_eq!(who, "invite ab12cd");
+            assert!(why.starts_with("expired on 20"), "{why}");
+            assert!(!format!("{who} {why}").contains("Kitchen"), "the device's name reached the log");
+            let (who, why) = describe(&token, "invite revoked");
+            assert_eq!((who.as_str(), why.as_str()), ("invite ab12cd", "was revoked"));
+        }
+
+        #[test]
+        fn garbage_is_not_copied_into_the_log() {
+            let (who, why) = describe("not-a-token", "jwt: InvalidToken");
+            assert_eq!(who, "an unreadable invite");
+            assert!(why.contains("InvalidToken"), "{why}");
+        }
+    }
+}
+
 async fn handle_socket(s: AxumState, socket: WebSocket) {
     if let Err(e) = run_socket(s, socket).await {
         tracing::info!("ws conn ended: {e:?}");
@@ -296,7 +426,18 @@ async fn run_socket(s: AxumState, socket: WebSocket) -> anyhow::Result<()> {
                     .into(),
                 ))
                 .await;
-            return Err(e);
+            // Say WHICH device was turned away and why, in words. The line
+            // used to be a bare "ws conn ended: jwt: ExpiredSignature" on
+            // every attempt — every two seconds from a device whose invite
+            // had run out — with nothing to tell the host which one.
+            let (who, why) = refusals::describe(&token, &e.to_string());
+            if let Some(attempts) = refusals::due(&who, std::time::Instant::now()) {
+                tracing::warn!(
+                    "refused a device at the handshake: {who} {why} ({attempts} attempt{} since the last line)",
+                    if attempts == 1 { "" } else { "s" }
+                );
+            }
+            return Ok(());
         }
     };
 
