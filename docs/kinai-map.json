@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-11-11T12:49:08+00:00",
-  "version": "0.2.149",
+  "generated_at": "2026-11-12T18:52:27+00:00",
+  "version": "0.2.150",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 426,
-    "head": "f7f3544"
+    "commits": 432,
+    "head": "bea0bf4"
   },
   "totals": {
     "rust_files": 74,
-    "rust_lines": 39549,
+    "rust_lines": 39822,
     "frontend_files": 38,
-    "frontend_lines": 14895,
-    "unit_tests": 474,
+    "frontend_lines": 15042,
+    "unit_tests": 482,
     "integration_test_files": 20,
-    "releases": 141,
-    "tags": 136
+    "releases": 142,
+    "tags": 137
   },
   "areas": [
     {
@@ -318,9 +318,9 @@
     {
       "path": "src/network/client.rs",
       "area": "network",
-      "lines": 736,
+      "lines": 860,
       "doc": "Client-side WebSocket dialer.",
-      "tests": 4
+      "tests": 8
     },
     {
       "path": "src/network/invite.rs",
@@ -367,9 +367,9 @@
     {
       "path": "src/network/server.rs",
       "area": "network",
-      "lines": 1595,
+      "lines": 1736,
       "doc": "Host-side Axum HTTP+WebSocket server.",
-      "tests": 0
+      "tests": 4
     },
     {
       "path": "src/network/updates.rs",
@@ -563,7 +563,7 @@
     {
       "path": "src/tray.rs",
       "area": "desktop",
-      "lines": 152,
+      "lines": 160,
       "doc": "System tray menu with live status pushed via background tick.",
       "tests": 0
     },
@@ -690,7 +690,7 @@
     {
       "path": "frontend/src/lib/dev-tauri-mock.ts",
       "kind": "lib",
-      "lines": 615,
+      "lines": 643,
       "doc": "DEV-ONLY Tauri IPC mock. When the frontend runs in a plain browser (`pnpm dev` + localhost:1420, no Tauri shell), `window.__TAURI_INTERNALS__` doesn't exist and every invoke() rejects — the UI is untestable outside the app. This module installs a minimal in-memory backend so the whole UI (most importantly the /setup wizard) can be driven end-to-end in a browser: config mutations persist for the se"
     },
     {
@@ -792,7 +792,7 @@
     {
       "path": "frontend/src/routes/host/invite/+page.svelte",
       "kind": "route",
-      "lines": 560,
+      "lines": 679,
       "doc": "Mirrors `invite::MAX_LABEL_CHARS` on the host, so the three fields that write this column agree with each other and with the gate that would otherwise refuse them after a round trip."
     },
     {
@@ -1289,6 +1289,36 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.150",
+      "date": "2026-11-12",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "A device the host turns away now says why.",
+            "detail": "A family computer whose invite had run out showed only \"Disconnected\", with no reason, and tried again every two seconds for as long as it ran. The sidebar now says what happened in plain words, for example \"This device's invite expired on 15 June 2026\", and what to do: ask whoever runs the host for a new invite, then choose \"Change host\" and enter the new code. The same goes for a revoked or removed invite and for a paused device. The device shows \"Connected\" only once the host has accepted it, and it retries at most every 30 seconds."
+          },
+          {
+            "title": "Creating an invite now says clearly that it worked.",
+            "detail": "The new invite used to appear only as a card further down the page, out of sight, so it was easy to create several. A green panel now says the invite was created, right where you clicked, with its QR code, its 6-character code and its link, and the button only comes back after you press Done. Creating a second invite with the same name as an active one asks first."
+          },
+          {
+            "title": "The menu-bar menu shows KinAI's real status.",
+            "detail": "Its first line said \"KinAI: starting…\" for as long as the app ran. It now shows what the icon's tooltip shows: the mode, how many devices are connected and the model."
+          }
+        ],
+        "Changed": [
+          {
+            "title": "New invites never expire unless you choose a date.",
+            "detail": "The date is checked every time a device connects, so on that day the device is locked out, not just the unused code. The form used to default to 30 days without saying so. \"Never\" is now the default, and with a date chosen the form says the device is signed out on that day and needs a new invite. You can still revoke any invite at any time."
+          },
+          {
+            "title": "The host's log now says which invite was refused and why (never the device's name), at most once a minute per device.",
+            "detail": ""
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.149",
       "date": "2026-11-09",
@@ -4144,6 +4174,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.150",
+      "date": "2026-11-12"
+    },
     {
       "tag": "v0.2.149",
       "date": "2026-11-09"
