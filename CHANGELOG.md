@@ -5,6 +5,41 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.150] — 2026-11-12
+
+### Fixed
+
+- **A device the host turns away now says why.** A family computer whose
+  invite had run out showed only "Disconnected", with no reason, and tried
+  again every two seconds for as long as it ran. The sidebar now says what
+  happened in plain words, for example "This device's invite expired on
+  15 June 2026", and what to do: ask whoever runs the host for a new invite,
+  then choose "Change host" and enter the new code. The same goes for a
+  revoked or removed invite and for a paused device. The device shows
+  "Connected" only once the host has accepted it, and it retries at most
+  every 30 seconds.
+- **Creating an invite now says clearly that it worked.** The new invite
+  used to appear only as a card further down the page, out of sight, so it
+  was easy to create several. A green panel now says the invite was
+  created, right where you clicked, with its QR code, its 6-character code
+  and its link, and the button only comes back after you press Done.
+  Creating a second invite with the same name as an active one asks first.
+- **The menu-bar menu shows KinAI's real status.** Its first line said
+  "KinAI: starting…" for as long as the app ran. It now shows what the
+  icon's tooltip shows: the mode, how many devices are connected and the
+  model.
+
+### Changed
+
+- **New invites never expire unless you choose a date.** The date is
+  checked every time a device connects, so on that day the device is locked
+  out, not just the unused code. The form used to default to 30 days without
+  saying so. "Never" is now the default, and with a date chosen the form
+  says the device is signed out on that day and needs a new invite. You can
+  still revoke any invite at any time.
+- The host's log now says which invite was refused and why (never the
+  device's name), at most once a minute per device.
+
 ## [0.2.149] — 2026-11-09
 
 ### Fixed
