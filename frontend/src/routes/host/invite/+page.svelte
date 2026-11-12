@@ -16,7 +16,13 @@
   // validate_token still passes for the realistic lifetime of the
   // recipient device. Render-time we detect the far-future date
   // and show "Never" in the invite-list summary.
-  let ttl = $state<number>(30);
+  /** 0 = never. The default was 30 days until 0.2.150, and the form did not
+   *  say what the date does: on that day the DEVICE is locked out, not just
+   *  the unused code. A family computer invited in May stopped connecting in
+   *  June with no reason shown on either side. A family device should stay
+   *  until the host revokes it; a time limit is the choice to make on
+   *  purpose, for a guest. */
+  let ttl = $state<number>(0);
   let invites = $state<Invite[]>([]);
   let qrSvgs = $state<Record<string, string>>({});
   /** UI state for the Create button: blocks double-clicks while the
@@ -386,7 +392,7 @@
                 </div>
               </div>
               <div class="text-xs text-white/50">
-                {#if isNeverExpiring(newInvite.expires_at)}Never expires{:else}Expires {new Date(newInvite.expires_at).toLocaleDateString()}{/if}
+                {#if isNeverExpiring(newInvite.expires_at)}Never expires{:else}Expires {new Date(newInvite.expires_at).toLocaleDateString()} — the device is signed out on that day{/if}
               </div>
             </div>
           </div>
@@ -403,17 +409,18 @@
           <label class="block">
             <span class="text-sm text-white/70">Expires</span>
             <select class="kin-field mt-1" bind:value={ttl}>
+              <option value={0}>Never</option>
               <option value={7}>7 days</option>
               <option value={30}>30 days</option>
               <option value={90}>90 days</option>
               <option value={365}>1 year</option>
-              <option value={0}>Never</option>
             </select>
             <p class="text-xs text-white/40 mt-1">
               {#if ttl === 0}
-                The invite never expires. You can always revoke it from this page.
+                The device stays connected until you revoke it on this page.
               {:else}
-                You can revoke it any time before then.
+                On that day the device is signed out and needs a new invite. For a
+                family member's own computer, choose Never.
               {/if}
             </p>
           </label>

@@ -63,7 +63,7 @@ function defaultConfig() {
       api_key: null, temperature: 0.2, max_tokens: 0, system_addendum: '', enabled: false, image_recognition: 'auto',
     },
     host: { bind_addr: '0.0.0.0', port: 4847, family_name: 'Our Family', mdns_enabled: true, rate_limit_rpm: 60 },
-    client: { host_url: null, host_token: null, host_label: null, display_name: 'You', pinned_hosts: [] },
+    client: { host_url: null, host_token: null, host_label: null as string | null, display_name: 'You', pinned_hosts: [] },
     overlay: { hotkey: 'CmdOrCtrl+Space', always_on_top: true, font_size: 14, auto_close_on_blur: true },
     tools: { web_search: true, x_search: true, calculator: true, datetime: true, image_search: true, search_engine: 'duckduckgo', search_api_key: null, searxng_url: 'http://127.0.0.1:8888', search_fallback_searxng: true, transcript_url: '' },
     vision: {
@@ -100,6 +100,10 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
   if (scenario === 'client-slots') {
     cfg.mode = 'client';
     cfg.setup_completed = true;
+    // With a label the sidebar shows its connection block, so the
+    // "refused by the host" message can be driven from the console:
+    // __mockEmit('kinai://client-status', { connected: false, error: '…' })
+    cfg.client.host_label = 'This PC';
     stats.client_connected = true;
     stats.host_info = {
       family_name: 'Mock Family',
@@ -547,6 +551,11 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
     return delivered;
   };
 
+  // `unlisten()` in @tauri-apps/api calls this before it invokes
+  // `plugin:event|unlisten`. Without it every page teardown in the browser
+  // threw "Cannot read properties of undefined (reading
+  // 'unregisterListener')", which buried real errors in the console.
+  w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
   w.__TAURI_INTERNALS__ = {
     metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main' } },
     plugins: {},
