@@ -65,6 +65,12 @@ pub struct PhotoSize {
 #[derive(Debug, Clone, Deserialize)]
 pub struct TelegramMessage {
     pub message_id: i64,
+    /// When the message was SENT, by Telegram's clock (Unix seconds).
+    /// Compared with the moment it reaches us, this is the only way to
+    /// tell "KinAI was slow" from "Telegram handed it over late" — see
+    /// `polling::classify_arrival`. `0` when absent.
+    #[serde(default)]
+    pub date: i64,
     #[serde(default)]
     pub from: Option<TelegramUser>,
     pub chat: TelegramChat,
