@@ -18,8 +18,9 @@
 //!   2. The DEVICE can replace itself without asking anyone for a
 //!      password (`replaces_itself_unprompted`). An unattended admin
 //!      prompt is worse than a banner.
-//!   3. NOBODY IS USING IT (`activity.rs`): ten untouched minutes and no
-//!      answer on its way.
+//!   3. NOBODY IS USING IT (`activity.rs`): ten minutes without a key or
+//!      a click — in KinAI, and where the system can be asked, anywhere
+//!      on the computer — and no answer on its way.
 //!   4. It has not already tried this version in the last day
 //!      (`tried_recently`). An install that fails — or one that "works"
 //!      and comes back as the same old version — must not turn into a

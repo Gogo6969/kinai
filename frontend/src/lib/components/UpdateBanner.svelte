@@ -55,7 +55,7 @@
       </span>
       {#if update.auto && !installing}
         <div class="text-xs text-white/50 mt-0.5" data-testid="update-auto-note">
-          This device installs it by itself once it has not been used for ten minutes — or press
+          This device installs it by itself once nobody has used it for ten minutes — or press
           the button to have it now.
         </div>
       {/if}
