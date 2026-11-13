@@ -5,6 +5,54 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.151] — 2026-11-12
+
+### Added
+
+- **Family devices install updates by themselves.** Until now a device
+  noticed an update by itself, but somebody had to press "Install &
+  restart" on the banner. A device whose window nobody opened stayed on the
+  old version for hours or days. A device that is connected to a family host now
+  installs the update without being asked, once nobody has used it for ten
+  minutes and no answer is on its way. On a Mac and on Windows "used" means
+  a key or the mouse anywhere on the computer, not only in KinAI, so an
+  update never arrives in the middle of other work; on Linux it means
+  KinAI's own windows. The banner stays, says that the
+  device will take care of it, and its button still installs at once.
+  Details:
+  - The host only releases a version for this once it is a published
+    release. A version that is merely built on the host, which is the state
+    a release is in while it is being tested, still needs a person to press
+    the button.
+  - A device that updated itself while KinAI sat in the tray comes back in
+    the tray. If its window was open, the window comes back.
+  - Each version is tried once a day at most, so an install that fails
+    cannot turn into a device that keeps restarting.
+  - A device only does this where the update needs no password: a Mac user
+    who may change the Applications folder, a Windows install in the user's
+    own folder, a Linux AppImage. Everywhere else the banner works as
+    before.
+  - The host itself never updates by itself, and neither does a device
+    that fell back to GitHub because its host was out of reach.
+  - It takes effect from the next release on: a device has to be on this
+    version first, and that one install still needs the button.
+  - To switch it off on one device, quit KinAI there and set
+    `auto_update = false` under `[client]` in its `config.toml`.
+- **The host's log says how long a Telegram message took to arrive.** When
+  a question sent from Telegram gets no "typing…" dots and a late answer,
+  KinAI did not have the message yet, but until now the log could not show
+  why. Every message is now logged with its age on arrival (numbers only,
+  never who wrote or what). A late one gets a warning that says which case
+  it is: Telegram held it back although KinAI was asking the whole time, or
+  KinAI was not asking at that moment because it had just started or its
+  connection to Telegram was failing.
+
+### Changed
+
+- The note that makes the window come back after "Install & restart" is now
+  written before the installer starts. On Windows the installer ends the
+  app before the old code got to write it.
+
 ## [0.2.150] — 2026-11-12
 
 ### Fixed
