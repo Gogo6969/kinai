@@ -45,9 +45,10 @@ pub(crate) enum Arrival {
     /// A long poll returns at once when something is there — so it was
     /// not there. The wait was on Telegram's side.
     SlowInOpenPoll { age: i64, waited: i64 },
-    /// Late because KinAI was not asking when it was sent — it had only
-    /// just started, or its polls were failing — and it came with the
-    /// first poll that could bring it. The wait was on our side.
+    /// Late because no poll of ours was open when it was sent — KinAI had
+    /// only just started, or its polls were failing (which can be our
+    /// network or Telegram's servers; the failed polls are logged with
+    /// their reason) — and it came with the first poll that got through.
     NotPolling { age: i64 },
 }
 
@@ -84,8 +85,25 @@ pub(crate) fn classify_arrival(
     Some(Arrival::NotPolling { age })
 }
 
+/// Why no poll was open when a late message was sent, in words for the
+/// log. `failed_polls` = how many polls failed since the last one that
+/// worked.
+pub(crate) fn not_polling_reason(first_poll: bool, failed_polls: u32) -> String {
+    if failed_polls > 0 {
+        format!(
+            "KinAI could not reach Telegram then: the {failed_polls} poll{} before this one failed \
+             (the \"getUpdates failed\" lines above say why)",
+            if failed_polls == 1 { "" } else { "s" }
+        )
+    } else if first_poll {
+        "KinAI had only just started asking Telegram".to_string()
+    } else {
+        "it was sent in the moment between two polls".to_string()
+    }
+}
+
 /// One log line per message. Numbers only — never who wrote or what.
-fn log_arrival(update_id: i64, arrival: &Arrival) {
+fn log_arrival(update_id: i64, arrival: &Arrival, first_poll: bool, failed_polls: u32) {
     match arrival {
         Arrival::Prompt { age } => {
             // Two clocks: ours can be a second behind Telegram's. "-1 s"
@@ -107,8 +125,8 @@ fn log_arrival(update_id: i64, arrival: &Arrival) {
         }
         Arrival::NotPolling { age } => {
             tracing::warn!(
-                "telegram: update {update_id} arrived LATE, {age} s after it was sent — KinAI was not asking \
-                 Telegram at that time (just started, or its polls were failing)"
+                "telegram: update {update_id} arrived LATE, {age} s after it was sent — {}",
+                not_polling_reason(first_poll, failed_polls)
             );
         }
     }
@@ -129,6 +147,8 @@ pub async fn run<R: Runtime>(api: BotApi, state: SharedState, app: AppHandle<R>)
     // When the last successful poll came back — what a late message is
     // judged against (see `classify_arrival`).
     let mut previous_poll: Option<i64> = None;
+    // Polls that failed since the last one that worked.
+    let mut failed_polls: u32 = 0;
     loop {
         let asked = now_unix();
         match api.get_updates(offset, LONG_POLL_TIMEOUT_SECS).await {
@@ -138,10 +158,11 @@ pub async fn run<R: Runtime>(api: BotApi, state: SharedState, app: AppHandle<R>)
                 for update in &updates {
                     let sent = update.message.as_ref().map(|m| m.date).unwrap_or(0);
                     if let Some(arrival) = classify_arrival(sent, asked, arrived, previous_poll) {
-                        log_arrival(update.update_id, &arrival);
+                        log_arrival(update.update_id, &arrival, previous_poll.is_none(), failed_polls);
                     }
                 }
                 previous_poll = Some(arrived);
+                failed_polls = 0;
                 for update in updates {
                     // Advance offset to update_id + 1 so the next poll
                     // doesn't redeliver this one.
@@ -166,6 +187,7 @@ pub async fn run<R: Runtime>(api: BotApi, state: SharedState, app: AppHandle<R>)
                 }
             }
             Err(e) => {
+                failed_polls = failed_polls.saturating_add(1);
                 // Redacted twice over: `api::scrub` already strips the token
                 // from every Bot API error, and this is the loop that logs
                 // one on every failed poll — four of the five tokens that
@@ -262,6 +284,20 @@ mod arrival_tests {
             classify_arrival(T - 12, T - 2, T, Some(T - 12 + CLOCK_SLACK_SECS)),
             Some(Arrival::MissedByEarlierPoll { age: 12, missed_by: CLOCK_SLACK_SECS })
         );
+    }
+
+    /// "KinAI was not asking" has two very different causes, and one of
+    /// them is Telegram answering our polls with errors. The line has to
+    /// say which, and point at the lines that hold the reason.
+    #[test]
+    fn a_late_message_after_failed_polls_says_the_polls_failed() {
+        let after_failures = not_polling_reason(false, 4);
+        assert!(after_failures.contains("4 polls before this one failed"), "{after_failures}");
+        assert!(after_failures.contains("getUpdates failed"), "{after_failures}");
+        assert!(not_polling_reason(false, 1).contains("1 poll before"), "singular");
+        // Failing from the very first poll on is still "failed", not "just started".
+        assert!(not_polling_reason(true, 2).contains("failed"));
+        assert!(not_polling_reason(true, 0).contains("only just started"));
     }
 
     #[test]
