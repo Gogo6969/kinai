@@ -1,8 +1,10 @@
 //! KinAI library entrypoint — wires Tauri shell, Axum HTTP/WS server, tray,
 //! global hotkey, LLM client, and the never-lose-context pipeline.
 
+pub mod activity;
 pub mod attachments;
 pub mod auth;
+pub mod auto_update;
 pub mod changelog;
 pub mod commands;
 pub mod comfyui;
@@ -493,6 +495,7 @@ pub fn run() {
             commands::fact_check_message,
             commands::check_updates,
             commands::install_update,
+            commands::note_activity,
             commands::kinai_version,
             commands::open_logs_dir,
             commands::mark_setup_completed,
@@ -504,6 +507,10 @@ pub fn run() {
             let st = state.clone();
             move |app| {
                 *st.handle.write() = Some(app.handle().clone());
+                // Launching counts as use: the first minutes of a session
+                // are never the quiet moment a self-installing update
+                // waits for (see activity.rs).
+                activity::touch();
 
                 tray::install(app.handle(), st.clone())?;
                 hotkey::install(app.handle(), st.clone())?;
@@ -555,11 +562,24 @@ pub fn run() {
                 //     the rule below would hide it. Somebody pressed
                 //     "install and restart" and deserves to see the app
                 //     come back. See `updater::take_restart_marker`.
-                let after_update = updater::take_restart_marker();
-                let show_at_startup =
-                    after_update || !(is_autostart_launch && autostart_minimized);
-                if after_update {
-                    tracing::info!("relaunched after an update — showing the window");
+                //   * a relaunch after the device updated ITSELF from the
+                //     tray → stay in the tray, even when argv says this
+                //     is an ordinary launch. Nobody was looking; a
+                //     window must not appear by itself.
+                let relaunch = updater::take_restart_marker();
+                let show_at_startup = match relaunch {
+                    Some(updater::Relaunch::Show) => true,
+                    Some(updater::Relaunch::Quiet) => false,
+                    None => !(is_autostart_launch && autostart_minimized),
+                };
+                match relaunch {
+                    Some(updater::Relaunch::Show) => {
+                        tracing::info!("relaunched after an update — showing the window")
+                    }
+                    Some(updater::Relaunch::Quiet) => {
+                        tracing::info!("relaunched after updating itself — staying in the tray")
+                    }
+                    None => {}
                 }
 
                 if let Some(w) = app.get_webview_window("main") {

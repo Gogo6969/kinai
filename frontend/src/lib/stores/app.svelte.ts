@@ -144,6 +144,7 @@ class AppStore {
     current: string;
     source: 'host' | 'github';
     body?: string;
+    auto?: boolean;
   } | null>(null);
   /** Install progress 0–100 once the user clicks Install. `null` between
    *  installs. */

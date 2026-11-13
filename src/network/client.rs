@@ -300,18 +300,21 @@ pub async fn connect(
         };
         match env {
             Envelope::Token { client_msg_id, delta } => {
+                crate::activity::touch();
                 let _ = app.emit(
                     "kinai://token",
                     serde_json::json!({"client_msg_id": client_msg_id, "delta": delta}),
                 );
             }
             Envelope::Reasoning { client_msg_id, delta } => {
+                crate::activity::touch();
                 let _ = app.emit(
                     "kinai://reasoning",
                     serde_json::json!({"client_msg_id": client_msg_id, "delta": delta}),
                 );
             }
             Envelope::Tool { client_msg_id, event } => {
+                crate::activity::touch();
                 let _ = app.emit(
                     "kinai://tool",
                     serde_json::json!({"client_msg_id": client_msg_id, "event": event}),
@@ -325,6 +328,7 @@ pub async fn connect(
                 message,
                 metrics,
             } => {
+                crate::activity::answer_finished();
                 let _ = app.emit(
                     "kinai://assistant-done",
                     serde_json::json!({
@@ -486,6 +490,8 @@ pub async fn connect(
                 if !welcomed {
                     refused = Some(message.clone());
                 }
+                // An error is also how an answer ends when it fails.
+                crate::activity::answer_finished();
                 // Surface authoritative host-side errors (e.g. "invite revoked",
                 // "rate limit exceeded") on the sidebar status pill in addition
                 // to the global error toast.

@@ -227,6 +227,11 @@ async fn sync_once() -> Result<Option<String>> {
         return Err(anyhow!("unexpected tag_name '{}'", release.tag_name));
     }
 
+    // This is the one place the host learns what has actually been
+    // PUBLISHED, as opposed to merely built and staged on this machine.
+    // Write it down before anything else can return early.
+    note_published(&updates_dir(), &version);
+
     // If we already have every bundle for this version staged, nothing to do.
     let stage_root = updates_dir().join(&version);
     if all_known_targets_staged(&stage_root) {
@@ -285,6 +290,104 @@ fn updates_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".kinai")
         .join("updates")
+}
+
+/// The newest version GitHub lists as a published release, as this host
+/// last saw it. A plain file so the knowledge survives a restart: a host
+/// that comes back up while GitHub is unreachable still knows.
+fn published_marker(dir: &std::path::Path) -> PathBuf {
+    dir.join(".published")
+}
+
+fn note_published(dir: &std::path::Path, version: &str) {
+    if parse_version(version).is_none() {
+        return;
+    }
+    let path = published_marker(dir);
+    if std::fs::read_to_string(&path)
+        .map(|s| s.trim() == version)
+        .unwrap_or(false)
+    {
+        return;
+    }
+    let _ = std::fs::create_dir_all(dir);
+    match std::fs::write(&path, version) {
+        Ok(()) => tracing::info!("update_sync: v{version} is the published release"),
+        Err(e) => tracing::warn!("update_sync: could not note the published release: {e}"),
+    }
+}
+
+/// May family devices install this version BY THEMSELVES?
+///
+/// Only once it is a published release. `deploy.sh` stages the host's own
+/// platform the moment the host is built — before the smoke tests, before
+/// the release is published. A banner at that point is harmless: a person
+/// has to press the button. An unattended install is not: it would put a
+/// build nobody has tested yet onto every idle device in the house. So
+/// the host says "go ahead" only for a version GitHub lists as published
+/// (or an older one), and says nothing when it does not know.
+pub fn is_published(version: &str) -> bool {
+    is_published_in(&updates_dir(), version)
+}
+
+fn is_published_in(dir: &std::path::Path, version: &str) -> bool {
+    let Ok(raw) = std::fs::read_to_string(published_marker(dir)) else {
+        return false;
+    };
+    match (parse_version(version), parse_version(raw.trim())) {
+        (Some(asked), Some(published)) => asked <= published,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod published_tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("kinai-published-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// The window this exists for: the host is built and staged, the
+    /// release is not out yet.
+    #[test]
+    fn a_version_that_is_only_staged_is_not_released_to_idle_devices() {
+        let dir = scratch("staged");
+        note_published(&dir, "0.9.4");
+        assert!(is_published_in(&dir, "0.9.4"), "the published one");
+        assert!(is_published_in(&dir, "0.9.3"), "an older one a platform still lags on");
+        assert!(!is_published_in(&dir, "0.9.5"), "built here, not published yet");
+        // Numeric, not alphabetical: 0.9.10 is newer than 0.9.4.
+        assert!(!is_published_in(&dir, "0.9.10"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Not knowing must mean "wait for a person", never "go ahead".
+    #[test]
+    fn a_host_that_does_not_know_says_no() {
+        let dir = scratch("unknown");
+        assert!(!is_published_in(&dir, "0.9.4"), "never heard from GitHub");
+        std::fs::write(published_marker(&dir), "soon").unwrap();
+        assert!(!is_published_in(&dir, "0.9.4"), "an unreadable note");
+        note_published(&dir, "nonsense");
+        assert_eq!(std::fs::read_to_string(published_marker(&dir)).unwrap(), "soon", "junk is not written");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A release that is pulled moves "latest" back; the go-ahead for the
+    /// pulled version has to go with it.
+    #[test]
+    fn a_withdrawn_release_takes_its_go_ahead_with_it() {
+        let dir = scratch("withdrawn");
+        note_published(&dir, "0.9.5");
+        assert!(is_published_in(&dir, "0.9.5"));
+        note_published(&dir, "0.9.4");
+        assert!(!is_published_in(&dir, "0.9.5"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 /// Canonical filenames the host's manifest endpoint expects, paired

@@ -41,7 +41,12 @@
   // window — someone who only ever uses this quick-chat bar would never
   // be told about (or able to install) a new version. So the overlay
   // listens for the same update event and shows its own install pill.
-  let updateInfo = $state<{ version: string; current: string; source: 'host' | 'github' } | null>(null);
+  let updateInfo = $state<{
+    version: string;
+    current: string;
+    source: 'host' | 'github';
+    auto?: boolean;
+  } | null>(null);
   let updateInstalling = $state(false);
   let updateProgress = $state<number | null>(null);
   let updateError = $state('');
@@ -555,7 +560,13 @@
           <span>Updating{updateProgress !== null ? ` · ${updateProgress.toFixed(0)}%` : '…'}</span>
         {:else}
           <span class="font-medium">Update available — v{updateInfo.version}</span>
-          <span class="text-teal-200/60">· click to install &amp; restart</span>
+          <span class="text-teal-200/60">
+            {#if updateInfo.auto}
+              · installs by itself when this device is not in use — or click to have it now
+            {:else}
+              · click to install &amp; restart
+            {/if}
+          </span>
         {/if}
         {#if updateError}
           <span class="text-red-300 ml-auto truncate">{updateError}</span>

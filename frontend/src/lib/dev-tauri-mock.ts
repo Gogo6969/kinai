@@ -229,6 +229,12 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
     // Host-mode slot liveness; override via __mockPreset.slotHealth or a
     // URL scenario to test the menu's offline markers.
     slot_health: () => w.__mockSlotHealth ?? {},
+    // Counted so a test can see that keys and clicks are reported — and
+    // that they are throttled.
+    note_activity: () => {
+      w.__mockActivityNotes = (w.__mockActivityNotes ?? 0) + 1;
+      return null;
+    },
     // Reports: an in-memory list so the button, the badge and the
     // host page can all be exercised in a plain browser.
     report_answer: (a) => {

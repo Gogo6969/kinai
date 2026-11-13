@@ -713,6 +713,9 @@ export const api = {
   slotHealth: () => invoke<Record<string, boolean>>('slot_health'),
   checkUpdates: () => invoke<void>('check_updates'),
   installUpdate: () => invoke<void>('install_update'),
+  /** "Somebody is using this window." Carries nothing but the moment —
+   *  a self-installing update waits until these stop coming. */
+  noteActivity: () => invoke<void>('note_activity'),
 };
 
 export const events = {
@@ -766,7 +769,16 @@ export const events = {
   onWelcome: (cb: (w: HostInfo) => void): Promise<UnlistenFn> =>
     listen('kinai://welcome', (e) => cb(e.payload as any)),
   onUpdateAvailable: (
-    cb: (u: { version: string; current: string; body?: string; source: 'host' | 'github' }) => void
+    cb: (u: {
+      version: string;
+      current: string;
+      body?: string;
+      source: 'host' | 'github';
+      /** True when this device will install the update by itself once
+       *  it has not been used for a while (a published release, offered
+       *  by the family host). The button still works for the impatient. */
+      auto?: boolean;
+    }) => void
   ): Promise<UnlistenFn> =>
     listen('kinai://update-available', (e) => cb(e.payload as any)),
   onSttDownloadProgress: (

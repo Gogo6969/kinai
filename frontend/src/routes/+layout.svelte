@@ -104,7 +104,26 @@
     if (ce.detail?.msg) showToast(ce.detail.msg, ce.detail.ms ?? 3000);
   }
 
+  // "Somebody is using this window": a key or a click, reported to the app
+  // at most once every 20 s. A self-installing update waits for ten
+  // minutes without one, so it never restarts KinAI under somebody's
+  // hands — including while they are still typing a message that has
+  // not been sent. Only the moment is reported, never what was pressed.
+  let lastActivityNote = 0;
+  function noteActivity() {
+    const now = Date.now();
+    if (now - lastActivityNote < 20_000) return;
+    lastActivityNote = now;
+    invoke('note_activity').catch(() => {});
+  }
+
   onMount(() => {
+    window.addEventListener('keydown', noteActivity, { capture: true, passive: true });
+    window.addEventListener('pointerdown', noteActivity, { capture: true, passive: true });
+    cleanups.push(() => window.removeEventListener('keydown', noteActivity, { capture: true } as any));
+    cleanups.push(() =>
+      window.removeEventListener('pointerdown', noteActivity, { capture: true } as any)
+    );
     if (!page.url.pathname.startsWith('/overlay')) {
       void app.load().then(() => app.startListening());
     }

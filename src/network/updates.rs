@@ -103,6 +103,13 @@ pub struct UpdateManifest {
     pub notes: String,
     pub pub_date: String,
     pub platforms: BTreeMap<String, PlatformBundle>,
+    /// "This version is a published release — an idle device may install
+    /// it without anyone pressing a button." Not part of Tauri's manifest
+    /// format; the updater ignores fields it does not know, and KinAI
+    /// reads this one back out of the raw answer (see `auto_update.rs`).
+    /// False for a version that is only staged on this host, and
+    /// whenever the host does not know: see `update_sync::is_published`.
+    pub auto_install: bool,
 }
 
 #[derive(Serialize)]
@@ -317,11 +324,13 @@ pub(crate) async fn manifest(
         })
         .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
 
+    let auto_install = crate::update_sync::is_published(&version);
     Ok(Json(UpdateManifest {
         version,
         notes: String::new(),
         pub_date,
         platforms,
+        auto_install,
     })
     .into_response())
 }

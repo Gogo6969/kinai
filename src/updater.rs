@@ -12,6 +12,12 @@
 //! laptop that's traveled out of range of the home network.
 //!
 //! Hosts (Mode::Host) and Unconfigured installs use GitHub as before.
+//!
+//! Finding an update is one thing, installing it another. A person can
+//! press the banner's button at any time. A family device that has been
+//! left alone also installs a PUBLISHED update by itself — that half
+//! lives in `auto_update.rs`; this file only tells it when the host
+//! offers one.
 
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::Duration;
@@ -97,6 +103,9 @@ async fn try_host_check<R: Runtime>(app: &AppHandle<R>) -> bool {
     match updater.check().await {
         Ok(Some(update)) => {
             LAST_HOST_OK.store(now_unix(), Ordering::Relaxed);
+            // Will this device install it without being asked? The banner
+            // says so, so nobody wonders whether they have to press it.
+            let auto = crate::auto_update::will_self_install(app, &update.raw_json, &update.version);
             let _ = app.emit(
                 "kinai://update-available",
                 serde_json::json!({
@@ -104,8 +113,12 @@ async fn try_host_check<R: Runtime>(app: &AppHandle<R>) -> bool {
                     "current": update.current_version,
                     "body": update.body,
                     "source": "host",
+                    "auto": auto,
                 }),
             );
+            if auto {
+                crate::auto_update::offer(app);
+            }
             true
         }
         Ok(None) => {
@@ -218,13 +231,25 @@ pub async fn download_and_install<R: Runtime>(app: AppHandle<R>) -> Result<(), S
     let Some(update) = update else {
         return Err("Already on the latest version.".into());
     };
+    // Somebody pressed the button: the app comes back with its window.
+    install(app, update, Relaunch::Show).await
+}
+
+/// Download `update`, verify it, put it in place and restart. Shared by
+/// the banner's button and by the self-installing path, which differ only
+/// in how the app should come back.
+pub(crate) async fn install<R: Runtime>(
+    app: AppHandle<R>,
+    update: tauri_plugin_updater::Update,
+    relaunch: Relaunch,
+) -> Result<(), String> {
     let app_for_event = app.clone();
     // The callback reports the size of THIS chunk, not the running total.
     // Dividing a chunk by the whole file gave a percentage that jittered
     // around zero for the entire download and never approached 100 — so
     // the bar looked frozen on every family member's update. Accumulate.
     let downloaded = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
-    update
+    let result = update
         .download_and_install(
             move |chunk_len, total_len| {
                 let so_far = downloaded
@@ -240,19 +265,39 @@ pub async fn download_and_install<R: Runtime>(app: AppHandle<R>) -> Result<(), S
                 );
             },
             move || {
+                // Say, on disk, how the launch about to happen should look.
+                // See `take_restart_marker` for why the new process cannot
+                // work that out for itself. Written HERE, between download
+                // and install, because on Windows the plugin starts the
+                // installer and exits the process from inside this call —
+                // nothing after the `.await` below ever runs there.
+                mark_restart(relaunch);
                 tracing::info!("update downloaded; relaunching");
             },
         )
-        .await
-        .map_err(|e| e.to_string())?;
-    // Say, on disk, that the launch about to happen was asked for. See
-    // `take_restart_marker` for why the new process cannot work that out
-    // for itself.
-    mark_restart();
+        .await;
+    if let Err(e) = result {
+        // No restart is coming. A note left behind would make the next
+        // ordinary launch behave like one.
+        clear_restart_marker();
+        return Err(e.to_string());
+    }
     // The plugin's `download_and_install` triggers a restart on its own
     // (macOS replaces the .app and relaunches). The line below is
     // belt-and-suspenders for platforms that don't auto-restart.
     app.restart();
+}
+
+/// How the app should come back after an update.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Relaunch {
+    /// With its window: somebody pressed "install and restart", or the
+    /// window was open when the device updated itself.
+    Show,
+    /// Without one: the device updated itself while KinAI sat in the
+    /// tray. A window appearing by itself in the middle of somebody's
+    /// film is not an improvement.
+    Quiet,
 }
 
 /// Where the "this relaunch was asked for" note lives.
@@ -261,15 +306,24 @@ fn restart_marker() -> std::path::PathBuf {
 }
 
 /// Leave that note, just before handing over to the restart.
-fn mark_restart() {
-    if let Err(e) = std::fs::write(restart_marker(), chrono::Utc::now().to_rfc3339()) {
+fn mark_restart(relaunch: Relaunch) {
+    let mut note = chrono::Utc::now().to_rfc3339();
+    if relaunch == Relaunch::Quiet {
+        note.push_str(" quiet");
+    }
+    if let Err(e) = std::fs::write(restart_marker(), note) {
         // Not fatal: the worst case is the window staying hidden, which
         // is the behaviour this note exists to improve on.
         tracing::warn!("could not mark the restart: {e}");
     }
 }
 
-/// Was this launch the one the updater asked for?
+fn clear_restart_marker() {
+    let _ = std::fs::remove_file(restart_marker());
+}
+
+/// Was this launch the one the updater asked for — and if so, how should
+/// it look?
 ///
 /// Tauri restarts by re-running the binary with the ORIGINAL argv
 /// (`process::restart` → `Command::new(bin).args(env.args_os.iter().skip(1))`),
@@ -284,21 +338,27 @@ fn mark_restart() {
 /// The note is consumed on read, and ignored when it is old — a restart
 /// that never happened must not make every launch from then on pop a
 /// window the member did not ask for.
-pub fn take_restart_marker() -> bool {
+///
+/// The note also says how to come back (`Relaunch`): the banner's button
+/// wants the window, a device that updated itself from the tray wants to
+/// stay in the tray — whatever argv says.
+pub fn take_restart_marker() -> Option<Relaunch> {
     let path = restart_marker();
-    let Ok(raw) = std::fs::read_to_string(&path) else {
-        return false;
-    };
+    let raw = std::fs::read_to_string(&path).ok()?;
     let _ = std::fs::remove_file(&path);
-    chrono::DateTime::parse_from_rfc3339(raw.trim())
-        .map(|t| {
-            let age = chrono::Utc::now() - t.with_timezone(&chrono::Utc);
-            age.num_seconds() >= 0 && age.num_seconds() < 300
-        })
-        .unwrap_or(false)
+    let mut words = raw.split_whitespace();
+    let when = chrono::DateTime::parse_from_rfc3339(words.next()?).ok()?;
+    let age = chrono::Utc::now() - when.with_timezone(&chrono::Utc);
+    if age.num_seconds() < 0 || age.num_seconds() >= 300 {
+        return None;
+    }
+    Some(match words.next() {
+        Some("quiet") => Relaunch::Quiet,
+        _ => Relaunch::Show,
+    })
 }
 
-async fn check_via_host<R: Runtime>(
+pub(crate) async fn check_via_host<R: Runtime>(
     app: &AppHandle<R>,
 ) -> Result<Option<tauri_plugin_updater::Update>, anyhow::Error> {
     let host_url = host_http_base(app)
@@ -325,7 +385,7 @@ async fn check_via_github<R: Runtime>(
 
 #[cfg(test)]
 mod restart_marker_tests {
-    use super::{restart_marker, take_restart_marker};
+    use super::{mark_restart, restart_marker, take_restart_marker, Relaunch};
 
     /// The note has to be consumed, or the first update would make every
     /// launch from then on open a window nobody asked for — including
@@ -338,22 +398,31 @@ mod restart_marker_tests {
         let _ = std::fs::remove_file(&path);
 
         // No note at all: an ordinary launch.
-        assert!(!take_restart_marker(), "nothing to find");
+        assert_eq!(take_restart_marker(), None, "nothing to find");
 
         // A note written just now: this launch was asked for.
         std::fs::write(&path, chrono::Utc::now().to_rfc3339()).unwrap();
-        assert!(take_restart_marker(), "the restart we just asked for");
+        assert_eq!(take_restart_marker(), Some(Relaunch::Show), "the restart we just asked for");
         assert!(!path.exists(), "and it is gone");
-        assert!(!take_restart_marker(), "so the next launch is ordinary again");
+        assert_eq!(take_restart_marker(), None, "so the next launch is ordinary again");
 
         // A note from a restart that never happened — a crash between
         // writing it and relaunching — must not follow the member around.
         std::fs::write(&path, (chrono::Utc::now() - chrono::Duration::hours(2)).to_rfc3339()).unwrap();
-        assert!(!take_restart_marker(), "stale");
+        assert_eq!(take_restart_marker(), None, "stale");
         assert!(!path.exists(), "cleared anyway");
 
         // Garbage is not a restart either.
         std::fs::write(&path, "yesterday-ish").unwrap();
-        assert!(!take_restart_marker(), "unparseable");
+        assert_eq!(take_restart_marker(), None, "unparseable");
+
+        // The two ways back, as the code that writes them writes them. A
+        // device that updated itself from the tray must stay in the tray;
+        // a pressed button must bring the window back.
+        mark_restart(Relaunch::Quiet);
+        assert_eq!(take_restart_marker(), Some(Relaunch::Quiet), "updated itself, unseen");
+        mark_restart(Relaunch::Show);
+        assert_eq!(take_restart_marker(), Some(Relaunch::Show), "somebody is watching");
+        assert_eq!(take_restart_marker(), None, "consumed again");
     }
 }

@@ -137,6 +137,14 @@ pub struct ClientSettings {
     pub display_name: String,
     /// Other hosts the user has joined — for the multi-host switcher (v1.0).
     pub pinned_hosts: Vec<PinnedHost>,
+    /// Install a published update without being asked, once the device
+    /// has not been used for a while (see auto_update.rs). On unless this
+    /// file says otherwise — there is deliberately no switch for it in
+    /// Settings, for the same reason the update banner cannot be
+    /// dismissed for good: a security fix nobody installs fixes nothing.
+    /// This line is the way out for a device where it misbehaves.
+    #[serde(default = "default_true")]
+    pub auto_update: bool,
 }
 
 impl Default for ClientSettings {
@@ -147,6 +155,7 @@ impl Default for ClientSettings {
             host_label: None,
             display_name: default_display_name(),
             pinned_hosts: Vec::new(),
+            auto_update: true,
         }
     }
 }

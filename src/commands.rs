@@ -1992,6 +1992,9 @@ pub async fn send_message(
         .sender
         .unwrap_or_else(|| state.config.read().client.display_name.clone());
 
+    // A question is out: the device is in use until its answer is done.
+    crate::activity::question_sent();
+
     // -- Client mode: forward to host over the live WebSocket. The host is
     // the source of truth for messages — it persists them and broadcasts
     // `Envelope::Message` back to every connected peer (including the
@@ -3408,6 +3411,14 @@ pub async fn fact_check_message(
             Err("The fact check timed out — try again.".into())
         }
     }
+}
+
+/// The windows report keys and clicks here (at most a few times a minute)
+/// so a self-installing update never restarts the app under somebody's
+/// hands. Carries nothing: only the moment is recorded.
+#[tauri::command]
+pub fn note_activity() {
+    crate::activity::touch();
 }
 
 #[tauri::command]
