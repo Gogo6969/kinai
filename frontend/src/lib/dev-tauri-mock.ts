@@ -223,6 +223,22 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
     ...(w.__mockPreset?.transcripts ?? {}),
   };
 
+  // Two invented facts for Settings → Memory.
+  const mockFacts = () =>
+    [
+      ['favorite_tea', 'peppermint', 'tool'],
+      ['walks_the_dog', 'every morning before breakfast', 'extractor'],
+    ].map(([key, value, source], i) => ({
+      id: 'fact-' + key,
+      peer_id: 'host',
+      key,
+      value,
+      source,
+      source_msg_id: null,
+      created_at: new Date(Date.UTC(2031, 0, 5 + i)).toISOString(),
+      updated_at: new Date(Date.UTC(2031, 0, 5 + i)).toISOString(),
+    }));
+
   const handlers: Record<string, (args: any) => any> = {
     get_config: () => cfg,
     runtime_stats: () => stats,
@@ -271,6 +287,39 @@ if (import.meta.env.DEV && typeof window !== 'undefined' && !('__TAURI_INTERNALS
       }
     },
     reminder_action: () => null,
+    // Memory: an unhandled command would return null, Settings → Memory
+    // would read `.length` of it and land on the error page. An in-memory
+    // list keeps the page and its add / edit / delete buttons usable.
+    list_user_facts: () => (w.__mockFacts ??= mockFacts()),
+    save_user_fact: (a) => {
+      const now = new Date().toISOString();
+      const key = String(a.args.key).trim().toLowerCase().replace(/[\s-]+/g, '_');
+      const facts: any[] = (w.__mockFacts ??= mockFacts());
+      const old = facts.find((f) => f.key === key);
+      const fact = old
+        ? { ...old, value: a.args.value, source: 'manual', updated_at: now }
+        : {
+            id: 'fact-' + key,
+            peer_id: 'host',
+            key,
+            value: a.args.value,
+            source: 'manual',
+            source_msg_id: null,
+            created_at: now,
+            updated_at: now,
+          };
+      w.__mockFacts = [...facts.filter((f) => f.key !== key), fact];
+      return fact;
+    },
+    delete_user_fact: (a) => {
+      w.__mockFacts = (w.__mockFacts ?? mockFacts()).filter((f: any) => f.id !== a.id);
+      return null;
+    },
+    clear_user_facts: () => {
+      const n = (w.__mockFacts ?? mockFacts()).length;
+      w.__mockFacts = [];
+      return n;
+    },
     open_report_count: () => (w.__mockReports ?? []).filter((r: any) => !r.reviewed_at).length,
     set_report_reviewed: (a) => {
       w.__mockReports = (w.__mockReports ?? []).map((r: any) =>
