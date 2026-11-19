@@ -5,6 +5,31 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.152] — 2026-11-20
+
+### Security
+
+- **The interface is now built with SvelteKit 3.** Four security advisories
+  against SvelteKit 2 are fixed only in version 3 (GHSA-3r8g-jcqq-3p5j,
+  GHSA-6cf5-gc4q-fm3x, GHSA-pfhg-q3qv-9q6r, GHSA-27mw-82g8-phjj). None of
+  them could be used against KinAI: they concern features that run on a web
+  server, and KinAI's interface is a set of files inside the app with no
+  such server. The move was made anyway, because SvelteKit 2 no longer
+  receives every fix. With it come Vite 8, TypeScript 6 and version 4 of the
+  static adapter. Nothing in the interface is meant to look or behave
+  differently.
+- **Smaller security updates.** Three further SvelteKit advisories
+  (GHSA-rqp5-r3wg-vg35, GHSA-mw6w-2fmv-pvw3, GHSA-jf9x-2fg2-hx4w) are closed
+  by the same move; they were not reachable in KinAI either. Two Rust
+  libraries were updated for advisories of their own: rustix 1.1.6
+  (GHSA-jh2m-fhpj-3vr7) and quinn-udp 0.5.16 (GHSA-6pp4-4cxf-xf88).
+
+### Changed
+
+- **Building KinAI from source needs Node 22.17 or newer** (it was 20),
+  because SvelteKit 3 requires it. `frontend/svelte.config.js` no longer
+  exists; its settings moved into `frontend/vite.config.ts`.
+
 ## [0.2.151] — 2026-11-12
 
 ### Added

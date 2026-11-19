@@ -394,7 +394,7 @@ kinai/
 
 ## 🛠️ Build from source
 
-Requirements: Rust stable, Node 20+, pnpm 9.
+Requirements: Rust stable, Node 22.17+, pnpm 9.
 
 ```bash
 git clone https://github.com/Gogo6969/kinai
