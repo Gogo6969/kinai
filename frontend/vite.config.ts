@@ -1,10 +1,33 @@
+import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import { defineConfig } from 'vite';
 
 const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig({
-  plugins: [sveltekit()],
+  // SvelteKit 3 takes its options here; `svelte.config.js` is gone.
+  plugins: [
+    sveltekit({
+      preprocess: vitePreprocess(),
+      adapter: adapter({
+        pages: 'build',
+        assets: 'build',
+        fallback: 'index.html',
+        precompress: false,
+        strict: false,
+      }),
+      // Deprecated in SvelteKit 3 in favour of `#lib` subpath imports, but
+      // still honoured. Kept so the move to 3 does not also rewrite every
+      // import in the app; that rename can be its own change.
+      alias: {
+        $lib: 'src/lib',
+      },
+      compilerOptions: {
+        runes: true,
+      },
+    }),
+  ],
   clearScreen: false,
   server: {
     port: 1420,
@@ -20,23 +43,14 @@ export default defineConfig({
     watch: { ignored: ['**/src-tauri/**', '**/target/**'] },
   },
   envPrefix: ['VITE_', 'TAURI_ENV_*'],
-  // `vite dev`'s dependency pre-bundler does NOT inherit build.target — it
-  // defaults to chrome87/safari14-era targets, and esbuild 0.28 dropped its
-  // downleveling transforms for those, so dev mode hard-errored on modern
-  // syntax in Svelte 5.55+. Give it the same modern target as the build.
-  optimizeDeps: {
-    esbuildOptions: { target: 'safari16' },
-  },
   build: {
     // The runtime is a Tauri WKWebView (macOS 11+, our minimum) /
     // WebView2 (Windows) — both modern, so we emit modern JS instead of
-    // down-leveling. esbuild 0.28 dropped its old (buggy) transforms for
-    // lowering destructuring to Safari 13/14, so an older target now
-    // hard-errors; targeting safari16 tells esbuild "don't lower, the
-    // webview handles it" — which is true and yields smaller output.
+    // down-leveling: the webview handles it, and the output is smaller.
     target:
       process.env.TAURI_ENV_PLATFORM === 'windows' ? 'chrome105' : 'safari16',
-    minify: !process.env.TAURI_ENV_DEBUG ? 'esbuild' : false,
+    // Vite 8 minifies with Oxc; esbuild is no longer part of the build.
+    minify: !process.env.TAURI_ENV_DEBUG,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
   },
 });
