@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-11-13T04:43:47+00:00",
-  "version": "0.2.151",
+  "generated_at": "2026-11-21T00:12:17+00:00",
+  "version": "0.2.152",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 438,
-    "head": "f6c429d"
+    "commits": 444,
+    "head": "07c2aaf"
   },
   "totals": {
     "rust_files": 76,
     "rust_lines": 41015,
     "frontend_files": 38,
-    "frontend_lines": 15097,
+    "frontend_lines": 15146,
     "unit_tests": 506,
     "integration_test_files": 20,
-    "releases": 143,
-    "tags": 138
+    "releases": 144,
+    "tags": 139
   },
   "areas": [
     {
@@ -704,7 +704,7 @@
     {
       "path": "frontend/src/lib/dev-tauri-mock.ts",
       "kind": "lib",
-      "lines": 649,
+      "lines": 698,
       "doc": "DEV-ONLY Tauri IPC mock. When the frontend runs in a plain browser (`pnpm dev` + localhost:1420, no Tauri shell), `window.__TAURI_INTERNALS__` doesn't exist and every invoke() rejects — the UI is untestable outside the app. This module installs a minimal in-memory backend so the whole UI (most importantly the /setup wizard) can be driven end-to-end in a browser: config mutations persist for the se"
     },
     {
@@ -1303,6 +1303,28 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.152",
+      "date": "2026-11-20",
+      "sections": {
+        "Security": [
+          {
+            "title": "The interface is now built with SvelteKit 3.",
+            "detail": "Four security advisories against SvelteKit 2 are fixed only in version 3 (GHSA-3r8g-jcqq-3p5j, GHSA-6cf5-gc4q-fm3x, GHSA-pfhg-q3qv-9q6r, GHSA-27mw-82g8-phjj). None of them could be used against KinAI: they concern features that run on a web server, and KinAI's interface is a set of files inside the app with no such server. The move was made anyway, because SvelteKit 2 no longer receives every fix. With it come Vite 8, TypeScript 6 and version 4 of the static adapter. Nothing in the interface is meant to look or behave differently."
+          },
+          {
+            "title": "Smaller security updates.",
+            "detail": "Three further SvelteKit advisories (GHSA-rqp5-r3wg-vg35, GHSA-mw6w-2fmv-pvw3, GHSA-jf9x-2fg2-hx4w) are closed by the same move; they were not reachable in KinAI either. Two Rust libraries were updated for advisories of their own: rustix 1.1.6 (GHSA-jh2m-fhpj-3vr7) and quinn-udp 0.5.16 (GHSA-6pp4-4cxf-xf88)."
+          }
+        ],
+        "Changed": [
+          {
+            "title": "Building KinAI from source needs Node 22.17 or newer",
+            "detail": "(it was 20), because SvelteKit 3 requires it. `frontend/svelte.config.js` no longer exists; its settings moved into `frontend/vite.config.ts`."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.151",
       "date": "2026-11-12",
@@ -4210,6 +4232,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.152",
+      "date": "2026-11-20"
+    },
     {
       "tag": "v0.2.151",
       "date": "2026-11-12"
