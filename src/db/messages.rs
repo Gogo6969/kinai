@@ -304,6 +304,32 @@ pub async fn set_thread_digest(
     Ok(res.rows_affected() == 1)
 }
 
+/// The newest message of a thread that carries a picture: either one the
+/// sender attached, or a reply showing a picture KinAI made (`/v1/pic/…`).
+/// Returns its text and attachments. Used by `/edit` to find the picture to
+/// change. No peer check here: the caller has already resolved `thread_id`
+/// for the peer whose turn this is.
+pub async fn latest_picture_message(
+    pool: &SqlitePool,
+    thread_id: &str,
+) -> Result<Option<(String, Vec<Attachment>)>> {
+    let row = sqlx::query(
+        "SELECT content, attachments FROM messages
+         WHERE thread_id = ?1
+           AND (attachments LIKE '%data:image/%'
+                OR (role = 'assistant' AND content LIKE '%/v1/pic/%'))
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(thread_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|r| {
+        let content: String = r.get("content");
+        let raw: String = r.try_get("attachments").unwrap_or_default();
+        (content, serde_json::from_str(&raw).unwrap_or_default())
+    }))
+}
+
 pub async fn load(
     pool: &SqlitePool,
     peer_id: &str,

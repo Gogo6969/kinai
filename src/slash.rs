@@ -819,7 +819,8 @@ pub async fn handle(
         }
         // A picture came with the command: change it, don't make a new one.
         if attachments.iter().any(|a| a.kind == "image") {
-            return Some(edit_reply(cfg, model, &prompt, attachments).await);
+            let picture = crate::comfyui::first_picture(attachments);
+            return Some(edit_reply(cfg, model.slug(), model, &prompt, picture).await);
         }
         if prompt.is_empty() {
             return Some(format!(
@@ -867,22 +868,114 @@ pub async fn handle(
     }
 }
 
-/// `/pic` or `/picHQ` with a picture attached: change that picture as the
-/// rest of the message says, and answer with the result (or with a plain
-/// sentence saying why not).
+/// The line under every changed picture that says how to go on. Plain
+/// text on purpose: in Telegram it is part of a photo caption, which is
+/// sent without formatting.
+pub const EDIT_HINT: &str =
+    "To change it further, write /edit and what should be different, for example: /edit make the dress golden";
+
+/// `/edit <what to change>` — change the newest picture of the
+/// conversation. Returns the instruction (possibly empty) when `text` is
+/// that command, `None` for anything else, `/editor` included.
+pub fn parse_edit(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    let head = trimmed.get(..5)?;
+    if !head.eq_ignore_ascii_case("/edit") {
+        return None;
+    }
+    let rest = &trimmed[5..];
+    match rest.chars().next() {
+        None => Some(String::new()),
+        Some(c) if c.is_whitespace() => Some(rest.trim().to_string()),
+        Some(_) => None,
+    }
+}
+
+/// The slash handler for a message inside a conversation. Same as
+/// `handle`, plus `/edit`, which needs the conversation to find the
+/// picture it should change.
+pub async fn handle_in_thread(
+    cfg: &AppConfig,
+    db: &crate::db::Db,
+    thread_id: &str,
+    content: &str,
+    attachments: &[crate::db::Attachment],
+) -> Option<String> {
+    let Some(instruction) = parse_edit(content) else {
+        return handle(cfg, content, attachments).await;
+    };
+    if !crate::comfyui::is_configured(&cfg.comfyui.base_url) {
+        return Some(
+            "**Image generation isn't configured on this host.**\n\nThe host owner can enable it in **Settings → Image generation**.".into(),
+        );
+    }
+    if instruction.is_empty() {
+        return Some(
+            "Say what to change after the command, for example: `/edit make the dress golden`. It changes the newest picture in this conversation.".into(),
+        );
+    }
+    // A picture sent with the command wins; otherwise the newest picture
+    // in the conversation, whoever it came from.
+    let picture = if attachments.iter().any(|a| a.kind == "image") {
+        crate::comfyui::first_picture(attachments)
+    } else {
+        match latest_picture(db, thread_id).await {
+            Some(p) => Some(p),
+            None => {
+                return Some(
+                    "**There is no picture in this conversation to change yet.** Send one together with `/pic` and what to change, for example `/pic give her a crown`. After that, `/edit` changes the result.".into(),
+                )
+            }
+        }
+    };
+    Some(edit_reply(cfg, "edit", crate::comfyui::Model::Turbo, &instruction, picture).await)
+}
+
+/// File name of a picture KinAI made, taken from a reply's
+/// `![…](http://host/v1/pic/<name>)`.
+fn pic_name_in(reply: &str) -> Option<&str> {
+    let rest = reply.split("/v1/pic/").nth(1)?;
+    let name = rest.split(')').next()?;
+    let plain = !name.is_empty()
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        && !name.contains("..");
+    plain.then_some(name)
+}
+
+/// The newest picture of a conversation as bytes: the result of the last
+/// `/pic` or `/edit`, or a picture somebody sent, whichever is newer.
+async fn latest_picture(db: &crate::db::Db, thread_id: &str) -> Option<(Vec<u8>, &'static str)> {
+    let (content, attachments) = db.latest_picture_message(thread_id).await.ok()??;
+    if let Some(found) = crate::comfyui::first_picture(&attachments) {
+        return Some(found);
+    }
+    let name = pic_name_in(&content)?;
+    let ext = match name.rsplit('.').next()?.to_ascii_lowercase().as_str() {
+        "png" => "png",
+        "jpg" | "jpeg" => "jpg",
+        "webp" => "webp",
+        _ => return None,
+    };
+    let bytes = tokio::fs::read(crate::comfyui::pics_dir().join(name)).await.ok()?;
+    (!bytes.is_empty()).then_some((bytes, ext))
+}
+
+/// Change `picture` as `prompt` says and answer with the result (or with a
+/// plain sentence saying why not). `slug` is the command the person
+/// typed, for the messages.
 async fn edit_reply(
     cfg: &AppConfig,
+    slug: &str,
     model: crate::comfyui::Model,
     prompt: &str,
-    attachments: &[crate::db::Attachment],
+    picture: Option<(Vec<u8>, &'static str)>,
 ) -> String {
-    let slug = model.slug();
     if prompt.is_empty() {
         return format!(
             "Say what to change after the command, for example: `/{slug} give the man a birthday crown`."
         );
     }
-    let Some((picture, ext)) = crate::comfyui::first_picture(attachments) else {
+    let Some((picture, ext)) = picture else {
         return format!(
             "**/{slug} can't open that picture.** It reads PNG, JPEG and WebP. Send it as one of those and try again."
         );
@@ -893,7 +986,7 @@ async fn edit_reply(
             let host_http =
                 http_origin_for(cfg).unwrap_or_else(|| String::from("http://127.0.0.1:4847"));
             format!(
-                "![{alt}]({host_http}{path})\n\n{prompt}\n\n_{label} · changed picture · {secs:.1}s_",
+                "![{alt}]({host_http}{path})\n\n{prompt}\n\n_{label} · changed picture · {secs:.1}s_\n\n{EDIT_HINT}",
                 alt = prompt.chars().take(120).collect::<String>(),
                 path = img.url_path,
                 label = crate::comfyui::EDIT_LABEL,
@@ -951,6 +1044,7 @@ pub fn help_markdown(cfg: &AppConfig) -> String {
         out.push_str("`/picHQ [WxH] <prompt>` — Z-Image Base HQ (slower, ~30s, default 1024×1024)\n");
         out.push_str("Optional `WxH` overrides the size, e.g. `/picHQ 1280x720 a sunset over Miami` — any size 64×64 to 2048×2048.\n");
         out.push_str("Attach a picture to `/pic <what to change>` and it changes that picture instead, e.g. `/pic give the man a birthday crown` (`/picHQ` for a larger result).\n");
+        out.push_str("`/edit <what to change>` — changes the newest picture in the conversation again, e.g. `/edit make the dress golden`.\n");
     } else {
         out.push_str("*(image generation not configured on this host — ask the host owner to set a ComfyUI URL in Settings → Image generation)*\n");
     }
@@ -1001,6 +1095,7 @@ pub fn help_html(cfg: &AppConfig) -> String {
         out.push_str("<code>/picHQ [WxH] &lt;prompt&gt;</code> — Z-Image Base HQ (slower, ~30s, default 1024×1024)\n");
         out.push_str("Optional <code>WxH</code> overrides the size, e.g. <code>/picHQ 1280x720 a sunset over Miami</code> — any size 64×64 to 2048×2048.\n");
         out.push_str("Send a photo with <code>/pic &lt;what to change&gt;</code> as its caption and it changes that photo instead, e.g. <code>/pic give the man a birthday crown</code> (<code>/picHQ</code> for a larger result).\n");
+        out.push_str("<code>/edit &lt;what to change&gt;</code> — changes the newest picture in the chat again, e.g. <code>/edit make the dress golden</code>.\n");
     } else {
         out.push_str("<i>(image generation not configured on this host — ask the host owner to set a ComfyUI URL in Settings → Image generation)</i>\n");
     }
@@ -1863,5 +1958,88 @@ mod failover_scenario_tests {
         assert!(all_down_message(&tried, None, true, false).contains("/online"));
         assert!(!all_down_message(&tried, None, false, false).contains("/online"));
         assert!(!all_down_message(&tried, None, true, true).contains("/online"), "a picture can't be offered to a model that can't see");
+    }
+}
+
+#[cfg(test)]
+mod edit_command_tests {
+    use super::*;
+    use crate::db::Attachment;
+
+    #[test]
+    fn parse_edit_takes_the_command_and_nothing_that_merely_starts_like_it() {
+        assert_eq!(parse_edit("/edit make the dress golden").as_deref(), Some("make the dress golden"));
+        assert_eq!(parse_edit("  /EDIT  bigger crown ").as_deref(), Some("bigger crown"));
+        assert_eq!(parse_edit("/edit\nline two").as_deref(), Some("line two"));
+        assert_eq!(parse_edit("/edit").as_deref(), Some(""));
+        assert_eq!(parse_edit("/editor is broken"), None);
+        assert_eq!(parse_edit("please /edit this"), None);
+        assert_eq!(parse_edit("/edi"), None);
+        // Multi-byte text right after the first bytes must not panic.
+        assert_eq!(parse_edit("/édit x"), None);
+        assert_eq!(parse_edit("/edit é").as_deref(), Some("é"));
+    }
+
+    #[test]
+    fn pic_name_is_read_from_a_reply_and_nothing_else() {
+        let reply = "![a hat](http://192.0.2.7:4847/v1/pic/1b2c-3d.png)\n\na hat";
+        assert_eq!(pic_name_in(reply), Some("1b2c-3d.png"));
+        assert_eq!(pic_name_in("no picture here"), None);
+        assert_eq!(pic_name_in("![x](http://192.0.2.7/v1/pic/../../secret.png)"), None);
+        assert_eq!(pic_name_in("![x](http://192.0.2.7/v1/pic/a/b.png)"), None);
+    }
+
+    fn picture(b64: &str) -> Attachment {
+        Attachment {
+            kind: "image".into(),
+            mime: Some("image/png".into()),
+            name: Some("p.png".into()),
+            data_url: Some(format!("data:image/png;base64,{b64}")),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_newest_picture_of_the_conversation_is_the_one_to_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::Db::open(dir.path().join("t.db")).await.unwrap();
+        let t = db.create_thread("host", Some("pictures")).await.unwrap();
+        assert!(latest_picture(&db, &t.id).await.is_none(), "an empty conversation has none");
+
+        db.append_message(&t.id, "user", "Ada", "/pic give her a crown", &[picture("QUJD")])
+            .await
+            .unwrap();
+        db.append_message(&t.id, "user", "Ada", "/edit make it bigger", &[]).await.unwrap();
+        let (bytes, ext) = latest_picture(&db, &t.id).await.expect("the sent picture");
+        assert_eq!((bytes.as_slice(), ext), (b"ABC".as_slice(), "png"));
+
+        // A later picture replaces it as the one `/edit` works on.
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        db.append_message(&t.id, "user", "Ada", "and this one?", &[picture("WFla")]).await.unwrap();
+        assert_eq!(latest_picture(&db, &t.id).await.unwrap().0, b"XYZ");
+
+        // Another conversation's pictures are never picked up.
+        let other = db.create_thread("host", Some("other")).await.unwrap();
+        assert!(latest_picture(&db, &other.id).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn edit_without_a_picture_or_without_words_explains_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::db::Db::open(dir.path().join("t.db")).await.unwrap();
+        let t = db.create_thread("host", Some("pictures")).await.unwrap();
+        let mut cfg = AppConfig::default();
+        cfg.comfyui.base_url = "http://192.0.2.7:8188".into();
+
+        let none = handle_in_thread(&cfg, &db, &t.id, "/edit make the dress golden", &[]).await.unwrap();
+        assert!(none.contains("no picture in this conversation"), "{none}");
+        let bare = handle_in_thread(&cfg, &db, &t.id, "/edit", &[]).await.unwrap();
+        assert!(bare.contains("Say what to change"), "{bare}");
+
+        cfg.comfyui.base_url = String::new();
+        let off = handle_in_thread(&cfg, &db, &t.id, "/edit make the dress golden", &[]).await.unwrap();
+        assert!(off.contains("isn't configured"), "{off}");
+        // Anything else still goes where it went before.
+        assert!(handle_in_thread(&cfg, &db, &t.id, "hello", &[]).await.is_none());
+        assert!(handle_in_thread(&cfg, &db, &t.id, "/help", &[]).await.is_some());
     }
 }

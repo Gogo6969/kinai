@@ -37,6 +37,7 @@ fn assert_is_a_changed_picture(reply: &str) {
     println!("{reply}");
     assert!(reply.starts_with("!["), "the reply should start with the picture: {reply}");
     assert!(reply.contains("changed picture"), "the caption should say it was changed: {reply}");
+    assert!(reply.contains("/edit"), "the reply should say how to change it further: {reply}");
     let name = reply
         .split("/v1/pic/")
         .nth(1)
@@ -64,6 +65,36 @@ async fn the_command_changes_a_sent_picture() {
     // No instruction: a hint, and nothing is sent to the picture server.
     let hint = kinai::slash::handle(&cfg, "/pic", &[photo()]).await.expect("a reply");
     assert!(hint.contains("Say what to change"), "{hint}");
+}
+
+/// `/edit` with no picture attached changes the RESULT of the step before.
+/// Runs the handler directly on a throwaway database, so it proves the
+/// code in this checkout without the app.
+#[tokio::test]
+#[ignore = "live: requires the picture server and KINAI_PHOTO"]
+async fn edit_changes_the_previous_result() {
+    let cfg = AppConfig::load_or_default();
+    let dir = tempfile::tempdir().unwrap();
+    let db = kinai::db::Db::open(dir.path().join("t.db")).await.unwrap();
+    let t = db.create_thread("host", Some("pic edit")).await.unwrap();
+
+    let first_ask = "/pic Put a golden paper birthday crown on the head of the person. Keep everything else the same.";
+    db.append_message(&t.id, "user", "Test", first_ask, &[photo()]).await.unwrap();
+    let first = kinai::slash::handle_in_thread(&cfg, &db, &t.id, first_ask, &[photo()])
+        .await
+        .expect("a reply");
+    assert_is_a_changed_picture(&first);
+    db.append_message(&t.id, "assistant", "KinAI", &first, &[]).await.unwrap();
+
+    let second_ask = "/edit Make the crown much bigger and make the sweater golden.";
+    db.append_message(&t.id, "user", "Test", second_ask, &[]).await.unwrap();
+    let second = kinai::slash::handle_in_thread(&cfg, &db, &t.id, second_ask, &[])
+        .await
+        .expect("a reply");
+    assert_is_a_changed_picture(&second);
+    let name = |r: &str| r.split("/v1/pic/").nth(1).unwrap().split(')').next().unwrap().to_string();
+    assert_ne!(name(&first), name(&second), "the second step makes a new picture");
+    println!("FIRST={}\nSECOND={}", name(&first), name(&second));
 }
 
 #[tokio::test]
@@ -137,8 +168,38 @@ async fn a_family_device_gets_its_picture_changed() {
     .await
     .expect("a reply within 5 minutes");
 
+    // Second step, the way a person goes on: no picture attached.
+    let env2 = Envelope::SendMessage {
+        thread_id: thread.id.clone(),
+        content: "/edit Make the crown much bigger and make the sweater golden.".into(),
+        sender: "Pic Edit Test".into(),
+        client_msg_id: "p2".into(),
+        attachments: vec![],
+    };
+    sink.send(WsMessage::Text(serde_json::to_string(&env2).unwrap().into()))
+        .await
+        .expect("send the follow-up");
+    let reply2 = tokio::time::timeout(Duration::from_secs(300), async {
+        while let Some(Ok(msg)) = source.next().await {
+            if let WsMessage::Text(t) = msg {
+                if let Ok(Envelope::AssistantDone { client_msg_id, message, .. }) =
+                    serde_json::from_str::<Envelope>(&t)
+                {
+                    if client_msg_id == "p2" {
+                        return message.content;
+                    }
+                }
+            }
+        }
+        panic!("socket closed before the second reply");
+    })
+    .await
+    .expect("a second reply within 5 minutes");
+
     // Clean up before asserting, so a failure leaves nothing behind.
     db.delete_thread(&peer, &thread.id).await.ok();
     kinai::network::invite::revoke(&pool, &invite.id).await.ok();
     assert_is_a_changed_picture(&reply);
+    assert_is_a_changed_picture(&reply2);
+    assert_ne!(reply, reply2, "the follow-up makes a new picture");
 }

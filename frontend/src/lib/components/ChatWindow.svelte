@@ -123,6 +123,11 @@
       hint: 'Optional WxH prefix: /picHQ 1280x720 sunset over Miami',
     },
     {
+      cmd: '/edit',
+      desc: 'Change the newest picture in this chat again',
+      hint: 'Say what should be different: /edit make the dress golden',
+    },
+    {
       cmd: '/newchat',
       desc: 'Start a fresh chat — no prior context (memory kept)',
       hint: 'Add a question to ask right away: /newchat what is rust?',

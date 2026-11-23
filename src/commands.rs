@@ -2224,7 +2224,7 @@ async fn run_assistant_turn(
         config_changed = enabled_now.is_some();
         Some(reply)
     } else {
-        crate::slash::handle(&cfg, &llm_route_content, &user_msg.attachments).await
+        crate::slash::handle_in_thread(&cfg, &state.db, thread_id, &llm_route_content, &user_msg.attachments).await
     };
     if let Some(reply) = slash_reply {
         let started_at = std::time::Instant::now();

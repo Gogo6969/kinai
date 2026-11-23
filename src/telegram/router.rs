@@ -505,7 +505,9 @@ back, unless you switch model yourself.",
             .starts_with("/pic");
         // With a photo attached, /pic changes that photo rather than
         // making a new picture: say so.
-        let placeholder_text = if has_image {
+        let is_edit = crate::slash::parse_edit(&llm_route_content).is_some();
+        let is_pic = is_pic || is_edit;
+        let placeholder_text = if has_image || is_edit {
             "🎨 Changing your picture… this can take a minute."
         } else {
             "🎨 Creating a picture… this can take a minute."
@@ -534,7 +536,7 @@ back, unless you switch model yourself.",
                 }
             })
         });
-        let reply = crate::slash::handle(&cfg, &llm_route_content, &attachments).await;
+        let reply = crate::slash::handle_in_thread(&cfg, &state.db, &thread_id, &llm_route_content, &attachments).await;
         action_cancel.cancel();
         // Wait for the placeholder cleanup (one bounded HTTP call) so the
         // "creating…" message is gone before the photo/reply lands.

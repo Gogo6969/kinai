@@ -325,6 +325,10 @@ fn command_menu(cfg: &crate::config::AppConfig) -> Vec<api::BotCommand> {
             command: "pichq".into(),
             description: "Generate a higher-quality image (slower)".into(),
         });
+        out.push(api::BotCommand {
+            command: "edit".into(),
+            description: "Change the newest picture again (e.g. /edit make the dress golden)".into(),
+        });
     }
 
     out

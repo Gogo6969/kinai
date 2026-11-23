@@ -96,6 +96,14 @@ impl Db {
     }
     /// `load_messages` for the LLM context builder: image payloads are
     /// stripped at the SQL layer (PDFs kept). See messages::load_for_context.
+    /// Newest message of the thread that carries a picture (see
+    /// `messages::latest_picture_message`).
+    pub async fn latest_picture_message(
+        &self,
+        thread_id: &str,
+    ) -> Result<Option<(String, Vec<Attachment>)>> {
+        messages::latest_picture_message(&self.pool, thread_id).await
+    }
     pub async fn count_messages_in_thread(&self, thread_id: &str) -> Result<i64> {
         messages::count_in_thread(&self.pool, thread_id).await
     }
