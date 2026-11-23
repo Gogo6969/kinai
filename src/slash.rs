@@ -795,7 +795,14 @@ fn strip_prefix(content: &str, prefix: &str) -> String {
 /// If `content` is a slash command we handle natively, return the
 /// assistant's reply text. Returns `None` if the message should fall
 /// through to the regular LLM pipeline.
-pub async fn handle(cfg: &AppConfig, content: &str) -> Option<String> {
+///
+/// `attachments` are the ones sent with this message: `/pic` with a
+/// picture attached changes that picture instead of making a new one.
+pub async fn handle(
+    cfg: &AppConfig,
+    content: &str,
+    attachments: &[crate::db::Attachment],
+) -> Option<String> {
     let trimmed = content.trim();
 
     // /help and ? — always available.
@@ -809,6 +816,10 @@ pub async fn handle(cfg: &AppConfig, content: &str) -> Option<String> {
             return Some(
                 "**Image generation isn't configured on this host.**\n\nThe host owner can enable it in **Settings → Image generation** by pointing it at a ComfyUI server (e.g. `http://192.168.1.50:8188`).".into()
             );
+        }
+        // A picture came with the command: change it, don't make a new one.
+        if attachments.iter().any(|a| a.kind == "image") {
+            return Some(edit_reply(cfg, model, &prompt, attachments).await);
         }
         if prompt.is_empty() {
             return Some(format!(
@@ -856,6 +867,46 @@ pub async fn handle(cfg: &AppConfig, content: &str) -> Option<String> {
     }
 }
 
+/// `/pic` or `/picHQ` with a picture attached: change that picture as the
+/// rest of the message says, and answer with the result (or with a plain
+/// sentence saying why not).
+async fn edit_reply(
+    cfg: &AppConfig,
+    model: crate::comfyui::Model,
+    prompt: &str,
+    attachments: &[crate::db::Attachment],
+) -> String {
+    let slug = model.slug();
+    if prompt.is_empty() {
+        return format!(
+            "Say what to change after the command, for example: `/{slug} give the man a birthday crown`."
+        );
+    }
+    let Some((picture, ext)) = crate::comfyui::first_picture(attachments) else {
+        return format!(
+            "**/{slug} can't open that picture.** It reads PNG, JPEG and WebP. Send it as one of those and try again."
+        );
+    };
+    let started = std::time::Instant::now();
+    match crate::comfyui::edit(&cfg.comfyui.base_url, model, prompt, picture, ext).await {
+        Ok(img) => {
+            let host_http =
+                http_origin_for(cfg).unwrap_or_else(|| String::from("http://127.0.0.1:4847"));
+            format!(
+                "![{alt}]({host_http}{path})\n\n{prompt}\n\n_{label} · changed picture · {secs:.1}s_",
+                alt = prompt.chars().take(120).collect::<String>(),
+                path = img.url_path,
+                label = crate::comfyui::EDIT_LABEL,
+                secs = img.elapsed_secs,
+            )
+        }
+        Err(e) => format!(
+            "**/{slug} could not change the picture** after {:.1}s: {e}",
+            started.elapsed().as_secs_f64()
+        ),
+    }
+}
+
 /// HTTP origin clients can use to fetch a saved image from the host's
 /// `/v1/pic/:filename` route. Mirrors the host_url stamped into invite
 /// JWT audiences so every paired device (Mac and Windows) can reach it.
@@ -899,6 +950,7 @@ pub fn help_markdown(cfg: &AppConfig) -> String {
         out.push_str("`/pic [WxH] <prompt>` — Z-Image Turbo (fast, ~5s, default 1280×720)\n");
         out.push_str("`/picHQ [WxH] <prompt>` — Z-Image Base HQ (slower, ~30s, default 1024×1024)\n");
         out.push_str("Optional `WxH` overrides the size, e.g. `/picHQ 1280x720 a sunset over Miami` — any size 64×64 to 2048×2048.\n");
+        out.push_str("Attach a picture to `/pic <what to change>` and it changes that picture instead, e.g. `/pic give the man a birthday crown` (`/picHQ` for a larger result).\n");
     } else {
         out.push_str("*(image generation not configured on this host — ask the host owner to set a ComfyUI URL in Settings → Image generation)*\n");
     }
@@ -948,6 +1000,7 @@ pub fn help_html(cfg: &AppConfig) -> String {
         out.push_str("<code>/pic [WxH] &lt;prompt&gt;</code> — Z-Image Turbo (fast, ~5s, default 1280×720)\n");
         out.push_str("<code>/picHQ [WxH] &lt;prompt&gt;</code> — Z-Image Base HQ (slower, ~30s, default 1024×1024)\n");
         out.push_str("Optional <code>WxH</code> overrides the size, e.g. <code>/picHQ 1280x720 a sunset over Miami</code> — any size 64×64 to 2048×2048.\n");
+        out.push_str("Send a photo with <code>/pic &lt;what to change&gt;</code> as its caption and it changes that photo instead, e.g. <code>/pic give the man a birthday crown</code> (<code>/picHQ</code> for a larger result).\n");
     } else {
         out.push_str("<i>(image generation not configured on this host — ask the host owner to set a ComfyUI URL in Settings → Image generation)</i>\n");
     }

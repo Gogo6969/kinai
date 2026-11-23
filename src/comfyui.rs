@@ -1,5 +1,10 @@
 //! ComfyUI integration — powers the `/pic` and `/picHQ` chat commands.
 //!
+//! With a picture attached, the same two commands CHANGE that picture
+//! ("give the man a birthday crown") instead of making a new one: see
+//! `edit`. That path uploads the picture to the server, runs Qwen Image
+//! 2.1 Turbo's edit workflow on it, and blanks the uploaded copy again.
+//!
 //! Ported from CCC chat's `comfyui-pic.js`. Same exact workflows (Z-Image
 //! Turbo for `/pic`, Z-Image Base for `/picHQ`) so the user gets identical
 //! output here as they do in CCC.
@@ -126,9 +131,19 @@ pub async fn generate(
 
     let seed: u64 = rand::random();
     let workflow = build_workflow(model, prompt, width, height, seed);
-    let client_id = Uuid::new_v4().to_string();
+    run_workflow(&client, base, workflow, Instant::now()).await
+}
 
-    let t_start = Instant::now();
+/// Submit one workflow, wait for its picture, save it under
+/// `~/.kinai/pics/` and return where clients can load it. Shared by
+/// `generate` (text to picture) and `edit` (change a sent picture).
+async fn run_workflow(
+    client: &reqwest::Client,
+    base: &str,
+    workflow: Value,
+    t_start: Instant,
+) -> Result<GeneratedImage> {
+    let client_id = Uuid::new_v4().to_string();
     let submit_resp = client
         .post(format!("{base}/prompt"))
         .json(&json!({ "prompt": workflow, "client_id": client_id }))
@@ -258,6 +273,145 @@ pub async fn generate(
         bytes: bytes.len(),
         elapsed_secs: t_start.elapsed().as_secs_f64(),
     })
+}
+
+/// Label shown under an edited picture.
+pub const EDIT_LABEL: &str = "Qwen Image 2.1 Turbo";
+
+/// Largest picture `/pic` accepts for editing. A phone photo is 2–6 MB;
+/// this only stops something absurd from being pushed to the server.
+const MAX_EDIT_BYTES: usize = 25 * 1024 * 1024;
+
+/// How large the edited picture comes out, as the model's "resolution"
+/// (about that many pixels squared, in the sent picture's own shape).
+/// Never 0: that keeps the sent size, and a 12-megapixel phone photo then
+/// takes about five minutes instead of ten seconds.
+pub fn edit_resolution(model: Model) -> u32 {
+    match model {
+        Model::Turbo => 1024,
+        Model::Hq => 1536,
+    }
+}
+
+/// The first picture among a message's attachments, as raw bytes plus the
+/// file extension the server should store it under. `None` when there is
+/// no picture, or it is in a format the picture server cannot open.
+pub fn first_picture(attachments: &[crate::db::Attachment]) -> Option<(Vec<u8>, &'static str)> {
+    use base64::Engine;
+    for a in attachments {
+        if a.kind != "image" {
+            continue;
+        }
+        let Some(url) = a.data_url.as_deref() else { continue };
+        let Some(rest) = url.strip_prefix("data:") else { continue };
+        let Some((meta, b64)) = rest.split_once(";base64,") else { continue };
+        let ext = match meta.to_ascii_lowercase().as_str() {
+            "image/png" => "png",
+            "image/jpeg" | "image/jpg" => "jpg",
+            "image/webp" => "webp",
+            _ => continue,
+        };
+        if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64.trim()) {
+            if !bytes.is_empty() {
+                return Some((bytes, ext));
+            }
+        }
+    }
+    None
+}
+
+/// Workflow that changes one uploaded picture as `prompt` says. The node
+/// graph and the nine sampling steps are those of ComfyUI's own "Qwen
+/// Image 2.1 Turbo: Image edit" template, without its optional prompt
+/// rewriter.
+fn build_edit_workflow(prompt: &str, image_name: &str, resolution: u32, seed: u64) -> Value {
+    let safe_prompt: String = prompt.chars().take(4000).collect();
+    json!({
+        "1":  { "class_type": "LoadImage",             "inputs": { "image": image_name } },
+        "2":  { "class_type": "UNETLoader",            "inputs": { "unet_name": "qwen_image_2.1_turbo_int8_convrot.safetensors", "weight_dtype": "default" } },
+        "3":  { "class_type": "QwenImage21Cache",      "inputs": { "model": ["2", 0], "device": "auto", "dtype": "default" } },
+        "4":  { "class_type": "CLIPLoader",            "inputs": { "clip_name": "qwen3vl_8b_int8_convrot.safetensors", "type": "qwen_image", "device": "default" } },
+        "5":  { "class_type": "VAELoader",             "inputs": { "vae_name": "qwen_image_2.1_vae_bf16.safetensors" } },
+        "6":  { "class_type": "TextEncodeQwenImage21", "inputs": { "clip": ["4", 0], "vae": ["5", 0], "prompt": safe_prompt, "negative_prompt": "", "resolution": resolution, "images.image_1": ["1", 0] } },
+        "7":  { "class_type": "CFGGuider",             "inputs": { "model": ["3", 0], "positive": ["6", 0], "negative": ["6", 1], "cfg": 1 } },
+        "8":  { "class_type": "RandomNoise",           "inputs": { "noise_seed": seed } },
+        "9":  { "class_type": "KSamplerSelect",        "inputs": { "sampler_name": "euler" } },
+        "10": { "class_type": "ManualSigmas",          "inputs": { "sigmas": "1.0, 0.978453, 0.95418, 0.926626, 0.89508, 0.845148, 0.704534, 0.414568, 0" } },
+        "11": { "class_type": "SamplerCustomAdvanced", "inputs": { "noise": ["8", 0], "guider": ["7", 0], "sampler": ["9", 0], "sigmas": ["10", 0], "latent_image": ["6", 2] } },
+        "12": { "class_type": "VAEDecode",             "inputs": { "samples": ["11", 0], "vae": ["5", 0] } },
+        "13": { "class_type": "SaveImage",             "inputs": { "filename_prefix": "kinai_picedit", "images": ["12", 0] } },
+    })
+}
+
+/// A 1×1 transparent PNG: what an uploaded picture is overwritten with
+/// once its edit is done, so family photos do not pile up on the server.
+const BLANK_PNG: &[u8] = &[
+    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
+    0x89, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x44, 0x41, 0x54, 0x78, 0xDA, 0x63, 0x60, 0x60, 0x60, 0x60,
+    0x00, 0x00, 0x00, 0x05, 0x00, 0x01, 0x7A, 0xA8, 0x57, 0x50, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
+    0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+];
+
+/// Put `bytes` into the server's input folder under `name`, replacing a
+/// file of that name. Returns the name the server stored it under.
+async fn upload_input(client: &reqwest::Client, base: &str, name: &str, bytes: Vec<u8>) -> Result<String> {
+    let part = reqwest::multipart::Part::bytes(bytes).file_name(name.to_string());
+    let form = reqwest::multipart::Form::new()
+        .part("image", part)
+        .text("overwrite", "true");
+    let resp = client
+        .post(format!("{base}/upload/image"))
+        .multipart(form)
+        .send()
+        .await
+        .context("send the picture to ComfyUI")?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        bail!("{}", summarize_comfy_error(status, &body));
+    }
+    let j: Value = resp.json().await.context("parse upload response")?;
+    let stored = j.get("name").and_then(|v| v.as_str()).unwrap_or(name);
+    Ok(match j.get("subfolder").and_then(|v| v.as_str()) {
+        Some(sub) if !sub.is_empty() => format!("{sub}/{stored}"),
+        _ => stored.to_string(),
+    })
+}
+
+/// Change a sent picture as `prompt` says and return the result the same
+/// way `generate` does. `ext` is the picture's file extension as given by
+/// `first_picture`.
+pub async fn edit(
+    base_url: &str,
+    model: Model,
+    prompt: &str,
+    picture: Vec<u8>,
+    ext: &str,
+) -> Result<GeneratedImage> {
+    if !is_configured(base_url) {
+        bail!("ComfyUI base_url is not configured (set it in Settings → Image generation)");
+    }
+    if picture.len() > MAX_EDIT_BYTES {
+        bail!("that picture is too large to change ({} MB; the limit is 25 MB)", picture.len() / (1024 * 1024));
+    }
+    let base = base_url.trim_end_matches('/');
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(600))
+        .build()
+        .context("build http client")?;
+
+    let t_start = Instant::now();
+    let upload_name = format!("kinai_edit_{}.{ext}", Uuid::new_v4().simple());
+    let stored = upload_input(&client, base, &upload_name, picture).await?;
+    let workflow = build_edit_workflow(prompt, &stored, edit_resolution(model), rand::random());
+    let result = run_workflow(&client, base, workflow, t_start).await;
+    // Whatever happened, do not leave the sent picture on the server. The
+    // server has no way to delete an input, so it is overwritten in place.
+    if let Err(e) = upload_input(&client, base, &upload_name, BLANK_PNG.to_vec()).await {
+        tracing::warn!("comfyui: could not blank the uploaded picture after the edit: {e}");
+    }
+    result
 }
 
 /// Render a human-readable error from a non-success ComfyUI HTTP
@@ -490,5 +644,70 @@ mod parse_slash_tests {
         let (_, _, _, p) = parse_slash("/pic").unwrap();
         assert!(p.is_empty());
         assert!(parse_slash("/notacommand").is_none());
+    }
+}
+
+#[cfg(test)]
+mod edit_tests {
+    use super::*;
+    use crate::db::Attachment;
+
+    fn picture(mime: &str, b64: &str) -> Attachment {
+        Attachment {
+            kind: "image".into(),
+            mime: Some(mime.into()),
+            name: Some("picture".into()),
+            data_url: Some(format!("data:{mime};base64,{b64}")),
+        }
+    }
+
+    #[test]
+    fn first_picture_decodes_what_the_server_can_open() {
+        let (bytes, ext) = first_picture(&[picture("image/jpeg", "QUJD")]).expect("jpeg");
+        assert_eq!((bytes.as_slice(), ext), (b"ABC".as_slice(), "jpg"));
+        assert_eq!(first_picture(&[picture("image/png", "QUJD")]).unwrap().1, "png");
+        assert_eq!(first_picture(&[picture("IMAGE/WEBP", "QUJD")]).unwrap().1, "webp");
+    }
+
+    #[test]
+    fn first_picture_skips_what_it_cannot_use() {
+        // A format the server cannot open, a non-picture, broken base64, a
+        // picture whose bytes were dropped from history: none is usable.
+        let mut doc = picture("application/pdf", "QUJD");
+        doc.kind = "file".into();
+        let mut dropped = picture("image/png", "QUJD");
+        dropped.data_url = None;
+        let unusable = [picture("image/heic", "QUJD"), doc, picture("image/png", "***"), dropped];
+        assert!(first_picture(&unusable).is_none());
+        // …and the first usable one after them is found.
+        let mut all = unusable.to_vec();
+        all.push(picture("image/png", "QUJD"));
+        assert_eq!(first_picture(&all).unwrap().1, "png");
+    }
+
+    #[test]
+    fn edit_workflow_names_the_picture_and_never_keeps_its_full_size() {
+        for model in [Model::Turbo, Model::Hq] {
+            let res = edit_resolution(model);
+            assert!((512..=2048).contains(&res), "resolution 0 would keep a phone photo's full size");
+            let wf = build_edit_workflow("add a paper hat", "kinai_edit_x.jpg", res, 7);
+            assert_eq!(wf["1"]["inputs"]["image"], "kinai_edit_x.jpg");
+            assert_eq!(wf["6"]["inputs"]["prompt"], "add a paper hat");
+            assert_eq!(wf["6"]["inputs"]["resolution"], res);
+            assert_eq!(wf["6"]["inputs"]["images.image_1"], json!(["1", 0]));
+            assert_eq!(wf["8"]["inputs"]["noise_seed"], 7);
+        }
+    }
+
+    #[test]
+    fn a_very_long_instruction_is_cut() {
+        let wf = build_edit_workflow(&"é".repeat(9000), "p.png", 1024, 1);
+        assert_eq!(wf["6"]["inputs"]["prompt"].as_str().unwrap().chars().count(), 4000);
+    }
+
+    #[test]
+    fn the_blank_is_a_real_png() {
+        assert!(BLANK_PNG.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]));
+        assert!(BLANK_PNG.ends_with(&[b'I', b'E', b'N', b'D', 0xAE, 0x42, 0x60, 0x82]));
     }
 }

@@ -503,6 +503,13 @@ back, unless you switch model yourself.",
             .trim_start()
             .to_ascii_lowercase()
             .starts_with("/pic");
+        // With a photo attached, /pic changes that photo rather than
+        // making a new picture: say so.
+        let placeholder_text = if has_image {
+            "🎨 Changing your picture… this can take a minute."
+        } else {
+            "🎨 Creating a picture… this can take a minute."
+        };
         let action_cancel = tokio_util::sync::CancellationToken::new();
         let placeholder_task = is_pic.then(|| {
             let api_clone = api.clone();
@@ -513,7 +520,7 @@ back, unless you switch model yourself.",
                     _ = tokio::time::sleep(std::time::Duration::from_millis(800)) => {}
                 }
                 let placeholder_id = api_clone
-                    .send_message(chat_id, "🎨 Creating a picture… this can take a minute.")
+                    .send_message(chat_id, placeholder_text)
                     .await
                     .ok();
                 // Hold until the handler finishes, then clean up our own
@@ -527,7 +534,7 @@ back, unless you switch model yourself.",
                 }
             })
         });
-        let reply = crate::slash::handle(&cfg, &llm_route_content).await;
+        let reply = crate::slash::handle(&cfg, &llm_route_content, &attachments).await;
         action_cancel.cancel();
         // Wait for the placeholder cleanup (one bounded HTTP call) so the
         // "creating…" message is gone before the photo/reply lands.

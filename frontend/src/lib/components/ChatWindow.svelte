@@ -115,7 +115,7 @@
     {
       cmd: '/pic',
       desc: 'Generate image · default 1280×720, ~5s',
-      hint: 'Optional WxH prefix: /pic 1024x1024 sunset over Miami',
+      hint: 'Optional WxH prefix: /pic 1024x1024 sunset over Miami. With a picture attached it changes that picture: /pic give him a birthday crown',
     },
     {
       cmd: '/picHQ',
