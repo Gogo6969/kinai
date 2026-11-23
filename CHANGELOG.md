@@ -5,6 +5,20 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.154] — 2026-11-23
+
+### Added
+
+- **`/edit` changes a picture again, step by step.** After `/pic` has
+  changed a picture, write `/edit` and what should be different, for
+  example `/edit make the crown bigger and make the dress golden`. KinAI
+  takes the newest picture in the conversation (the last result, or a
+  picture you sent, whichever is newer) and changes that, so nothing has
+  to be attached a second time. It works the same in Telegram.
+  Every changed picture now ends with one line that says this.
+  Each step redraws the picture from the one before, so over many steps
+  small details can drift away from the original.
+
 ## [0.2.153] — 2026-11-23
 
 ### Added
