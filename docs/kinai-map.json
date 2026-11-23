@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-11-21T00:12:17+00:00",
-  "version": "0.2.152",
+  "generated_at": "2026-11-23T23:55:59+00:00",
+  "version": "0.2.154",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 444,
-    "head": "07c2aaf"
+    "commits": 449,
+    "head": "b1e6e90"
   },
   "totals": {
     "rust_files": 76,
-    "rust_lines": 41015,
+    "rust_lines": 41512,
     "frontend_files": 38,
-    "frontend_lines": 15146,
-    "unit_tests": 506,
-    "integration_test_files": 20,
-    "releases": 144,
-    "tags": 139
+    "frontend_lines": 15151,
+    "unit_tests": 515,
+    "integration_test_files": 21,
+    "releases": 146,
+    "tags": 141
   },
   "areas": [
     {
@@ -129,9 +129,9 @@
     {
       "path": "src/comfyui.rs",
       "area": "media",
-      "lines": 495,
+      "lines": 714,
       "doc": "ComfyUI integration — powers the `/pic` and `/picHQ` chat commands.",
-      "tests": 8
+      "tests": 13
     },
     {
       "path": "src/commands.rs",
@@ -206,7 +206,7 @@
     {
       "path": "src/db/messages.rs",
       "area": "db",
-      "lines": 1399,
+      "lines": 1425,
       "doc": "Thread + message persistence (async via SQLx).",
       "tests": 24
     },
@@ -220,7 +220,7 @@
     {
       "path": "src/db/mod.rs",
       "area": "db",
-      "lines": 442,
+      "lines": 450,
       "doc": "SQLx-backed SQLite layer.",
       "tests": 0
     },
@@ -423,9 +423,9 @@
     {
       "path": "src/slash.rs",
       "area": "routing",
-      "lines": 1815,
+      "lines": 2046,
       "doc": "Slash commands — intercepted BEFORE the LLM pipeline so messages starting with /pic, /picHQ, /help, ? skip the chat model entirely and route to native handlers (ComfyUI for image gen, a static command list for help).",
-      "tests": 37
+      "tests": 41
     },
     {
       "path": "src/stt.rs",
@@ -458,7 +458,7 @@
     {
       "path": "src/telegram/mod.rs",
       "area": "telegram",
-      "lines": 530,
+      "lines": 534,
       "doc": "Telegram bot integration — host-side only.",
       "tests": 11
     },
@@ -472,7 +472,7 @@
     {
       "path": "src/telegram/router.rs",
       "area": "telegram",
-      "lines": 1956,
+      "lines": 1965,
       "doc": "Route incoming Telegram updates into KinAI's chat pipeline.",
       "tests": 21
     },
@@ -638,7 +638,7 @@
     {
       "path": "frontend/src/lib/components/ChatWindow.svelte",
       "kind": "component",
-      "lines": 1164,
+      "lines": 1169,
       "doc": "Status line of the most recent tool for a streaming message, if any."
     },
     {
@@ -1000,6 +1000,24 @@
       ]
     },
     {
+      "file": "tests/pic_edit_live.rs",
+      "doc": "Live proof for `/pic` with a picture attached: the picture is changed as the message says and comes back as a new picture.",
+      "tests": [
+        {
+          "name": "the_command_changes_a_sent_picture",
+          "ignored": true
+        },
+        {
+          "name": "edit_changes_the_previous_result",
+          "ignored": true
+        },
+        {
+          "name": "a_family_device_gets_its_picture_changed",
+          "ignored": true
+        }
+      ]
+    },
+    {
       "file": "tests/reminders_api_live.rs",
       "doc": "Live proof of the reminder HTTP API against the running host — the whole point of which is that a program, not a model, decides.",
       "tests": [
@@ -1303,6 +1321,30 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.154",
+      "date": "2026-11-23",
+      "sections": {
+        "Added": [
+          {
+            "title": "`/edit` changes a picture again, step by step.",
+            "detail": "After `/pic` has changed a picture, write `/edit` and what should be different, for example `/edit make the crown bigger and make the dress golden`. KinAI takes the newest picture in the conversation (the last result, or a picture you sent, whichever is newer) and changes that, so nothing has to be attached a second time. It works the same in Telegram. Every changed picture now ends with one line that says this. Each step redraws the picture from the one before, so over many steps small details can drift away from the original."
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.2.153",
+      "date": "2026-11-23",
+      "sections": {
+        "Added": [
+          {
+            "title": "`/pic` can change a picture you send.",
+            "detail": "Attach a picture and write what should be different, for example `/pic give the man a birthday crown`, and KinAI answers with the changed picture. In Telegram, send the photo with the command as its caption. Without a picture, `/pic` makes a new one from your words, as before. `/picHQ` works the same way and gives a larger result, which takes longer. The picture goes to the picture server you set under Settings → Image generation and nowhere else; KinAI blanks its copy there when the change is done. That server needs the Qwen Image 2.1 Turbo model, its text encoder and its VAE installed (the three files ComfyUI's \"Qwen Image 2.1 Turbo: Image edit\" template asks for). PNG, JPEG and WebP pictures are accepted."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.152",
       "date": "2026-11-20",
@@ -4232,6 +4274,14 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.154",
+      "date": "2026-11-23"
+    },
+    {
+      "tag": "v0.2.153",
+      "date": "2026-11-23"
+    },
     {
       "tag": "v0.2.152",
       "date": "2026-11-20"
