@@ -5,6 +5,23 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.153] — 2026-11-23
+
+### Added
+
+- **`/pic` can change a picture you send.** Attach a picture and write what
+  should be different, for example `/pic give the man a birthday crown`,
+  and KinAI answers with the changed picture. In Telegram, send the photo
+  with the command as its caption. Without a picture, `/pic` makes a new
+  one from your words, as before. `/picHQ` works the same way and gives a
+  larger result, which takes longer.
+  The picture goes to the picture server you set under Settings → Image
+  generation and nowhere else; KinAI blanks its copy there when the change
+  is done. That server needs the Qwen Image 2.1 Turbo model, its text
+  encoder and its VAE installed (the three files ComfyUI's "Qwen Image 2.1
+  Turbo: Image edit" template asks for). PNG, JPEG and WebP pictures are
+  accepted.
+
 ## [0.2.152] — 2026-11-20
 
 ### Security
