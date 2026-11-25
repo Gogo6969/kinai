@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-11-23T23:55:59+00:00",
-  "version": "0.2.154",
+  "generated_at": "2026-11-25T17:36:03+00:00",
+  "version": "0.2.155",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 449,
-    "head": "b1e6e90"
+    "commits": 452,
+    "head": "08ee53a"
   },
   "totals": {
     "rust_files": 76,
-    "rust_lines": 41512,
+    "rust_lines": 41564,
     "frontend_files": 38,
     "frontend_lines": 15151,
-    "unit_tests": 515,
+    "unit_tests": 516,
     "integration_test_files": 21,
-    "releases": 146,
-    "tags": 141
+    "releases": 147,
+    "tags": 142
   },
   "areas": [
     {
@@ -472,9 +472,9 @@
     {
       "path": "src/telegram/router.rs",
       "area": "telegram",
-      "lines": 1965,
+      "lines": 2017,
       "doc": "Route incoming Telegram updates into KinAI's chat pipeline.",
-      "tests": 21
+      "tests": 22
     },
     {
       "path": "src/tools/calculator.rs",
@@ -1321,6 +1321,18 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.155",
+      "date": "2026-11-25",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "Telegram shows every picture of an answer.",
+            "detail": "When an answer held several pictures, the app showed all of them but Telegram got only the first one. Telegram now gets each picture, in the same order, with its short description underneath (up to 8 per answer; a picture that is linked twice is sent once)."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.154",
       "date": "2026-11-23",
@@ -4274,6 +4286,10 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.155",
+      "date": "2026-11-25"
+    },
     {
       "tag": "v0.2.154",
       "date": "2026-11-23"
