@@ -1068,12 +1068,12 @@ async fn send_assistant_reply<R: Runtime>(
         api.send_message(chat_id, &truncate_for_tg(reply)).await?;
     }
 
-    // If the reply embedded a REMOTE image (an `image_search` hit), deliver
-    // it as a real photo. These reach here via the text paths above —
+    // If the reply embedded REMOTE images (`image_search` hits), deliver
+    // each as a real photo. These reach here via the text paths above —
     // markdown_to_telegram strips `![](url)`, so "show me a picture of X"
     // would otherwise be text-only on Telegram even though the app shows the
-    // image inline. The caption/source text is already on screen, so the
-    // photo follows without a caption. Best-effort: failures leave the text.
+    // images inline. Every picture is sent, in order, with its description
+    // as the caption. Best-effort: failures leave the text.
     if !sent_photo && send_reply_remote_image(api, reply, chat_id).await {
         sent_photo = true;
     }
@@ -1205,28 +1205,58 @@ pub(super) fn strip_inline_image_markdown(reply: &str) -> String {
     RE.replace_all(reply, "").trim().to_string()
 }
 
-/// Remote image URLs the LLM embedded as `![alt](http(s)://…)`, EXCLUDING our
-/// own `/v1/pic/` local paths (those are handled by extract_local_pic_path).
-fn extract_remote_image_urls(reply: &str) -> Vec<String> {
+/// Remote images the LLM embedded as `![alt](http(s)://…)`, as (alt, url)
+/// in the order they appear, EXCLUDING our own `/v1/pic/` local paths (those
+/// are handled by extract_local_pic_path). A URL that appears twice is kept
+/// once — a model asked to "try again" likes to repeat the one that worked.
+fn extract_remote_images(reply: &str) -> Vec<(String, String)> {
     static RE: once_cell::sync::Lazy<regex::Regex> = once_cell::sync::Lazy::new(|| {
-        regex::Regex::new(r"!\[[^\]]*\]\((https?://[^)\s]+)\)").unwrap()
+        regex::Regex::new(r"!\[([^\]]*)\]\((https?://[^)\s]+)\)").unwrap()
     });
-    RE.captures_iter(reply)
-        .filter_map(|c| c.get(1).map(|m| m.as_str().to_string()))
-        .filter(|u| !u.contains("/v1/pic/"))
-        .collect()
+    let mut out: Vec<(String, String)> = Vec::new();
+    for c in RE.captures_iter(reply) {
+        let url = c.get(2).map(|m| m.as_str()).unwrap_or_default();
+        if url.contains("/v1/pic/") || out.iter().any(|(_, u)| u == url) {
+            continue;
+        }
+        let alt = c.get(1).map(|m| m.as_str().trim()).unwrap_or_default();
+        out.push((alt.to_string(), url.to_string()));
+    }
+    out
 }
 
-/// Download the first reply-embedded remote image that is genuinely an image
-/// and send it as a Telegram photo. Tries a few candidates — the LLM
-/// sometimes lists page URLs alongside direct image URLs. Returns true once
-/// one photo lands. Best-effort: any failure just moves to the next URL, and
-/// an empty/all-failed list leaves the already-sent text untouched.
+#[cfg(test)]
+fn extract_remote_image_urls(reply: &str) -> Vec<String> {
+    extract_remote_images(reply).into_iter().map(|(_, u)| u).collect()
+}
+
+/// How many pictures of one reply go to Telegram, and how many links are
+/// tried to get there (some are page URLs or refuse the download).
+const MAX_REPLY_PHOTOS: usize = 8;
+const MAX_REPLY_PHOTO_TRIES: usize = 12;
+
+/// The picture's description as its Telegram caption: the text bubble above
+/// has lost the picture, so without it nobody can tell which is which.
+fn photo_caption(alt: &str) -> Option<String> {
+    let alt = alt.trim();
+    if alt.is_empty() {
+        return None;
+    }
+    Some(alt.chars().take(200).collect())
+}
+
+/// Download every reply-embedded remote image that is genuinely an image and
+/// send each as a Telegram photo, in the reply's order, with its description
+/// as the caption. The app shows all of them inline, so Telegram has to as
+/// well — sending only the first one made a "pictures over time" answer look
+/// broken. Returns true once at least one photo landed. Best-effort: a link
+/// that fails is skipped, and the already-sent text stays untouched.
 async fn send_reply_remote_image(api: &BotApi, reply: &str, chat_id: i64) -> bool {
-    let urls = extract_remote_image_urls(reply);
-    if urls.is_empty() {
+    let images = extract_remote_images(reply);
+    if images.is_empty() {
         return false;
     }
+    let found = images.len();
     // Browser-ish UA: many image CDNs (Cloudflare et al.) 403 a blank/default
     // agent — the same class of block we hit while diagnosing Groq.
     let client = match reqwest::Client::builder()
@@ -1240,9 +1270,12 @@ async fn send_reply_remote_image(api: &BotApi, reply: &str, chat_id: i64) -> boo
         Ok(c) => c,
         Err(_) => return false,
     };
-    const MAX_TRIES: usize = 4;
     const MAX_BYTES: usize = 10 * 1024 * 1024; // Telegram photo-upload cap
-    for url in urls.into_iter().take(MAX_TRIES) {
+    let mut sent = 0usize;
+    for (alt, url) in images.into_iter().take(MAX_REPLY_PHOTO_TRIES) {
+        if sent >= MAX_REPLY_PHOTOS {
+            break;
+        }
         let resp = match client.get(&url).send().await {
             Ok(r) if r.status().is_success() => r,
             _ => continue,
@@ -1269,21 +1302,22 @@ async fn send_reply_remote_image(api: &BotApi, reply: &str, chat_id: i64) -> boo
         }
         let ext = mime.split('/').nth(1).unwrap_or("jpg");
         let fname = format!("image.{ext}");
+        let caption = photo_caption(&alt);
         match api
-            .send_photo_bytes(chat_id, bytes, &fname, &mime, None, None)
+            .send_photo_bytes(chat_id, bytes, &fname, &mime, caption.as_deref(), None)
             .await
         {
-            Ok(()) => return true,
+            Ok(()) => sent += 1,
             Err(e) => {
                 tracing::warn!(
                     "telegram remote-image send failed: {}",
                     crate::logsafe::error(&format!("{e:?}"))
                 );
-                continue;
             }
         }
     }
-    false
+    tracing::info!("telegram: reply pictures sent={sent} found={found}");
+    sent > 0
 }
 
 /// Turn a raw turn error into a calm, actionable Telegram message. The
@@ -1799,6 +1833,24 @@ mod remote_image_tests {
         let reply = "![a](https://x.test/a.jpg) and a [link](https://y.test/page) and ![b](https://x.test/b.png)";
         let urls = extract_remote_image_urls(reply);
         assert_eq!(urls, vec!["https://x.test/a.jpg", "https://x.test/b.png"]);
+    }
+
+    #[test]
+    fn keeps_every_picture_once_with_its_description() {
+        let reply = "Then:\n\n![Early portrait](https://x.test/a.jpg)\n\nNow:\n\n\
+            ![ Recent portrait ](https://x.test/b.jpg)\n\n![again](https://x.test/a.jpg)\n\n![](https://x.test/c.jpg)";
+        let images = super::extract_remote_images(reply);
+        assert_eq!(
+            images,
+            vec![
+                ("Early portrait".to_string(), "https://x.test/a.jpg".to_string()),
+                ("Recent portrait".to_string(), "https://x.test/b.jpg".to_string()),
+                (String::new(), "https://x.test/c.jpg".to_string()),
+            ]
+        );
+        assert_eq!(super::photo_caption("Early portrait").as_deref(), Some("Early portrait"));
+        assert_eq!(super::photo_caption("  "), None);
+        assert_eq!(super::photo_caption(&"ä".repeat(500)).unwrap().chars().count(), 200);
     }
 }
 
