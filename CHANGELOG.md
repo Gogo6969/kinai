@@ -5,6 +5,16 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.155] — 2026-11-25
+
+### Fixed
+
+- **Telegram shows every picture of an answer.** When an answer held
+  several pictures, the app showed all of them but Telegram got only the
+  first one. Telegram now gets each picture, in the same order, with its
+  short description underneath (up to 8 per answer; a picture that is
+  linked twice is sent once).
+
 ## [0.2.154] — 2026-11-23
 
 ### Added
