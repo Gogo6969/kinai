@@ -5,6 +5,20 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.156] — 2026-11-27
+
+### Fixed
+
+- **The arrow keys no longer lose the message you are writing.** The up
+  arrow brings back earlier messages, also while you are writing a new
+  one. Getting back was fragile: after changing or undoing the earlier
+  message, the down arrow no longer returned to your own text and it was
+  gone. Now the message you are writing is simply the last one in the
+  list: the down arrow always leads back to it, and a change you made to
+  an earlier message is kept as well until you send. Up walks the list
+  when the cursor is at the very start, down when it is at the very end.
+  Same in the quick-chat overlay.
+
 ## [0.2.155] — 2026-11-25
 
 ### Fixed
