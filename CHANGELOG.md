@@ -5,6 +5,20 @@ All notable changes to KinAI are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.157] — 2026-11-27
+
+### Fixed
+
+- **The arrow keys no longer lose the message you are writing.** The up
+  arrow brings back earlier messages, also while you are writing a new
+  one, and the down arrow now always leads back to your own text. This is
+  the fix described under 0.2.156, released again under a new number: two
+  different builds carried the number 0.2.156, and a device that took the
+  first one would not have received the second.
+- Good to know: the list of earlier messages starts empty each time KinAI
+  is started, so right after an update the up arrow has nothing to show
+  until you have sent a message.
+
 ## [0.2.156] — 2026-11-27
 
 ### Fixed
