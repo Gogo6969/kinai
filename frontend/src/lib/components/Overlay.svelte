@@ -1,6 +1,7 @@
 <script lang="ts">
   import { imageFromNativeClipboard, pastedFiles, pasteHasText } from '$lib/clipboardImage';
   import { api, events, type Attachment } from '$lib/api';
+  import { PromptRecall, recallDirection } from '$lib/promptRecall';
   import { streamMarkdown } from '$lib/stream-html';
   import { fileToDataUrl } from '$lib/image';
   import { onMount, onDestroy } from 'svelte';
@@ -34,9 +35,7 @@
   // this is a local copy of the app store's behavior (not shared).
   let queued = $state<{ text: string; attachments: Attachment[] }[]>([]);
   let inputHistory = $state<string[]>([]);
-  let historyIndex = $state<number | null>(null);
-  let draftStash = '';
-  let recallingHistory = false;
+  const recall = new PromptRecall();
   // Update affordance. The main update banner lives only in the main
   // window — someone who only ever uses this quick-chat bar would never
   // be told about (or able to install) a new version. So the overlay
@@ -286,36 +285,17 @@
     inputHistory = [...inputHistory, t].slice(-200);
   }
 
-  function recallHistory(dir: -1 | 1, el: HTMLTextAreaElement) {
-    const hist = inputHistory;
-    if (hist.length === 0) return;
-    recallingHistory = true;
-    if (dir === -1) {
-      if (historyIndex === null) {
-        draftStash = input;
-        historyIndex = hist.length;
-      }
-      if (historyIndex > 0) historyIndex -= 1;
-      input = hist[historyIndex];
-    } else {
-      if (historyIndex === null) {
-        recallingHistory = false;
-        return;
-      }
-      if (historyIndex < hist.length - 1) {
-        historyIndex += 1;
-        input = hist[historyIndex];
-      } else {
-        historyIndex = null;
-        input = draftStash;
-      }
-    }
-    recallingHistory = false;
+  /** Walk the prompt list one step. False when there is nowhere to go. */
+  function recallHistory(dir: -1 | 1, el: HTMLTextAreaElement): boolean {
+    const next = recall.move(dir, input, inputHistory);
+    if (next === null) return false;
+    input = next;
     queueMicrotask(() => {
       el.style.height = 'auto';
       el.style.height = Math.min(el.scrollHeight, 200) + 'px';
       el.selectionStart = el.selectionEnd = input.length;
     });
+    return true;
   }
 
   /** Fire the next queued message if one's waiting and nothing's in flight. */
@@ -394,7 +374,7 @@
     // hits Enter without typing).
     if (!activeThreadId) return;
     if (!text.trim() && pendingAttachments.length === 0) return;
-    historyIndex = null;
+    recall.reset();
     const atts = pendingAttachments;
     input = '';
     pendingAttachments = [];
@@ -476,31 +456,26 @@
         placeholder="Ask KinAI…"
         class="kin-input resize-none overflow-y-auto text-base leading-snug py-1"
         style="max-height: 200px;"
+        onmousedown={() => recall.touched()}
         oninput={(e) => {
-          // Manual edits drop out of history recall; a programmatic recall
-          // write (guarded) must not count as an edit.
-          if (!recallingHistory) historyIndex = null;
+          recall.touched();
           const el = e.currentTarget as HTMLTextAreaElement;
           el.style.height = 'auto';
           el.style.height = Math.min(el.scrollHeight, 200) + 'px';
         }}
         onkeydown={(e) => {
-          // ↑/↓ recall earlier prompts. ↑ only triggers when the caret is at
-          // the very start so it still moves between lines mid-message.
+          // ↑/↓ recall earlier prompts (shell style). The prompt being
+          // written is the last position of the list, so ↓ always leads back
+          // to it. ↑ walks the list only with the caret at the very start,
+          // ↓ only at the very end — or right after a recall, before the
+          // text was touched. See $lib/promptRecall.
           const el = e.currentTarget as HTMLTextAreaElement;
-          if (e.key === 'ArrowUp') {
-            const atStart = el.selectionStart === 0 && el.selectionEnd === 0;
-            if (historyIndex !== null || atStart) {
-              e.preventDefault();
-              recallHistory(-1, el);
-              return;
-            }
-          }
-          if (e.key === 'ArrowDown' && historyIndex !== null) {
+          const dir = recallDirection(e.key, recall, el);
+          if (dir !== null && recallHistory(dir, el)) {
             e.preventDefault();
-            recallHistory(1, el);
             return;
           }
+          if (e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End') recall.touched();
           if (e.key === 'Enter' && !e.shiftKey) submit(e);
         }}
         onpaste={onPaste}

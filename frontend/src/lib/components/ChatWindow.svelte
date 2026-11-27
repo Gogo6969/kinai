@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick, untrack } from 'svelte';
+  import { PromptRecall, recallDirection } from '$lib/promptRecall';
   import MessageBubble from './MessageBubble.svelte';
   import MicButton from './MicButton.svelte';
   import ThinkingDots from './ThinkingDots.svelte';
@@ -65,44 +66,20 @@
   let pendingAttachments = $state<Attachment[]>([]);
   let dragging = $state(false);
   let attachmentError = $state('');
-  // ↑/↓ prompt recall. `historyIndex === null` means we're editing the live
-  // draft; once recall starts it indexes into app.inputHistory and
-  // `draftStash` holds whatever the user was typing so ↓ can restore it.
-  let historyIndex = $state<number | null>(null);
-  let draftStash = '';
-  // Guards the programmatic `input = …` assignment below so that if writing
-  // it ever does trip the textarea's oninput handler, that handler won't
-  // mistake a recall for a manual edit and reset historyIndex mid-recall.
-  let recallingHistory = false;
+  // ↑/↓ prompt recall. The rules live in $lib/promptRecall; the prompt being
+  // written is never thrown away by an arrow key.
+  const recall = new PromptRecall();
 
-  function recallHistory(dir: -1 | 1, el: HTMLTextAreaElement) {
-    const hist = app.inputHistory;
-    if (hist.length === 0) return;
-    recallingHistory = true;
-    if (dir === -1) {
-      // Older. Enter recall from the live draft on the first ↑.
-      if (historyIndex === null) {
-        draftStash = input;
-        historyIndex = hist.length;
-      }
-      if (historyIndex > 0) historyIndex -= 1;
-      input = hist[historyIndex];
-    } else {
-      // Newer. Walk back toward — and finally restore — the live draft.
-      if (historyIndex === null) return;
-      if (historyIndex < hist.length - 1) {
-        historyIndex += 1;
-        input = hist[historyIndex];
-      } else {
-        historyIndex = null;
-        input = draftStash;
-      }
-    }
-    recallingHistory = false;
+  /** Walk the prompt list one step. False when there is nowhere to go. */
+  function recallHistory(dir: -1 | 1, el: HTMLTextAreaElement): boolean {
+    const next = recall.move(dir, input, app.inputHistory);
+    if (next === null) return false;
+    input = next;
     queueMicrotask(() => {
       autoGrowTextarea(el);
       el.selectionStart = el.selectionEnd = input.length;
     });
+    return true;
   }
 
   // Slash-command autocomplete. Always shows the full list when the
@@ -686,7 +663,7 @@
     // had scrolled to while reading the last one.
     follow = true;
     lastTop = scrollEl?.scrollTop ?? 0;
-    historyIndex = null;
+    recall.reset();
     // /newchat — open a fresh thread so a new question doesn't reuse the
     // current conversation's context (persistent memory is kept). Any
     // trailing question is asked in the new thread. Only honored when idle;
@@ -1060,14 +1037,20 @@
         placeholder="Message KinAI…"
         class="kin-input resize-none overflow-y-auto leading-relaxed"
         style="max-height: 200px;"
-        oninput={(e) => {
-          // Any real edit drops us out of history recall so the next ↑
-          // starts again from the newest prompt — but a programmatic recall
-          // write (guarded by recallingHistory) must not count as an edit.
-          if (!recallingHistory) historyIndex = null;
-        }}
+        oninput={() => recall.touched()}
+        onmousedown={() => recall.touched()}
         onpaste={onPaste}
         onkeydown={(e) => {
+          // An untouched recalled prompt keeps the arrows, even when it is a
+          // bare command that opens the menu below — otherwise ↓ would walk
+          // the menu and the prompt being written could not be reached.
+          if (recall.index !== null && recall.pristine) {
+            const d = recallDirection(e.key, recall, e.currentTarget as HTMLTextAreaElement);
+            if (d !== null && recallHistory(d, e.currentTarget as HTMLTextAreaElement)) {
+              e.preventDefault();
+              return;
+            }
+          }
           // Slash-command menu navigation takes precedence when it's open.
           if (slashFiltered.length > 0) {
             if (e.key === 'ArrowDown') {
@@ -1092,25 +1075,18 @@
               return;
             }
           }
-          // ↑/↓ recall earlier prompts (shell / Claude-Code style). ↑ only
-          // kicks in when the caret is at the very start (so it still moves
-          // between lines mid-message); once recalling, ↓ walks back to the
-          // draft. Skipped while a recall isn't active and there's nothing
-          // to recall.
+          // ↑/↓ recall earlier prompts (shell style). The prompt being
+          // written is the last position of the list, so ↓ always leads back
+          // to it. ↑ walks the list only with the caret at the very start,
+          // ↓ only at the very end — or right after a recall, before the
+          // text was touched. See $lib/promptRecall.
           const el = e.currentTarget as HTMLTextAreaElement;
-          if (e.key === 'ArrowUp') {
-            const atStart = el.selectionStart === 0 && el.selectionEnd === 0;
-            if (historyIndex !== null || atStart) {
-              e.preventDefault();
-              recallHistory(-1, el);
-              return;
-            }
-          }
-          if (e.key === 'ArrowDown' && historyIndex !== null) {
+          const dir = recallDirection(e.key, recall, el);
+          if (dir !== null && recallHistory(dir, el)) {
             e.preventDefault();
-            recallHistory(1, el);
             return;
           }
+          if (e.key.startsWith('Arrow') || e.key === 'Home' || e.key === 'End') recall.touched();
           if (e.key === 'Enter' && !e.shiftKey) submit(e);
         }}
       ></textarea>
@@ -1137,7 +1113,7 @@
           const atts = pendingAttachments;
           input = '';
           pendingAttachments = [];
-          historyIndex = null;
+          recall.reset();
           queueMicrotask(() => autoGrowTextarea(inputEl));
           // Queue behind an in-flight turn just like the typed path.
           app.enqueue(t, atts);
