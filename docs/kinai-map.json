@@ -1,22 +1,22 @@
 {
-  "generated_at": "2026-11-25T17:36:03+00:00",
-  "version": "0.2.155",
+  "generated_at": "2026-11-28T00:49:08+00:00",
+  "version": "0.2.157",
   "repo": {
     "name": "KinAI",
     "url": "https://github.com/Gogo6969/kinai",
     "first_commit": "2026-05-16",
-    "commits": 452,
-    "head": "08ee53a"
+    "commits": 456,
+    "head": "33d4be7"
   },
   "totals": {
     "rust_files": 76,
     "rust_lines": 41564,
-    "frontend_files": 38,
-    "frontend_lines": 15151,
+    "frontend_files": 39,
+    "frontend_lines": 15179,
     "unit_tests": 516,
     "integration_test_files": 21,
-    "releases": 147,
-    "tags": 142
+    "releases": 149,
+    "tags": 144
   },
   "areas": [
     {
@@ -638,7 +638,7 @@
     {
       "path": "frontend/src/lib/components/ChatWindow.svelte",
       "kind": "component",
-      "lines": 1169,
+      "lines": 1145,
       "doc": "Status line of the most recent tool for a streaming message, if any."
     },
     {
@@ -662,7 +662,7 @@
     {
       "path": "frontend/src/lib/components/Overlay.svelte",
       "kind": "component",
-      "lines": 627,
+      "lines": 602,
       "doc": "Image / PDF attachments staged for the next overlay send. Mirrors the main ChatWindow's `pendingAttachments` semantics so a user can paste a screenshot into the quick-chat (Cmd+Space) overlay and have it ride along with the prompt, same as in the main window."
     },
     {
@@ -730,6 +730,12 @@
       "kind": "lib",
       "lines": 78,
       "doc": "Which desktop OS this window is running on. KinAI ships one Svelte frontend to three very different machines, and for a long time the copy assumed all of them were Macs: a Windows user following a \"No hosts found\" hint was told to open System Settings → Privacy & Security, a pane that does not exist on their computer, and the microphone errors named macOS panes and offered buttons that were only r"
+    },
+    {
+      "path": "frontend/src/lib/promptRecall.ts",
+      "kind": "lib",
+      "lines": 77,
+      "doc": "↑/↓ recall of earlier prompts for a message box, shared by the chat window and the quick-chat overlay. The rule that matters: nothing the writer typed is ever thrown away by an arrow key. The prompt being written is one more position at the end of the list. Going up from it keeps it; coming back down shows it again — also after a recalled prompt was edited, undone, or was a bare slash command. Edi"
     },
     {
       "path": "frontend/src/lib/reminders.ts",
@@ -1321,6 +1327,34 @@
     ]
   },
   "history": [
+    {
+      "version": "0.2.157",
+      "date": "2026-11-27",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "The arrow keys no longer lose the message you are writing.",
+            "detail": "The up arrow brings back earlier messages, also while you are writing a new one, and the down arrow now always leads back to your own text. This is the fix described under 0.2.156, released again under a new number: two different builds carried the number 0.2.156, and a device that took the first one would not have received the second."
+          },
+          {
+            "title": "Good to know: the list of earlier messages starts empty each time KinAI is started, so right after an update the up arro",
+            "detail": ""
+          }
+        ]
+      }
+    },
+    {
+      "version": "0.2.156",
+      "date": "2026-11-27",
+      "sections": {
+        "Fixed": [
+          {
+            "title": "The arrow keys no longer lose the message you are writing.",
+            "detail": "The up arrow brings back earlier messages, also while you are writing a new one. Getting back was fragile: after changing or undoing the earlier message, the down arrow no longer returned to your own text and it was gone. Now the message you are writing is simply the last one in the list: the down arrow always leads back to it, and a change you made to an earlier message is kept as well until you send. Up walks the list when the cursor is at the very start, down when it is at the very end. Same in the quick-chat overlay."
+          }
+        ]
+      }
+    },
     {
       "version": "0.2.155",
       "date": "2026-11-25",
@@ -4286,6 +4320,14 @@
     }
   ],
   "tags": [
+    {
+      "tag": "v0.2.157",
+      "date": "2026-11-27"
+    },
+    {
+      "tag": "v0.2.156",
+      "date": "2026-11-27"
+    },
     {
       "tag": "v0.2.155",
       "date": "2026-11-25"
